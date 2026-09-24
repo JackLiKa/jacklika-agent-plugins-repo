@@ -13,6 +13,31 @@ DeepSeek Harness plugin suite: the memory vault chain plus future plugin packs.
 | `@jacklika/dsh-memory-queue` | Serializes writes with a cross-process `mkdir` lock |
 | `@jacklika/dsh-memory-git` | Commits `shared/` writes to the vault's own git repo |
 | `@jacklika/dsh-memory` | Profile bundle mounting the whole chain in waterfall order |
+| `@jacklika/dsh-memory-mcp` | Zero-dependency MCP stdio server exposing the vault to any MCP client (single-writer semantics) |
+
+## Skills
+
+| Skill | Role |
+|---|---|
+| `skills/memory-vault` | Teaches agents the vault workflow: when to read/write, safe `baseVersion` writes, namespace semantics, linking conventions |
+
+Mount it through `skill-filesystem` in a profile `cordis.patch.yml`:
+
+```yaml
+- id: skill-filesystem
+  config:
+    customSkillDirs: ['/path/to/mydsh-plugin/skills']
+```
+
+## Three-layer robustness
+
+The suite is designed as three complementary layers:
+
+- **Skill** (`skills/memory-vault`): teaches the model *how and when* to use memory — read-before-write, `baseVersion` conflict retry, `shared/` versus `agents/<key>/` placement.
+- **Tool calling** (`@jacklika/dsh-tool-memory-*` + `dsh-memory-*`): native dsh tools with queue locking, per-agent namespaces, atomic writes, and git history on `shared/`.
+- **MCP** (`@jacklika/dsh-memory-mcp`): the same vault over standard stdio MCP for non-dsh clients — one server process owns all writes.
+
+All paths converge on one local Markdown vault; there is no network listener and no telemetry.
 
 ## Use in a dsh profile
 
