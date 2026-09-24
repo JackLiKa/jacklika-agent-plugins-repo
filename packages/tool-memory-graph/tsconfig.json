@@ -2,9 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "lib/types"
+    "outDir": "lib",
+    "declarationDir": "lib/types"
   },
   "include": [
     "src"
+  ],
+  "references": [
+    {
+      "path": "../tool-memory-filesystem"
+    }
   ]
 }

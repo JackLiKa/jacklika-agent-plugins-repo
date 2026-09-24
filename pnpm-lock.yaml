@@ -59,14 +59,19 @@ importers:
         version: link:../tool-memory-filesystem
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: '*'
-        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis
+        version: link:../../../dsh/deepseek-harness/vendor/cordis
       '@deepseek-ai/cordis-plugin-include':
-        specifier: '*'
-        version: 1.0.9(@deepseek-ai/cordis-plugin-loader@1.0.5)(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include
+        version: link:../../../dsh/deepseek-harness/vendor/include
       '@deepseek-ai/cordis-plugin-loader':
-        specifier: '*'
-        version: 1.0.5(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
+        version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-tools':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
+        version: link:../../../dsh/deepseek-harness/packages/core/tools
+
+  packages/memory-mcp: {}
 
   packages/memory-queue:
     dependencies:
@@ -78,14 +83,17 @@ importers:
         version: link:../tool-memory-filesystem
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: '*'
-        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis
+        version: link:../../../dsh/deepseek-harness/vendor/cordis
       '@deepseek-ai/cordis-plugin-include':
-        specifier: '*'
-        version: 1.0.9(@deepseek-ai/cordis-plugin-loader@1.0.5)(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include
+        version: link:../../../dsh/deepseek-harness/vendor/include
       '@deepseek-ai/cordis-plugin-loader':
-        specifier: '*'
-        version: 1.0.5(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
+        version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-tools':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
+        version: link:../../../dsh/deepseek-harness/packages/core/tools
 
   packages/memory-scope:
     dependencies:
@@ -94,14 +102,26 @@ importers:
         version: 3.18.4
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: '*'
-        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis
+        version: link:../../../dsh/deepseek-harness/vendor/cordis
       '@deepseek-ai/cordis-plugin-include':
-        specifier: '*'
-        version: 1.0.9(@deepseek-ai/cordis-plugin-loader@1.0.5)(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include
+        version: link:../../../dsh/deepseek-harness/vendor/include
       '@deepseek-ai/cordis-plugin-loader':
-        specifier: '*'
-        version: 1.0.5(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
+        version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-llm':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm
+        version: link:../../../dsh/deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-session':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/session
+        version: link:../../../dsh/deepseek-harness/packages/core/session
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt
+        version: link:../../../dsh/deepseek-harness/packages/core/system-prompt
+      '@deepseek-ai/dsh-tools':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
+        version: link:../../../dsh/deepseek-harness/packages/core/tools
       '@jacklika/dsh-tool-memory-filesystem':
         specifier: workspace:*
         version: link:../tool-memory-filesystem
@@ -116,14 +136,23 @@ importers:
         version: 4.3.2
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: '*'
-        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis
+        version: link:../../../dsh/deepseek-harness/vendor/cordis
       '@deepseek-ai/cordis-plugin-include':
-        specifier: '*'
-        version: 1.0.9(@deepseek-ai/cordis-plugin-loader@1.0.5)(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include
+        version: link:../../../dsh/deepseek-harness/vendor/include
       '@deepseek-ai/cordis-plugin-loader':
-        specifier: '*'
-        version: 1.0.5(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
+        version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-tools':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
+        version: link:../../../dsh/deepseek-harness/packages/core/tools
+      '@deepseek-ai/dsh-util-values':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/util/values
+        version: link:../../../dsh/deepseek-harness/packages/util/values
+      '@types/js-yaml':
+        specifier: ^4
+        version: 4.0.9
 
   packages/tool-memory-graph:
     dependencies:
@@ -135,14 +164,20 @@ importers:
         version: link:../tool-memory-filesystem
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: '*'
-        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis
+        version: link:../../../dsh/deepseek-harness/vendor/cordis
       '@deepseek-ai/cordis-plugin-include':
-        specifier: '*'
-        version: 1.0.9(@deepseek-ai/cordis-plugin-loader@1.0.5)(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include
+        version: link:../../../dsh/deepseek-harness/vendor/include
       '@deepseek-ai/cordis-plugin-loader':
-        specifier: '*'
-        version: 1.0.5(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
+        version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-tools':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
+        version: link:../../../dsh/deepseek-harness/packages/core/tools
+      '@deepseek-ai/dsh-util-values':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/util/values
+        version: link:../../../dsh/deepseek-harness/packages/util/values
 
   packages/tool-memory-vector:
     dependencies:
@@ -154,14 +189,17 @@ importers:
         version: link:../tool-memory-filesystem
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: '*'
-        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis
+        version: link:../../../dsh/deepseek-harness/vendor/cordis
       '@deepseek-ai/cordis-plugin-include':
-        specifier: '*'
-        version: 1.0.9(@deepseek-ai/cordis-plugin-loader@1.0.5)(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include
+        version: link:../../../dsh/deepseek-harness/vendor/include
       '@deepseek-ai/cordis-plugin-loader':
-        specifier: '*'
-        version: 1.0.5(@deepseek-ai/cordis@4.0.4)
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
+        version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-tools':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
+        version: link:../../../dsh/deepseek-harness/packages/core/tools
 
 packages:
 
@@ -314,6 +352,9 @@ packages:
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
+
+  '@types/js-yaml@4.0.9':
+    resolution: {integrity: sha512-k4MGaQl5TGo/iipqb2UDG2UwjXziSWkh0uysQelTlJpX1qGlpUZYm8PnO4DxG1qBomtJUdYJ6qR6xdIah10JLg==}
 
   '@types/node@24.13.6':
     resolution: {integrity: sha512-SGrw/h3KPFshy3OE6ZL53LMBG5vGQQ8/gIpiqz/kRZhPJ7HgwCEs8LBuNtWLa8dvGZVpSF7+Bf+c11HUrCb/yg==}
@@ -713,6 +754,8 @@ snapshots:
   '@types/deep-eql@4.0.2': {}
 
   '@types/estree@1.0.9': {}
+
+  '@types/js-yaml@4.0.9': {}
 
   '@types/node@24.13.6':
     dependencies:

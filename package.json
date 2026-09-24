@@ -7,7 +7,8 @@
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "build": "tsc -b"
   },
   "devDependencies": {
     "@types/node": "^24",

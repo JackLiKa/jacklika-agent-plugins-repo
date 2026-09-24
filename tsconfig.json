@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/memory" },
+    { "path": "packages/memory-git" },
+    { "path": "packages/memory-queue" },
+    { "path": "packages/memory-scope" },
+    { "path": "packages/tool-memory-filesystem" },
+    { "path": "packages/tool-memory-graph" },
+    { "path": "packages/tool-memory-vector" }
+  ]
+}

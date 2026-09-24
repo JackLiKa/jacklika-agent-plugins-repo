@@ -37,9 +37,13 @@
     "@deepseek-ai/cordis": "*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/cordis-plugin-include": "*",
-    "@deepseek-ai/cordis-plugin-loader": "*",
-    "@jacklika/dsh-tool-memory-filesystem": "workspace:*"
+    "@deepseek-ai/cordis": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis",
+    "@deepseek-ai/cordis-plugin-include": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include",
+    "@deepseek-ai/cordis-plugin-loader": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader",
+    "@jacklika/dsh-tool-memory-filesystem": "workspace:*",
+    "@deepseek-ai/dsh-llm": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm",
+    "@deepseek-ai/dsh-session": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/session",
+    "@deepseek-ai/dsh-system-prompt": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt",
+    "@deepseek-ai/dsh-tools": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools"
   }
 }

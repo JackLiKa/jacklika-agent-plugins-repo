@@ -3,8 +3,18 @@
 ## 安装进 dsh profile
 
 ```sh
-# profile 不存在时自动创建，安装 bundle 并追加到 dsh.profile.bundles
+# 1. profile 不存在时自动创建，安装 bundle 并追加到 dsh.profile.bundles
 dsh plugin --profile <name> add /path/to/mydsh-plugin/packages/memory
+
+# 2. 仅本地开发：把套件的每个包 link 进 profile，使 bundle 的
+#    cordis.patch.yml 能解析到它们（`link:` 不安装依赖）
+cd ~/.dsh/profiles/<name>
+pnpm add /path/to/mydsh-plugin/packages/tool-memory-filesystem \
+         /path/to/mydsh-plugin/packages/tool-memory-graph \
+         /path/to/mydsh-plugin/packages/tool-memory-vector \
+         /path/to/mydsh-plugin/packages/memory-scope \
+         /path/to/mydsh-plugin/packages/memory-queue \
+         /path/to/mydsh-plugin/packages/memory-git
 ```
 
 然后确认 profile 的 `bundles` 里还有应用层（如 `@deepseek-ai/dsh-headless`），启动：
@@ -13,7 +23,18 @@ dsh plugin --profile <name> add /path/to/mydsh-plugin/packages/memory
 dsh --profile <name> "<任务>"
 ```
 
-发布到 npm 后把本地路径换成 `@jacklika/dsh-memory`，用法相同。
+本地开发需要先在本仓库 `pnpm build`——包解析到 `lib/` 产物；套件内部 `devDependencies` 以 `link:` 指向本地 deepseek-harness 检出，若你的检出路径不同请修改。发布到 npm 后 `dsh plugin --profile <name> add @jacklika/dsh-memory` 即可——真实依赖会正常安装，第 2 步消失。
+
+## 卸载
+
+```sh
+cd ~/.dsh/profiles/<name>
+pnpm remove @jacklika/dsh-memory @jacklika/dsh-memory-git @jacklika/dsh-memory-queue \
+            @jacklika/dsh-memory-scope @jacklika/dsh-tool-memory-filesystem \
+            @jacklika/dsh-tool-memory-graph @jacklika/dsh-tool-memory-vector
+```
+
+再从 profile `package.json` 的 `dsh.profile.bundles` 里删掉 `"@jacklika/dsh-memory"`。`.dsh/memory/` 下的 vault 不受影响，不需要时手动删除。
 
 ## 挂载 skill
 
