@@ -1,0 +1,17 @@
+{
+  "name": "mydsh-plugin",
+  "private": true,
+  "version": "0.1.0",
+  "description": "JackLiKa's DeepSeek Harness plugin suite: the memory vault chain and future plugin packs.",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5.9",
+    "vitest": "^4"
+  }
+}

@@ -1,0 +1,36 @@
+# The dsh-memory bundle patch: the Obsidian-compatible memory vault and its
+# write ladder over dsh-base. Insert order is the waterfall order — each
+# earlier plugin wraps the dispatches of the ones after it:
+# scope rewrites private write ids into agents/<key>/ namespaces, queue
+# serializes the surviving same-lane writes across processes, git commits
+# shared/ writes inside the lock, and the filesystem tool owns the vault
+# itself. Reads stay unscoped: every agent can read the whole vault.
+- insert:
+    - id: memory-scope
+      name: '@jacklika/dsh-memory-scope'
+
+    - id: memory-queue
+      name: '@jacklika/dsh-memory-queue'
+      config:
+        crossProcessLock: true
+        laneArgument: id
+
+    - id: memory-git
+      name: '@jacklika/dsh-memory-git'
+
+    - id: tool-memory-filesystem
+      name: '@jacklika/dsh-tool-memory-filesystem'
+
+    - id: tool-memory-graph
+      name: '@jacklika/dsh-tool-memory-graph'
+
+    # Semantic search stays off until a deployment supplies an embeddings
+    # endpoint; enable it from the profile patch layer:
+    #   - id: tool-memory-vector
+    #     disabled: false
+    #     config:
+    #       endpoint: http://localhost:11434/v1/embeddings
+    #       model: nomic-embed-text
+    - id: tool-memory-vector
+      name: '@jacklika/dsh-tool-memory-vector'
+      disabled: true
