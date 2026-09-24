@@ -1,6 +1,6 @@
 # mydsh-plugin
 
-DeepSeek Harness plugin suite: the memory vault chain plus future plugin packs.
+DeepSeek Harness plugin suite: the memory vault chain plus future plugin packs. See [docs/](docs/README.md) ([中文](docs/README.zh.md)) for suite-level documentation.
 
 ## Packages
 
