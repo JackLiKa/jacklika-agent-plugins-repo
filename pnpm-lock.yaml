@@ -48,6 +48,12 @@ importers:
       '@deepseek-ai/cordis-plugin-loader':
         specifier: '*'
         version: 1.0.5(@deepseek-ai/cordis@4.0.4)
+      '@types/js-yaml':
+        specifier: ^4
+        version: 4.0.9
+      js-yaml:
+        specifier: ^4
+        version: 4.3.2
 
   packages/memory-git:
     dependencies:
@@ -67,6 +73,12 @@ importers:
       '@deepseek-ai/cordis-plugin-loader':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
         version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-llm':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm
+        version: link:../../../dsh/deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt
+        version: link:../../../dsh/deepseek-harness/packages/core/system-prompt
       '@deepseek-ai/dsh-tools':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
         version: link:../../../dsh/deepseek-harness/packages/core/tools
@@ -91,6 +103,12 @@ importers:
       '@deepseek-ai/cordis-plugin-loader':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
         version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-llm':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm
+        version: link:../../../dsh/deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt
+        version: link:../../../dsh/deepseek-harness/packages/core/system-prompt
       '@deepseek-ai/dsh-tools':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
         version: link:../../../dsh/deepseek-harness/packages/core/tools
@@ -144,6 +162,12 @@ importers:
       '@deepseek-ai/cordis-plugin-loader':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
         version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-llm':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm
+        version: link:../../../dsh/deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt
+        version: link:../../../dsh/deepseek-harness/packages/core/system-prompt
       '@deepseek-ai/dsh-tools':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
         version: link:../../../dsh/deepseek-harness/packages/core/tools
@@ -172,6 +196,12 @@ importers:
       '@deepseek-ai/cordis-plugin-loader':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
         version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-llm':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm
+        version: link:../../../dsh/deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt
+        version: link:../../../dsh/deepseek-harness/packages/core/system-prompt
       '@deepseek-ai/dsh-tools':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
         version: link:../../../dsh/deepseek-harness/packages/core/tools
@@ -197,6 +227,12 @@ importers:
       '@deepseek-ai/cordis-plugin-loader':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader
         version: link:../../../dsh/deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-llm':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm
+        version: link:../../../dsh/deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt
+        version: link:../../../dsh/deepseek-harness/packages/core/system-prompt
       '@deepseek-ai/dsh-tools':
         specifier: link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools
         version: link:../../../dsh/deepseek-harness/packages/core/tools

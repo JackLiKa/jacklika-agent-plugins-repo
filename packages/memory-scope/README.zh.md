@@ -46,13 +46,14 @@ kind: "package-reference"
 | `scopePrefix` | `string` | `'agents'` | 存放各 agent 命名空间的仓库顶层目录。 |
 | `sharedPrefixes` | `string[]` | `['shared/']` | 公共区 id 前缀；命中的 id 不重写。每项必须以 `/` 结尾。 |
 | `role` | `'scoped' \| 'curator'` | `'scoped'` | `curator` 关闭重写，使该部署可直接写公共区。 |
+| `agentKey` | `string` | `''` | 所有 session 共用的稳定命名空间 key；为空时按调用方 session id 派生。须为单段路径（字母、数字、`.`、`_`、`-`）。 |
 
 -----
 
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-插件安装一个 `ctx.on('tools/execute', …)` waterfall 监听器。对匹配的调用，它读取 `idArgument` 的值，跳过已在公共前缀或调用方自身命名空间下的 id，从 `exec.agent.id` 派生路径安全的 key，并以重写后的 id `<scopePrefix>/<key>/<id>` 通过 `ctx.tools.execute` 重派发该调用。之所以必须重派发，是因为解析后的参数在 wrapper 运行前已被深冻结；嵌套执行继承 `rootCallId`、标记 `parent`、并使用 `<callId>:scoped` 调用 id，因此持久日志记录的是真实落盘 id。没有 agent、没有字符串 id、或 `curator` 角色下的调用直接 `next()` 透传。
+插件安装一个 `ctx.on('tools/execute', …)` waterfall 监听器。对匹配的调用，它读取 `idArgument` 的值，跳过已在公共前缀或调用方自身命名空间下的 id，从 `agentKey`（配置时）或 `exec.agent.id`（未配置时）派生路径安全的 key，并以重写后的 id `<scopePrefix>/<key>/<id>` 通过 `ctx.tools.execute` 重派发该调用。之所以必须重派发，是因为解析后的参数在 wrapper 运行前已被深冻结；嵌套执行继承 `rootCallId`、标记 `parent`、并使用 `<callId>:scoped` 调用 id，因此持久日志记录的是真实落盘 id。没有 agent、没有字符串 id、或 `curator` 角色下的调用直接 `next()` 透传。
 
 -----
 
@@ -71,7 +72,7 @@ kind: "package-reference"
 
 - **划分是咨询性的** —— 不在 `toolNames` 中的工具、或瀑布链之外的写入方（shell 命令、未挂载的进程）仍可写任意路径；公共区需要 `@jacklika/dsh-memory-queue` 提供真正的仲裁。
 - **只划分写，不划分读** —— 每个 agent 都能读和搜索整个仓库，包括其他 agent 的命名空间；按 agent 的读隔离留待后续。
-- **命名空间 key 跟随 session id** —— 恢复或 fork 的会话只有在运行时保留 `exec.agent.id` 时才维持自己的 key；非 agent 调用不做划分。
+- **命名空间 key 默认跟随 session id** —— 每个新会话是新命名空间，同 id 的续写不会跨会话落在同一文件；需要跨会话可续写的稳定空间时配置 `agentKey`。恢复或 fork 的会话只有在运行时保留 `exec.agent.id` 时才维持自己的 key；非 agent 调用不做划分。
 
 <a id="dev-note"></a>
 ### 开发备注

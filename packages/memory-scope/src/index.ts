@@ -44,6 +44,13 @@ export interface Config {
    * rewriting for deployments meant to write the shared zone directly.
    */
   role?: ScopeRole
+  /**
+   * Stable namespace key used instead of the per-session id when set. Every
+   * session mounting this config shares `agents/<agentKey>/`, so notes stay
+   * appendable across sessions. Must be a single path segment of letters,
+   * digits, `.`, `_`, or `-`; empty keeps the per-session default.
+   */
+  agentKey?: string
 }
 
 /** Schemastery configuration for the memory scope consumer. */
@@ -53,18 +60,21 @@ export const Config: z<Config> = z.object({
   scopePrefix: z.string().default('agents'),
   sharedPrefixes: z.array(z.string()).default(['shared/']),
   role: z.union(['scoped', 'curator']).default('scoped'),
+  agentKey: z.string().default(''),
 })
 
 /** The shape after schemastery applied the defaults. */
 type ResolvedConfig = Required<Config>
 
 /**
- * Derive a path-safe namespace segment from the calling agent's session id.
+ * Derive a path-safe namespace segment: the configured `agentKey` wins, else
+ * the calling agent's session id.
  * @param exec - the pending call carrying the optional agent.
- * @returns a sanitized key, or `''` when the call has no agent.
+ * @param configured - deployment's explicit stable key (`''` selects per-session).
+ * @returns a sanitized key, or `''` when the call has no agent and no configured key.
  */
-function agentKey(exec: ToolDispatchExecution): string {
-  const raw = exec.agent?.id
+function agentKey(exec: ToolDispatchExecution, configured: string): string {
+  const raw = configured !== '' ? configured : exec.agent?.id
   if (raw === undefined) return ''
   const cleaned = raw.replace(/[^A-Za-z0-9._-]+/g, '-')
   return cleaned === '' ? 'agent' : cleaned
@@ -91,6 +101,9 @@ export function apply(ctx: Context, config: Config): void {
   if (resolved.sharedPrefixes.some(prefix => !prefix.endsWith('/'))) {
     throw new Error('memory-scope: every sharedPrefixes entry must end with "/"')
   }
+  if (resolved.agentKey !== '' && !/^[A-Za-z0-9._-]+$/.test(resolved.agentKey)) {
+    throw new Error('memory-scope: agentKey must be a single path segment of letters, digits, dot, underscore, or dash')
+  }
   const names = new Set(resolved.toolNames)
   const shared = resolved.sharedPrefixes
 
@@ -101,7 +114,7 @@ export function apply(ctx: Context, config: Config): void {
     const id = (args as Record<string, unknown>)[resolved.idArgument]
     if (typeof id !== 'string') return next()
     if (shared.some(prefix => id.startsWith(prefix))) return next()
-    const key = agentKey(exec)
+    const key = agentKey(exec, resolved.agentKey)
     if (key === '') return next()
     const ownPrefix = `${resolved.scopePrefix}/${key}/`
     if (id.startsWith(ownPrefix)) return next()

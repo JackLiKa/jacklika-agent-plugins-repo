@@ -47,6 +47,8 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/cordis-plugin-include": "*",
-    "@deepseek-ai/cordis-plugin-loader": "*"
+    "@deepseek-ai/cordis-plugin-loader": "*",
+    "js-yaml": "^4",
+    "@types/js-yaml": "^4"
   }
 }

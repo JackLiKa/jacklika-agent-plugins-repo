@@ -119,6 +119,21 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     expect(await readFile(join(vault, 'shared', 'summary.md'), 'utf8')).toContain('from agent-1')
   })
 
+  it('shares one namespace across sessions when agentKey is configured', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
+    const ctx = await boot(vault, ["    agentKey: 'main'"])
+
+    const r1 = await write(ctx, 'k1', 'notes/x.md', 'session-a', vault)
+    if (r1.isError) throw new Error('expected scoped wiki_write success')
+    expect((JSON.parse(resultText(r1)) as { id: string }).id).toBe(join('agents', 'main', 'notes', 'x.md'))
+
+    const r2 = await write(ctx, 'k2', 'notes/x.md', 'session-b', vault)
+    if (r2.isError) throw new Error('expected second session write success')
+    const text = await readFile(join(vault, 'agents', 'main', 'notes', 'x.md'), 'utf8')
+    expect(text).toContain('from session-a')
+    expect(text).toContain('from session-b')
+  })
+
   it('passes every id through under the curator role', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
     const ctx = await boot(vault, ['    role: curator'])

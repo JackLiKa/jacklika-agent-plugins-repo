@@ -62,7 +62,7 @@ Coordination plugins register no tools; they decorate `wiki_write`:
 
 | Plugin | Config highlights |
 |---|---|
-| `dsh-memory-scope` | `sharedPrefixes` (default `['shared/']`), `role: curator` |
+| `dsh-memory-scope` | `sharedPrefixes` (default `['shared/']`), `role: curator`, `agentKey` (empty = per-session namespace) |
 | `dsh-memory-queue` | `crossProcessLock`, `laneArgument: id` |
 | `dsh-memory-git` | `prefixes` (default `['shared/']`), `nestedRepo: init \| inherit \| own` (default `init`) |
 

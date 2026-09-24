@@ -62,7 +62,7 @@ pnpm remove @jacklika/dsh-memory @jacklika/dsh-memory-git @jacklika/dsh-memory-q
 
 | 插件 | 主要配置 |
 |---|---|
-| `dsh-memory-scope` | `sharedPrefixes`（默认 `['shared/']`）、`role: curator` |
+| `dsh-memory-scope` | `sharedPrefixes`（默认 `['shared/']`）、`role: curator`、`agentKey`（留空 = 按会话划分命名空间） |
 | `dsh-memory-queue` | `crossProcessLock`、`laneArgument: id` |
 | `dsh-memory-git` | `prefixes`（默认 `['shared/']`）、`nestedRepo: init \| inherit \| own`（默认 `init`） |
 

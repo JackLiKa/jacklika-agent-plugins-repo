@@ -46,13 +46,14 @@ A curator deployment that consolidates `agents/*` notes into `shared/` mounts th
 | `scopePrefix` | `string` | `'agents'` | Top-level vault directory holding every agent namespace. |
 | `sharedPrefixes` | `string[]` | `['shared/']` | Id prefixes forming the shared zone; matching ids are not rewritten. Each entry must end with `/`. |
 | `role` | `'scoped' \| 'curator'` | `'scoped'` | `curator` disables rewriting so the deployment writes the shared zone directly. |
+| `agentKey` | `string` | `''` | Stable namespace key shared by every session; empty derives the key from the calling session id. Single path segment of letters, digits, `.`, `_`, `-`. |
 
 -----
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The plugin installs one `ctx.on('tools/execute', …)` waterfall listener. For a matching call it reads the `idArgument` value, skips ids already under a shared prefix or the caller's own namespace, derives a path-safe key from `exec.agent.id`, and re-dispatches the call through `ctx.tools.execute` with the id rewritten to `<scopePrefix>/<key>/<id>`. Re-dispatch is required because parsed arguments are deep-frozen before wrappers run; the nested execution inherits `rootCallId`, marks `parent`, and mints a `<callId>:scoped` call id, so the durable log records the real on-disk id. Calls without an agent, without a string id, or under the `curator` role pass straight to `next()`.
+The plugin installs one `ctx.on('tools/execute', …)` waterfall listener. For a matching call it reads the `idArgument` value, skips ids already under a shared prefix or the caller's own namespace, derives a path-safe key from `agentKey` when configured or `exec.agent.id` otherwise, and re-dispatches the call through `ctx.tools.execute` with the id rewritten to `<scopePrefix>/<key>/<id>`. Re-dispatch is required because parsed arguments are deep-frozen before wrappers run; the nested execution inherits `rootCallId`, marks `parent`, and mints a `<callId>:scoped` call id, so the durable log records the real on-disk id. Calls without an agent, without a string id, or under the `curator` role pass straight to `next()`.
 
 -----
 
@@ -71,7 +72,7 @@ The wrapper does not change the request header, system prompt, or tool list.
 
 - **Scoping is advisory** — a tool not listed in `toolNames`, or a writer outside the waterfall (shell command, unmounted process), can still write any path; the shared zone needs `@jacklika/dsh-memory-queue` for real arbitration.
 - **Writes are scoped, reads are not** — every agent can read and search the whole vault including other agents' namespaces; per-agent read isolation is deferred.
-- **Namespace key follows the session id** — resumed or forked sessions keep their own key only when the runtime preserves `exec.agent.id`; non-agent calls pass through unscoped.
+- **Namespace key follows the session id by default** — each new session is a fresh namespace, so appends to the same id do not continue across sessions; configure `agentKey` for a stable cross-session namespace. Resumed or forked sessions keep their own key only when the runtime preserves `exec.agent.id`; non-agent calls pass through unscoped.
 
 <a id="dev-note"></a>
 ### Dev Note
