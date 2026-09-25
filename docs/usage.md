@@ -159,6 +159,21 @@ Vector search is disabled in the Bundle. Enable it only with an explicit HTTP(S)
 
 Keep the key in the named environment variable. It is sent only as the endpoint's Bearer token and is not written to the Vault, Git, or error messages.
 
+## Manual usability smoke test
+
+The automated gates cover correctness, concurrency, packaging, and Profile composition; only a live session proves the model can actually use the chain. Run this once in the desktop app after installing the Bundle and restarting.
+
+The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, `--dump-config`, or manage it — so add the Bundle through the Web **Plugins** page, not `dsh plugin`.
+
+| Ask the agent | Then confirm |
+|---|---|
+| Write a note `shared/notes/x.md` | `<workspace>/.dsh/memory/shared/notes/x.md` exists, and `git -C <vault> log --oneline` shows a `wiki_write` commit authored by `dsh-memory-git` |
+| Write a private note `daily/x.md` | Lands under `<vault>/agents/<session id>/daily/x.md` with **no** Git commit |
+| Read the note and follow its `[[links]]` | `wiki_read` returns the linked notes in `linkedNotes` |
+| Search the vault / show the link graph | `wiki_search` returns hits; `wiki_graph` returns nodes and edges |
+
+`<vault>` defaults to `<session workspace>/.dsh/memory/`. Mount `skills/memory-vault` separately (`customSkillDirs`) or the model will not know the read-before-write and `baseVersion` conventions.
+
 ## Troubleshooting
 
 | Symptom | Action |

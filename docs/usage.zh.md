@@ -159,6 +159,21 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 
 把 key 放在该环境变量中。它只作为 endpoint 的 Bearer token 发送，不会写进 Vault、Git 或错误消息。
 
+## 手动可用性冒烟测试
+
+自动化闸门覆盖了正确性、并发、打包与 Profile 装配；只有真实会话才能证明模型真的用得上这条链。安装 Bundle 并重启后，在桌面应用里跑一遍。
+
+`desktop` Profile 归 Electron 应用独占 —— CLI 会拒绝 boot、`--dump-config` 或插件管理 —— 所以请通过 Web 的 **Plugins** 页面添加 Bundle，而不是用 `dsh plugin`。
+
+| 让 agent 做 | 然后核对 |
+|---|---|
+| 写一条 `shared/notes/x.md` | `<workspace>/.dsh/memory/shared/notes/x.md` 存在，且 `git -C <vault> log --oneline` 有一条作者为 `dsh-memory-git` 的 `wiki_write` 提交 |
+| 写一条私有笔记 `daily/x.md` | 落到 `<vault>/agents/<session id>/daily/x.md`，且**没有** Git 提交 |
+| 读取笔记并跟随 `[[链接]]` | `wiki_read` 在 `linkedNotes` 中返回被链接的笔记 |
+| 搜索 vault / 展示链接图 | `wiki_search` 返回命中；`wiki_graph` 返回节点与边 |
+
+`<vault>` 默认为 `<session workspace>/.dsh/memory/`。请单独挂载 `skills/memory-vault`（`customSkillDirs`），否则模型不会知道"先读后写"与 `baseVersion` 的约定。
+
 ## 常见问题
 
 | 现象 | 处理 |
