@@ -1,5 +1,5 @@
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 
@@ -15,6 +15,7 @@ function hashFile(path) {
   return result.stdout.trim()
 }
 
+/** Parse `<filename>: <sha1>` entries from an i18n record. */
 function parseHashes(text) {
   const hashes = {}
   for (const line of text.split(/\r?\n/)) {
@@ -35,10 +36,16 @@ function replaceHashes(text, hashes) {
   return lines.join('\n')
 }
 
-function pairName(file) {
-  if (file.endsWith('.zh.md')) return file.slice(0, -'.zh.md'.length)
-  if (file.endsWith('.md')) return file.slice(0, -'.md'.length)
-  return file
+async function* walkZhMdFiles(dir) {
+  const entries = await readdir(dir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue
+      yield* walkZhMdFiles(join(dir, entry.name))
+    } else if (entry.name.endsWith('.zh.md')) {
+      yield join(dir, entry.name)
+    }
+  }
 }
 
 async function* walkI18nFiles(dir) {
@@ -47,132 +54,101 @@ async function* walkI18nFiles(dir) {
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue
       yield* walkI18nFiles(join(dir, entry.name))
-    } else if (entry.name.endsWith('.i18n.yaml')) {
+    } else if (entry.name === 'i18n.yaml') {
       yield join(dir, entry.name)
     }
   }
 }
 
-async function listPairs(scopeDir, enSuffix, zhSuffix) {
-  const pairs = []
-  const entries = await readdir(scopeDir, { withFileTypes: true })
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    const dir = join(scopeDir, entry.name)
-    const enPath = join(dir, enSuffix)
-    const zhPath = join(dir, zhSuffix)
-    const hasEn = await fileExists(enPath)
-    const hasZh = await fileExists(zhPath)
-    if (hasEn || hasZh) {
-      pairs.push({ dir, hasEn, hasZh })
-    }
-  }
-  return pairs
+function baseName(zhFile) {
+  return basename(zhFile, '.zh.md')
 }
 
-async function fileExists(path) {
-  try {
-    await stat(path)
-    return true
-  } catch (error) {
-    if ((error?.code ?? '') === 'ENOENT') return false
-    throw error
-  }
+function posixPath(absolutePath) {
+  return relative(root, absolutePath).replace(/\\/g, '/')
 }
 
-async function guardedPairs() {
-  let failed = false
+async function main() {
+  // Load every recorded hash from every i18n.yaml record.
+  const records = new Map() // key -> { i18nPath, file, hash }
   const i18nFiles = explicitPaths.length > 0
     ? explicitPaths.map(p => resolve(root, p))
     : await Array.fromAsync(walkI18nFiles(root))
 
   for (const i18nPath of i18nFiles) {
     const dir = dirname(i18nPath)
-    let text = await readFile(i18nPath, 'utf8')
-    const recorded = parseHashes(text)
-    const pairs = new Map()
-    for (const file of Object.keys(recorded)) {
-      const base = pairName(file)
-      if (!pairs.has(base)) pairs.set(base, [])
-      pairs.get(base).push(file)
-    }
-
-    for (const [base, files] of pairs) {
-      if (files.length !== 2) {
-        failed = true
-        process.stderr.write(`${i18nPath}: pair "${base}" has ${files.length} side(s) (${files.join(', ')}); expected exactly 2\n`)
-        continue
-      }
-      const zhFile = files.find(f => f.endsWith('.zh.md'))
-      const enFile = files.find(f => f !== zhFile)
-      if (!enFile || !zhFile) {
-        failed = true
-        process.stderr.write(`${i18nPath}: pair "${base}" must contain one .md and one .zh.md (${files.join(', ')})\n`)
-        continue
-      }
-      const enPath = join(dir, enFile)
-      const zhPath = join(dir, zhFile)
-      const actual = { [enFile]: hashFile(enPath), [zhFile]: hashFile(zhPath) }
-      const mismatched = []
-      for (const file of files) {
-        if (recorded[file] !== actual[file]) mismatched.push(file)
-      }
-      if (mismatched.length === 0) {
-        process.stdout.write(`${relative(root, dir)}: ${enFile} ↔ ${zhFile} match recorded hashes\n`)
-        continue
-      }
-      if (writeFlag) {
-        text = replaceHashes(text, actual)
-        await writeFile(i18nPath, text)
-        process.stdout.write(`${relative(root, dir)}: re-recorded hashes for ${mismatched.join(', ')}\n`)
-      } else {
-        failed = true
-        for (const file of mismatched) {
-          process.stderr.write(`${relative(root, dir)}/${file}: hash drift (recorded ${recorded[file]}, actual ${actual[file]})\n`)
-        }
-      }
+    const text = await readFile(i18nPath, 'utf8')
+    const hashes = parseHashes(text)
+    for (const [file, hash] of Object.entries(hashes)) {
+      records.set(posixPath(join(dir, file)), { i18nPath, file, hash })
     }
   }
 
-  return { failed }
-}
+  // Discover every *.zh.md and its English counterpart.
+  const zhFiles = explicitPaths.length > 0
+    ? explicitPaths.map(p => resolve(root, p))
+    : await Array.fromAsync(walkZhMdFiles(root))
 
-async function unguardedPairs() {
   let failed = false
-  // Package README pairs.
-  const packagesRoot = join(root, 'packages')
-  const packagePairs = await listPairs(packagesRoot, 'README.md', 'README.zh.md')
-  for (const { dir, hasEn, hasZh } of packagePairs) {
-    const i18nPath = join(dir, 'README.i18n.yaml')
-    if (!hasEn || !hasZh || !await fileExists(i18nPath)) {
-      failed = true
-      process.stderr.write(`${relative(root, dir)}: unguarded bilingual README pair (${hasEn ? 'EN' : 'missing EN'}, ${hasZh ? 'ZH' : 'missing ZH'}, i18n=${await fileExists(i18nPath) ? 'yes' : 'no'})\n`)
-    }
-  }
+  const updatesByI18n = new Map() // i18nPath -> { text, hashes }
 
-  // Docs page pairs.
-  const docsDir = join(root, 'docs')
-  const docsEntries = await readdir(docsDir)
-  const zhPages = new Set(docsEntries.filter(name => name.endsWith('.zh.md')))
-  for (const name of docsEntries) {
-    if (!name.endsWith('.md') || name.endsWith('.zh.md') || name.endsWith('.i18n.yaml')) continue
-    const zhName = `${pairName(name)}.zh.md`
-    if (!zhPages.has(zhName)) {
+  for (const zhPath of zhFiles) {
+    const dir = dirname(zhPath)
+    const base = baseName(zhPath)
+    const zhFile = `${base}.zh.md`
+    const enFile = `${base}.md`
+    const enPath = join(dir, enFile)
+    const zhKey = posixPath(zhPath)
+    const enKey = posixPath(enPath)
+
+    const zhRecord = records.get(zhKey)
+    const enRecord = records.get(enKey)
+    if (!enRecord || !zhRecord || enRecord.i18nPath !== zhRecord.i18nPath) {
       failed = true
-      process.stderr.write(`docs/${name}: missing Chinese pair docs/${zhName}\n`)
+      process.stderr.write(`${relative(root, dir)}: bilingual pair ${enFile} ↔ ${zhFile} is not guarded by an i18n.yaml record\n`)
       continue
     }
-  }
-  const i18nPath = join(docsDir, 'docs.i18n.yaml')
-  if (!await fileExists(i18nPath)) {
-    failed = true
-    process.stderr.write(`docs/: missing docs/docs.i18n.yaml for bilingual page pairs\n`)
+
+    const i18nPath = enRecord.i18nPath
+    const actualEn = hashFile(enPath)
+    const actualZh = hashFile(zhPath)
+    const drifted = []
+    if (enRecord.hash !== actualEn) drifted.push(enFile)
+    if (zhRecord.hash !== actualZh) drifted.push(zhFile)
+
+    if (drifted.length === 0) {
+      process.stdout.write(`${relative(root, dir)}: ${enFile} ↔ ${zhFile} match recorded hashes\n`)
+      continue
+    }
+
+    if (writeFlag) {
+      let entry = updatesByI18n.get(i18nPath)
+      if (!entry) {
+        entry = { text: await readFile(i18nPath, 'utf8'), hashes: {} }
+        updatesByI18n.set(i18nPath, entry)
+      }
+      if (enRecord.hash !== actualEn) entry.hashes[enFile] = actualEn
+      if (zhRecord.hash !== actualZh) entry.hashes[zhFile] = actualZh
+      process.stdout.write(`${relative(root, dir)}: re-recorded hashes for ${drifted.join(', ')}\n`)
+    } else {
+      failed = true
+      if (enRecord.hash !== actualEn) {
+        process.stderr.write(`${relative(root, dir)}/${enFile}: hash drift (recorded ${enRecord.hash}, actual ${actualEn})\n`)
+      }
+      if (zhRecord.hash !== actualZh) {
+        process.stderr.write(`${relative(root, dir)}/${zhFile}: hash drift (recorded ${zhRecord.hash}, actual ${actualZh})\n`)
+      }
+    }
   }
 
-  return failed
+  if (writeFlag) {
+    for (const [i18nPath, { text, hashes }] of updatesByI18n) {
+      const updated = replaceHashes(text, hashes)
+      await writeFile(i18nPath, updated)
+    }
+  }
+
+  if (failed) process.exit(1)
 }
 
-const { failed: guardFailed } = await guardedPairs()
-const unguardFailed = await unguardedPairs()
-
-if (guardFailed || unguardFailed) process.exit(1)
+await main()

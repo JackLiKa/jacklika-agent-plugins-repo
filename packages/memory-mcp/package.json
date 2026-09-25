@@ -13,6 +13,6 @@
     ".": "./src/server.mjs",
     "./package.json": "./package.json"
   },
-  "files": ["src/server.mjs", "src/server.d.ts"],
+  "files": ["src/server.mjs", "src/server.d.ts", "README.md", "README.zh.md"],
   "license": "MIT"
 }
