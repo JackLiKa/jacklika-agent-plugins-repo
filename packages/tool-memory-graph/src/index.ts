@@ -7,13 +7,12 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { relative } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
-  containedPathReal, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter,
+  containedPathReal, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter, vaultRelativeId,
 } from '@jacklika/dsh-tool-memory-filesystem'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -100,7 +99,7 @@ async function noteTitle(absolutePath: string, id: string): Promise<string> {
  */
 async function buildGraph(root: string, resolved: ResolvedConfig): Promise<MemoryGraph> {
   const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
-  const entries = paths.map(path => [relative(root, path), path] as const)
+  const entries = paths.map(path => [vaultRelativeId(root, path), path] as const)
 
   const truncated = entries.length > resolved.maxNodes
   const capped = entries.slice(0, resolved.maxNodes)
@@ -114,7 +113,7 @@ async function buildGraph(root: string, resolved: ResolvedConfig): Promise<Memor
     for (const link of extractLinks(text)) {
       const targetPath = await resolveLinkTarget(root, resolved.extensions, link)
       if (targetPath === undefined) continue
-      const targetId = relative(root, targetPath)
+      const targetId = vaultRelativeId(root, targetPath)
       if (idSet.has(targetId)) edges.push({ from: id, to: targetId })
     }
   }
@@ -137,7 +136,7 @@ async function buildSubgraph(
   depth: number,
 ): Promise<MemoryGraph> {
   const startPath = await containedPathReal(root, startId)
-  const visited = new Map<string, string>([[relative(root, startPath), startPath]])
+  const visited = new Map<string, string>([[vaultRelativeId(root, startPath), startPath]])
   let frontier = [startPath]
 
   for (let level = 0; level < depth && frontier.length > 0; level += 1) {
@@ -147,7 +146,7 @@ async function buildSubgraph(
       for (const link of extractLinks(text)) {
         const targetPath = await resolveLinkTarget(root, resolved.extensions, link)
         if (targetPath === undefined) continue
-        const toId = relative(root, targetPath)
+        const toId = vaultRelativeId(root, targetPath)
         if (!visited.has(toId)) {
           visited.set(toId, targetPath)
           next.push(targetPath)
@@ -169,7 +168,7 @@ async function buildSubgraph(
     for (const link of extractLinks(text)) {
       const targetPath = await resolveLinkTarget(root, resolved.extensions, link)
       if (targetPath === undefined) continue
-      const toId = relative(root, targetPath)
+      const toId = vaultRelativeId(root, targetPath)
       if (idSet.has(toId)) edges.push({ from: id, to: toId })
     }
   }

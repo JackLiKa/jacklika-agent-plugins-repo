@@ -9,11 +9,11 @@
 
 import { randomUUID } from 'node:crypto'
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { listNotePaths, resolveMemoryVaultRoot } from '@jacklika/dsh-tool-memory-filesystem'
+import { listNotePaths, resolveMemoryVaultRoot, vaultRelativeId } from '@jacklika/dsh-tool-memory-filesystem'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-memory-vector'
@@ -163,7 +163,7 @@ async function loadIndex(root: string): Promise<VectorIndex> {
 async function refreshIndex(root: string, resolved: ResolvedConfig, signal: AbortSignal): Promise<VectorIndex> {
   const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
   const loaded = await loadIndex(root)
-  const alive = new Set(paths.map(path => relative(root, path)))
+  const alive = new Set(paths.map(path => vaultRelativeId(root, path)))
 
   let removed = 0
   const index: VectorIndex = {}
@@ -177,7 +177,7 @@ async function refreshIndex(root: string, resolved: ResolvedConfig, signal: Abor
 
   const stale: { id: string; text: string }[] = []
   for (const path of paths) {
-    const id = relative(root, path)
+    const id = vaultRelativeId(root, path)
     const info = await stat(path)
     if (index[id]?.mtimeMs === info.mtimeMs) continue
     const text = await readFile(path, 'utf8')

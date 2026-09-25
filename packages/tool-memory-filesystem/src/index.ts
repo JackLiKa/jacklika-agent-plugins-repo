@@ -20,6 +20,14 @@ import type { Note, SearchResult } from './types.ts'
 
 export type * from './types.ts'
 
+/**
+ * Compute a vault-relative note id from an absolute path. The result always
+ * uses POSIX separators so note ids are stable across Windows, macOS, and Linux.
+ */
+export function vaultRelativeId(root: string, absolutePath: string): string {
+  return relative(root, absolutePath).replace(/\\/g, '/')
+}
+
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-memory-filesystem'
 
@@ -279,7 +287,7 @@ export async function readNote(
   if (visited.has(absolutePath)) {
     return {
       path: absolutePath,
-      id: relative(root, absolutePath),
+      id: vaultRelativeId(root, absolutePath),
       frontmatter: {},
       body: '',
       links: [],
@@ -304,7 +312,7 @@ export async function readNote(
   }
   return {
     path: absolutePath,
-    id: relative(root, absolutePath),
+    id: vaultRelativeId(root, absolutePath),
     frontmatter,
     body,
     links,
@@ -333,7 +341,7 @@ export async function buildIndex(
     const { frontmatter, body } = splitFrontmatter(text)
     notes.push({
       path,
-      id: relative(root, path),
+      id: vaultRelativeId(root, path),
       frontmatter,
       body,
       links: extractLinks(text),
@@ -536,7 +544,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       exec.signal.throwIfAborted()
       await writeAtomic(absolutePath, finalBody)
-      return { id: relative(vaultRoot, absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
+      return { id: vaultRelativeId(vaultRoot, absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
     },
   })))
 }

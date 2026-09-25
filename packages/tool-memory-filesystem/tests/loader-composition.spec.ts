@@ -307,6 +307,6 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(hitResult.isError).toBe(false)
     if (hitResult.isError) throw new Error('expected wiki_search success')
     const hits = JSON.parse(resultText(hitResult)) as { id: string }[]
-    expect(hits.some(h => h.id === join('.dsh', 'memory', 'secret.md'))).toBe(true)
+    expect(hits.some(h => h.id === '.dsh/memory/secret.md')).toBe(true)
   })
 })

@@ -93,7 +93,7 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     expect(r1.isError).toBe(false)
     if (r1.isError) throw new Error('expected scoped wiki_write success')
     const out = JSON.parse(resultText(r1)) as { id: string }
-    expect(out.id).toBe(join('agents', 'agent-1', 'notes', 'x.md'))
+    expect(out.id).toBe('agents/agent-1/notes/x.md')
     expect(await readFile(join(vault, 'agents', 'agent-1', 'notes', 'x.md'), 'utf8')).toContain('from agent-1')
 
     // A second agent writing the same id lands in its own namespace.
@@ -105,7 +105,7 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     const r3 = await write(ctx, 'w3', 'agents/agent-1/notes/y.md', 'agent-1', vault)
     expect(r3.isError).toBe(false)
     if (r3.isError) throw new Error('expected already-scoped wiki_write success')
-    expect((JSON.parse(resultText(r3)) as { id: string }).id).toBe(join('agents', 'agent-1', 'notes', 'y.md'))
+    expect((JSON.parse(resultText(r3)) as { id: string }).id).toBe('agents/agent-1/notes/y.md')
   })
 
   it('withdraws its tools/execute wrapper when the Loader fiber unloads', async () => {
@@ -116,7 +116,7 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     await entry.fiber.dispose()
     const result = await write(ctx, 'unscoped', 'notes/x.md', 'agent-1', vault)
     if (result.isError) throw new Error('expected unscoped write success')
-    expect((JSON.parse(resultText(result)) as { id: string }).id).toBe(join('notes', 'x.md'))
+    expect((JSON.parse(resultText(result)) as { id: string }).id).toBe('notes/x.md')
   })
 
   it('leaves shared zone ids untouched for queue or curator arbitration', async () => {
@@ -126,7 +126,7 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     const result = await write(ctx, 'shared-1', 'shared/summary.md', 'agent-1', vault)
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected shared wiki_write success')
-    expect((JSON.parse(resultText(result)) as { id: string }).id).toBe(join('shared', 'summary.md'))
+    expect((JSON.parse(resultText(result)) as { id: string }).id).toBe('shared/summary.md')
     expect(await readFile(join(vault, 'shared', 'summary.md'), 'utf8')).toContain('from agent-1')
   })
 
@@ -136,7 +136,7 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
 
     const r1 = await write(ctx, 'k1', 'notes/x.md', 'session-a', vault)
     if (r1.isError) throw new Error('expected scoped wiki_write success')
-    expect((JSON.parse(resultText(r1)) as { id: string }).id).toBe(join('agents', 'main', 'notes', 'x.md'))
+    expect((JSON.parse(resultText(r1)) as { id: string }).id).toBe('agents/main/notes/x.md')
 
     const r2 = await write(ctx, 'k2', 'notes/x.md', 'session-b', vault)
     if (r2.isError) throw new Error('expected second session write success')
@@ -152,6 +152,6 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     const result = await write(ctx, 'cur-1', 'shared/summary.md', 'curator', vault)
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected curator wiki_write success')
-    expect((JSON.parse(resultText(result)) as { id: string }).id).toBe(join('shared', 'summary.md'))
+    expect((JSON.parse(resultText(result)) as { id: string }).id).toBe('shared/summary.md')
   })
 })

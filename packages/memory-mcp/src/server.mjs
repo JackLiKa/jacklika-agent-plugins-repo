@@ -28,6 +28,11 @@ const MAX_LINK_DEPTH = Number(argValue('--max-link-depth', '1'))
 const EXTENSIONS = ['.md']
 const EXCLUDE_DIRS = new Set(['.git', 'node_modules', '.obsidian'])
 
+/** Return a POSIX-style vault-relative id from an absolute path. */
+function vaultRelativeId(absolutePath) {
+  return relative(VAULT, absolutePath).replace(/\\/g, '/')
+}
+
 // ── Vault operations (mirrors @jacklika/dsh-tool-memory-filesystem) ──────────
 
 function containedPath(candidate) {
@@ -118,7 +123,7 @@ async function resolveLinkTarget(link) {
 }
 
 async function readNote(absolutePath, depth, visited = new Set()) {
-  const id = relative(VAULT, absolutePath)
+  const id = vaultRelativeId(absolutePath)
   if (visited.has(absolutePath)) {
     return { id, frontmatter: {}, body: '', links: [], version: '', linkedNotes: [] }
   }
@@ -143,7 +148,7 @@ async function searchNotes(query, maxResults = 20) {
   for (const path of await listNotePaths()) {
     const text = await readFile(path, 'utf8')
     const { body } = splitFrontmatter(text)
-    const id = relative(VAULT, path)
+    const id = vaultRelativeId(path)
     const title = /^#\s+(.+)$/m.exec(body)?.[1]?.trim() ?? id.replace(/\.[^.]+$/, '')
     notes.push({ id, title, links: extractLinks(text), body })
   }
@@ -188,11 +193,11 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
     await rm(tmp, { force: true }).catch(() => undefined)
     throw error
   }
-  return { id: relative(VAULT, absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
+  return { id: vaultRelativeId(absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
 }
 
 async function buildGraph(id, depth = 1, maxNodes = 200) {
-  const idOf = p => relative(VAULT, p)
+  const idOf = p => vaultRelativeId(p)
   const title = async p => {
     const { body } = splitFrontmatter(await readFile(p, 'utf8'))
     return /^#\s+(.+)$/m.exec(body)?.[1]?.trim() ?? idOf(p).replace(/\.[^.]+$/, '')
@@ -336,11 +341,14 @@ rl.on('line', line => {
         case 'resources/list': {
           const paths = await listNotePaths()
           result = {
-            resources: paths.map(p => ({
-              uri: `note:///${relative(VAULT, p)}`,
-              name: relative(VAULT, p),
-              mimeType: 'text/markdown',
-            })),
+            resources: paths.map(p => {
+              const id = vaultRelativeId(p)
+              return {
+                uri: `note:///${id}`,
+                name: id,
+                mimeType: 'text/markdown',
+              }
+            }),
           }
           break
         }
