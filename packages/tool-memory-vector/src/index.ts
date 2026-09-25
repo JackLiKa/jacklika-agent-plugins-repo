@@ -7,7 +7,8 @@
  * @module @jacklika/dsh-tool-memory-vector
  */
 
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -39,6 +40,10 @@ export interface Config {
   model: string
   /** Optional bearer token sent to the embeddings endpoint. */
   apiKey?: string
+  /** Environment variable holding the bearer token when `apiKey` is empty. */
+  apiKeyEnv?: string
+  /** Maximum time for one embeddings request. */
+  requestTimeoutMs?: number
   /** Maximum search hits to return. */
   maxResults?: number
   /** Maximum UTF-8 characters of one note sent to the embeddings endpoint. */
@@ -56,6 +61,8 @@ export const Config: z<Config> = z.object({
   endpoint: z.string(),
   model: z.string(),
   apiKey: z.string().default(''),
+  apiKeyEnv: z.string().default('DSH_MEMORY_EMBEDDING_API_KEY'),
+  requestTimeoutMs: z.number().default(30000),
   maxResults: z.number().default(10),
   maxCharsPerNote: z.number().default(8000),
   batchSize: z.number().default(16),
@@ -86,14 +93,16 @@ function assertPositiveInteger(name: string, value: number): void {
  * @param inputs - note texts or the query text.
  * @returns one embedding vector per input.
  */
-async function embed(resolved: ResolvedConfig, inputs: string[]): Promise<number[][]> {
+async function embed(resolved: ResolvedConfig, inputs: string[], signal: AbortSignal): Promise<number[][]> {
   if (inputs.length === 0) return []
   const headers: Record<string, string> = { 'content-type': 'application/json' }
-  if (resolved.apiKey !== '') headers.authorization = `Bearer ${resolved.apiKey}`
+  const apiKey = resolved.apiKey !== '' ? resolved.apiKey : process.env[resolved.apiKeyEnv] ?? ''
+  if (apiKey !== '') headers.authorization = `Bearer ${apiKey}`
   const response = await fetch(resolved.endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify({ model: resolved.model, input: inputs }),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(resolved.requestTimeoutMs)]),
   })
   if (!response.ok) {
     throw new Error(`tool-memory-vector: embeddings endpoint returned ${response.status}`)
@@ -103,13 +112,17 @@ async function embed(resolved: ResolvedConfig, inputs: string[]): Promise<number
   if (!Array.isArray(data) || data.length !== inputs.length) {
     throw new Error('tool-memory-vector: embeddings endpoint returned a mismatched data array')
   }
-  return data.map((entry) => {
+  const vectors = data.map((entry) => {
     const vector = entry.embedding
-    if (!Array.isArray(vector) || vector.length === 0) {
-      throw new Error('tool-memory-vector: embeddings endpoint returned an empty vector')
+    if (!Array.isArray(vector) || vector.length === 0 || vector.some(value => !Number.isFinite(value))) {
+      throw new Error('tool-memory-vector: embeddings endpoint returned an invalid vector')
     }
     return vector
   })
+  if (vectors.some(vector => vector.length !== vectors[0]?.length)) {
+    throw new Error('tool-memory-vector: embeddings endpoint returned vectors with different dimensions')
+  }
+  return vectors
 }
 
 /** Cosine similarity between two equal-length vectors. */
@@ -147,7 +160,7 @@ async function loadIndex(root: string): Promise<VectorIndex> {
  * @param resolved - applied plugin configuration.
  * @returns the up-to-date index.
  */
-async function refreshIndex(root: string, resolved: ResolvedConfig): Promise<VectorIndex> {
+async function refreshIndex(root: string, resolved: ResolvedConfig, signal: AbortSignal): Promise<VectorIndex> {
   const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
   const loaded = await loadIndex(root)
   const alive = new Set(paths.map(path => relative(root, path)))
@@ -173,7 +186,8 @@ async function refreshIndex(root: string, resolved: ResolvedConfig): Promise<Vec
 
   for (let i = 0; i < stale.length; i += resolved.batchSize) {
     const batch = stale.slice(i, i + resolved.batchSize)
-    const vectors = await embed(resolved, batch.map(item => item.text))
+    signal.throwIfAborted()
+    const vectors = await embed(resolved, batch.map(item => item.text), signal)
     const stats = await Promise.all(batch.map(item => stat(join(root, item.id))))
     batch.forEach((item, offset) => {
       const info = stats[offset]
@@ -186,7 +200,16 @@ async function refreshIndex(root: string, resolved: ResolvedConfig): Promise<Vec
   }
 
   if (stale.length > 0 || removed > 0) {
-    await writeFile(join(root, INDEX_FILE), JSON.stringify(index), 'utf8')
+    signal.throwIfAborted()
+    const indexPath = join(root, INDEX_FILE)
+    const temporary = `${indexPath}.tmp-${process.pid}-${randomUUID()}`
+    try {
+      await writeFile(temporary, JSON.stringify(index), 'utf8')
+      await rename(temporary, indexPath)
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined)
+      throw error
+    }
   }
   return index
 }
@@ -201,14 +224,24 @@ export function apply(ctx: Context, config: Config): void {
   if (resolved.endpoint.trim() === '') {
     throw new Error('tool-memory-vector: endpoint is required')
   }
+  let endpoint: URL
+  try {
+    endpoint = new URL(resolved.endpoint)
+  } catch {
+    throw new Error('tool-memory-vector: endpoint must be a valid http(s) URL')
+  }
+  if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
+    throw new Error('tool-memory-vector: endpoint must be a valid http(s) URL')
+  }
   if (resolved.model.trim() === '') {
     throw new Error('tool-memory-vector: model is required')
   }
+  assertPositiveInteger('requestTimeoutMs', resolved.requestTimeoutMs)
   assertPositiveInteger('maxResults', resolved.maxResults)
   assertPositiveInteger('maxCharsPerNote', resolved.maxCharsPerNote)
   assertPositiveInteger('batchSize', resolved.batchSize)
 
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_semantic_search',
     description: 'Semantic search over the wiki vault using embeddings: ranks notes by meaning rather than exact keywords. Returns matching note ids with similarity scores. Use wiki_search for exact keyword lookups.',
     parameters: {
@@ -234,8 +267,8 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args, exec) {
       const vaultRoot = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
-      const index = await refreshIndex(vaultRoot, resolved)
-      const [queryVector] = await embed(resolved, [args.query])
+      const index = await refreshIndex(vaultRoot, resolved, exec.signal)
+      const [queryVector] = await embed(resolved, [args.query], exec.signal)
       if (queryVector === undefined) {
         throw new Error('tool-memory-vector: embeddings endpoint returned no query vector')
       }
@@ -245,5 +278,5 @@ export function apply(ctx: Context, config: Config): void {
         .slice(0, resolved.maxResults)
       return hits
     },
-  }))
+  })))
 }

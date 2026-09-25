@@ -88,9 +88,9 @@ function registerSlowTool(ctx: Context, intervals: Interval[]): void {
   }))
 }
 
-function call(ctx: Context, callId: string) {
+function call(ctx: Context, callId: string, signal = new AbortController().signal) {
   return ctx.tools.execute({
-    signal: new AbortController().signal,
+    signal,
     callId: ToolCallId(callId),
     name: 'slow_tool',
     arguments: { label: callId },
@@ -110,6 +110,36 @@ describe('memory-queue real Loader composition through cordis.yml', () => {
     const sorted = [...intervals].sort((a, b) => a.start - b.start)
     expect(sorted).toHaveLength(2)
     expect(sorted[1]!.start).toBeGreaterThanOrEqual(sorted[0]!.end)
+  })
+
+  it('withdraws its tools/execute wrapper when the Loader fiber unloads', async () => {
+    const ctx = await boot()
+    const intervals: Interval[] = []
+    registerSlowTool(ctx, intervals)
+    const entry = [...ctx.loader.entries()].find(candidate => candidate.options.name === '@jacklika/dsh-memory-queue')
+    if (entry?.fiber === undefined) throw new Error('active queue entry missing')
+    await entry.fiber.dispose()
+    const [first, second] = await Promise.all([call(ctx, 'first'), call(ctx, 'second')])
+    expect(first.isError).toBe(false)
+    expect(second.isError).toBe(false)
+    const sorted = [...intervals].sort((a, b) => a.start - b.start)
+    expect(sorted[1]!.start).toBeLessThan(sorted[0]!.end)
+  })
+
+  it('removes an aborted waiter from its lane without blocking later calls', async () => {
+    const ctx = await boot()
+    const intervals: Interval[] = []
+    registerSlowTool(ctx, intervals)
+    const controller = new AbortController()
+    const first = call(ctx, 'first')
+    const waiting = call(ctx, 'cancelled', controller.signal)
+    controller.abort(new Error('cancel test'))
+    const [firstResult, waitingResult] = await Promise.all([first, waiting])
+    expect(firstResult.isError).toBe(false)
+    expect(waitingResult.isError).toBe(true)
+    const later = await call(ctx, 'later')
+    expect(later.isError).toBe(false)
+    expect(intervals.map(interval => interval.label)).toEqual(['first', 'later'])
   })
 
   it('runs different laneArgument values in parallel while same-lane calls serialize', async () => {

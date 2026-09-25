@@ -6,7 +6,7 @@
 
 1. 创建 `packages/<name>/`，`package.json` 命名为 `@jacklika/dsh-<name>`。
 2. 从 `src/index.ts` 导出 Cordis 插件契约：`name`、`inject`、`Config`（schemastery）、`apply(ctx, config)`。
-3. `@deepseek-ai/*` 服务声明为 `peerDependencies`（由宿主 dsh 安装解析）+ 本地开发的 `devDependencies`；套件内部依赖用 `workspace:*`。
+3. 只有直接导入的 `@deepseek-ai/*` 运行时服务才声明为经过测试的精确 `peerDependencies`；同一精确版本只在 workspace 根 `devDependencies` 添加一次，绝不使用机器本地 `link:`。套件内部运行时依赖用 `workspace:*`。
 4. 在 `tsconfig.base.json` 注册 `paths` 别名，在根 `tsconfig.json` 加 reference，并给包的 tsconfig 设 `outDir: lib` + `declarationDir: lib/types`，每个套件内部依赖加一条 project `references`。
 5. 写 `README.md` 和 `README.zh.md`，含配置表与使用示例。
 6. 加一个真实 Loader 组合测试——不能只写单元测试。

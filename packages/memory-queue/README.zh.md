@@ -49,7 +49,7 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-插件安装一个 `ctx.on('tools/execute', …)` waterfall 监听器。工具名在 `toolNames` 中的调用被追加到一条共享 promise 链；每个调用都在前一个串行调用结束后才执行 `next()`，因此单个调用失败不会卡住后续调用。未列出的工具直接 `next()` 透传。开启 `crossProcessLock` 时，串行区段用 `<vault>/.memory-queue.lock` 上的 `mkdir` 包裹 `next()`：`mkdir` 在 POSIX 文件系统上是原子操作，同一时刻只有一个进程持有锁。持有方写入一份诊断用的 `owner.json`，并每 `lockHeartbeatMs` 向 `<lock>/heartbeat` 写入递增计数器。配置 `laneArgument` 后，串行链与锁按该参数值分片：不同值获得 `<vault>/.memory-queue.lanes/<sha1>.lock` 锁目录并并发执行，相同值仍共用一条链。等待方只在自己的本地时钟上度量观察到的判活令牌——有 `heartbeat` 文件时是其计数器，没有时（外部写入方、旧版本插件）是目录 mtime——连续 `lockStaleMs` 未变化时才判定锁过期。判活是变化检测，从不做绝对时间比较，因此跨机器时钟偏差和弱 NFS mtime 一致性都不会让活锁显得过期。等待超过 `lockTimeoutMs` 的调用直接失败。
+插件安装一个 `ctx.on('tools/execute', …)` waterfall 监听器。工具名在 `toolNames` 中的调用进入按 lane 划分的 promise 链；每个调用在前一个串行调用结束后才执行 `next()`。未列出的工具直接 `next()` 透传。开启 `crossProcessLock` 时，串行区段使用 `<vault>/.memory-queue.lock` 上的原子 `mkdir` 锁。持有方把随机 ownership token、hostname、PID 写入 `owner.json`，并每 `lockHeartbeatMs` 递增 `<lock>/heartbeat`。不同 `laneArgument` 值获得独立的 SHA-1 命名锁目录并可并行。等待方只有在心跳连续 `lockStaleMs` 不变后才认为锁 stale；同机 owner 的 PID 仍存活时绝不回收。回收与释放会先 rename 锁目录，释放前还会校验 ownership token，因此旧 owner 不会删除后继 owner 的锁。等待支持 AbortSignal；超过 `lockTimeoutMs` 时明确失败。
 
 -----
 

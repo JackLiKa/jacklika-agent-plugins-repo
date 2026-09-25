@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-memory` is the profile bundle that mounts the complete memory chain — an Obsidian-compatible Markdown vault plus its write ladder — on top of `dsh-base`. The shipped `memory` profile (`dsh --profile memory`) combines `dsh-base`, this bundle, and `dsh-headless` into a one-shot CLI surface with memory enabled. Mount the bundle in any custom profile to get the same chain.
+`dsh-memory` is the external Profile Bundle that mounts the complete memory chain — an Obsidian-compatible Markdown vault plus its write coordination — after `dsh-base`. Install this one package into a custom Profile; its runtime dependencies bring every member plugin.
 
 ## Table of Contents
 
@@ -24,13 +24,13 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Run the shipped profile for a one-shot task with the memory chain active:
+Install the Bundle through the Harness Plugin Manager; the Profile may already exist or be created by the command:
 
 ```sh
-dsh --profile memory "<task>"
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
 ```
 
-Or list the bundle after `dsh-base` in a custom profile's `dsh.profile.bundles`. Semantic search stays disabled until the profile patch supplies an embeddings endpoint:
+Keep the Bundle after `dsh-base` and include an application layer such as `dsh-headless` or `dsh-web-app`. Semantic search stays disabled until the profile patch supplies an embeddings endpoint:
 
 ```yaml
 - id: tool-memory-vector

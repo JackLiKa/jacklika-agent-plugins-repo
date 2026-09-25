@@ -1,73 +1,127 @@
-# 使用
+# 安装并使用记忆套件
 
-## 安装进 dsh profile
+可安装入口是 `@jacklika/dsh-memory`。仓库根目录是私有 pnpm workspace，不是 Bundle；不要把 GitHub 仓库根地址传给 `dsh plugin add`。
 
-```sh
-# 1. profile 不存在时自动创建，安装 bundle 并追加到 dsh.profile.bundles
-dsh plugin --profile <name> add /path/to/mydsh-plugin/packages/memory
+## 从 registry 安装
 
-# 2. 仅本地开发：把套件的每个包 link 进 profile，使 bundle 的
-#    cordis.patch.yml 能解析到它们（`link:` 不安装依赖）
-cd ~/.dsh/profiles/<name>
-pnpm add /path/to/mydsh-plugin/packages/tool-memory-filesystem \
-         /path/to/mydsh-plugin/packages/tool-memory-graph \
-         /path/to/mydsh-plugin/packages/tool-memory-vector \
-         /path/to/mydsh-plugin/packages/memory-scope \
-         /path/to/mydsh-plugin/packages/memory-queue \
-         /path/to/mydsh-plugin/packages/memory-git
-```
-
-然后确认 profile 的 `bundles` 里还有应用层（如 `@deepseek-ai/dsh-headless`），启动：
+各包发布后，把 Bundle 安装进已有或新 Profile：
 
 ```sh
-dsh --profile <name> "<任务>"
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
 ```
 
-本地开发需要先在本仓库 `pnpm build`——包解析到 `lib/` 产物；套件内部 `devDependencies` 以 `link:` 指向本地 deepseek-harness 检出，若你的检出路径不同请修改。发布到 npm 后 `dsh plugin --profile <name> add @jacklika/dsh-memory` 即可——真实依赖会正常安装，第 2 步消失。
-
-## 卸载
+Bundle 以运行时依赖带齐六个成员包，无需逐个安装。确保 `@deepseek-ai/dsh-base` 位于记忆 Bundle 之前，并加入 `@deepseek-ai/dsh-headless` 或 `@deepseek-ai/dsh-web-app` 等应用层。检查最终顺序：
 
 ```sh
-cd ~/.dsh/profiles/<name>
-pnpm remove @jacklika/dsh-memory @jacklika/dsh-memory-git @jacklika/dsh-memory-queue \
-            @jacklika/dsh-memory-scope @jacklika/dsh-tool-memory-filesystem \
-            @jacklika/dsh-tool-memory-graph @jacklika/dsh-tool-memory-vector
+dsh --profile memory --dump-config
 ```
 
-再从 profile `package.json` 的 `dsh.profile.bundles` 里删掉 `"@jacklika/dsh-memory"`。`.dsh/memory/` 下的 vault 不受影响，不需要时手动删除。
+预期记忆顺序是 `memory-scope`、`memory-queue`、`memory-git`、`tool-memory-filesystem`、`tool-memory-graph`，最后是默认禁用的 `tool-memory-vector`。
 
-## 挂载 skill
+使用 Web 的 **Plugins** 页面或 `plugin_manager` 工具禁用、重新启用已安装 Bundle。Profile patch 会整项替换目标 row 的 `config`；请在覆盖项中写全本部署需要的配置。
 
-在 profile 的 `cordis.patch.yml` 中：
+通过官方包命令卸载：
+
+```sh
+dsh plugin --profile memory remove @jacklika/dsh-memory
+```
+
+卸载只移除包代码与 Bundle 选择，不会删除 `<workspace>/.dsh/memory/` 或显式配置的 Vault。
+
+## 未发布时的本地 tarball 验证
+
+仓库会构建并打包全部包、检查 tarball 内容，并在不引用源码 workspace 的独立目录里安装打包后的 Bundle：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm test:pack
+pnpm test:profile
+```
+
+PowerShell 使用相同命令：
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm test:pack
+pnpm test:profile
+```
+
+`pnpm pack:all` 默认把 tarball 写到 `artifacts/packages/`。发布 registry 之前，`test:profile` 是受支持且可复现的本地安装路径：它为所有尚未发布的成员 tarball 提供临时 pnpm overrides，运行真实 `dsh plugin` 命令，验证 `--dump-config`，卸载，并确认 Vault 保留。只安装 Bundle tarball 无法从 npm 解析尚未发布的成员包，因此不能作为正常流程。
+
+## 配置 Vault
+
+未配置 `vaultRoot` 时，每次调用使用 `<session workspace>/.dsh/memory/`。相对 `vaultRoot` 以该工作区为基准；绝对路径选择共享 Vault。路径由 Node path API 处理，支持空格和非 ASCII 字符。Profile 覆盖示例：
+
+```yaml
+- id: tool-memory-filesystem
+  config:
+    vaultRoot: '.dsh/memory'
+    extensions: ['.md']
+    maxLinkDepth: 1
+    maxSearchResults: 20
+    indexHiddenDirs: false
+```
+
+使用 `agentKey` 获得跨 session 稳定的私有命名空间：
+
+```yaml
+- id: memory-scope
+  config:
+    agentKey: 'main'
+```
+
+`agentKey` 为空时写入 `agents/<session id>/`；配置后写入 `agents/<agentKey>/`。以 `shared/` 开头的路径不重写，并默认由 `memory-git` 提交。
+
+`memory-git.nestedRepo` 默认 `init`：创建 Vault 自己的仓库，绝不加入父仓库。`inherit` 选择最近的父仓库；`own` 要求 `<vault>/.git` 已存在。插件永不修改全局 Git 配置，也永不 push。
+
+## 单独挂载 Skill
+
+安装工具不等于安装 agent 指导。通过现有 `skill-filesystem` row 挂载 `skills/memory-vault`。
+
+POSIX 路径：
 
 ```yaml
 - id: skill-filesystem
   config:
-    customSkillDirs: ['/path/to/mydsh-plugin/skills']
+    customSkillDirs: ['/home/me/src/mydsh-plugin/skills']
 ```
 
-`memory-vault` skill 随后出现在 agent 的技能目录中，教会它 vault 工作流。
+Windows YAML 路径（正斜杠可避免反斜杠转义）：
 
-## 工具参考
+```yaml
+- id: skill-filesystem
+  config:
+    customSkillDirs: ['C:/src/mydsh-plugin/skills']
+```
 
-| 工具 | 包 | 用途 |
-|---|---|---|
-| `wiki_read` | `dsh-tool-memory-filesystem` | 读笔记；返回 frontmatter、正文、`[[links]]`、`version`、链出笔记 |
-| `wiki_search` | `dsh-tool-memory-filesystem` | 按标题/正文关键字搜索 |
-| `wiki_write` | `dsh-tool-memory-filesystem` | 追加（默认）或覆盖；`baseVersion` 乐观并发 |
-| `wiki_graph` | `dsh-tool-memory-graph` | 全 vault 链接图，或以某笔记为中心的 `depth` 跳子图 |
-| `wiki_semantic_search` | `dsh-tool-memory-vector` | embedding 搜索；配置 OpenAI 兼容端点前保持禁用 |
+目录无效时由 `skill-filesystem` 给出诊断，不影响记忆工具的安装。
 
-协调插件不注册工具，它们装饰 `wiki_write`：
+## Vector 搜索
 
-| 插件 | 主要配置 |
+Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后再启用：
+
+```yaml
+- id: tool-memory-vector
+  disabled: false
+  config:
+    endpoint: 'http://127.0.0.1:11434/v1/embeddings'
+    model: 'nomic-embed-text'
+    apiKeyEnv: 'DSH_MEMORY_EMBEDDING_API_KEY'
+    requestTimeoutMs: 30000
+```
+
+把 key 放在该环境变量中。它只作为 endpoint 的 Bearer token 发送，不会写进 Vault、Git 或错误消息。
+
+## 常见问题
+
+| 现象 | 处理 |
 |---|---|
-| `dsh-memory-scope` | `sharedPrefixes`（默认 `['shared/']`）、`role: curator`、`agentKey`（留空 = 按会话划分命名空间） |
-| `dsh-memory-queue` | `crossProcessLock`、`laneArgument: id` |
-| `dsh-memory-git` | `prefixes`（默认 `['shared/']`）、`nestedRepo: init \| inherit \| own`（默认 `init`） |
-
-## 典型的模型侧流程
-
-1. `wiki_search "RAG"` → 找候选笔记。
-2. `wiki_read "concepts/RAG.md"` → 记住返回的 `version`。
-3. `wiki_write(id, content, baseVersion)` → 冲突报错时重读再写。
+| Bundle 无法识别 | 安装 `@jacklika/dsh-memory`，不要安装仓库根；检查打包后的 `package.json` 含 `dsh.bundle.patch`。 |
+| 缺少 `lib/index.js` | 运行 `pnpm build`；发布前运行 `pnpm test:pack`。 |
+| peer 版本不兼容 | 使用 [compatibility.zh.md](compatibility.zh.md) 中的精确 Harness 版本；不要压制 peer 检查。 |
+| Git 不存在 | 安装 Git 并确认 `git --version` 可在 `PATH` 运行，或在自定义 Bundle 中不挂 `memory-git`。 |
+| Git identity 错误 | 插件通过 `git -c` 提供单次命令 identity，永不改全局配置；查看原样返回的 Git 错误。 |
+| Vault 无权限 | 选择可写的 `vaultRoot`；原始文件系统错误会返回。 |
+| 锁超时 | 检查其他活跃 writer；只有心跳持续不变且同机 PID 检查通过后才回收 stale lock。 |
+| Skill 未加载 | 检查 `customSkillDirs` 指向包含 `memory-vault/SKILL.md` 的目录；非 HMR Profile 需重启。 |
+| Vector endpoint 错误 | 检查 HTTP(S) URL、model、环境变量 key、timeout 与 OpenAI 兼容的 `data[].embedding` 响应。 |

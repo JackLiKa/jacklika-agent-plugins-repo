@@ -9,8 +9,9 @@
  * @module @jacklika/dsh-memory-queue
  */
 
-import { createHash } from 'node:crypto'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -78,7 +79,51 @@ function assertPositiveInteger(field: string, value: number): void {
   }
 }
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+function waitFor<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted()
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => reject(signal.reason)
+    signal.addEventListener('abort', aborted, { once: true })
+    void work.then(
+      value => { signal.removeEventListener('abort', aborted); resolve(value) },
+      error => { signal.removeEventListener('abort', aborted); reject(error) },
+    )
+  })
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  return waitFor(new Promise<void>(resolve => { timer = setTimeout(resolve, ms) }), signal).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
+}
+
+interface LockOwner {
+  token: string
+  hostname: string
+  pid: number
+  startedAt: string
+}
+
+async function readOwner(path: string): Promise<LockOwner | undefined> {
+  try {
+    const value = JSON.parse(await readFile(path, 'utf8')) as Partial<LockOwner>
+    if (typeof value.token !== 'string' || typeof value.hostname !== 'string' || typeof value.pid !== 'number') return undefined
+    return { token: value.token, hostname: value.hostname, pid: value.pid, startedAt: String(value.startedAt ?? '') }
+  } catch {
+    return undefined
+  }
+}
+
+function processIsAlive(owner: LockOwner | undefined): boolean {
+  if (owner === undefined || owner.hostname !== hostname()) return false
+  try {
+    process.kill(owner.pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
 
 /**
  * Acquire the vault's lock directory, waiting for foreign holders and
@@ -100,6 +145,7 @@ async function acquireLock(
   signal: AbortSignal,
 ): Promise<() => Promise<void>> {
   const heartbeatPath = join(lockPath, 'heartbeat')
+  const ownerPath = join(lockPath, 'owner.json')
   const deadline = Date.now() + resolved.lockTimeoutMs
   let lastObserved: string | undefined
   let lastChangeAt = Date.now()
@@ -107,11 +153,13 @@ async function acquireLock(
     signal.throwIfAborted()
     try {
       await mkdir(lockPath)
-      // Owner metadata is diagnostic only; never gate behavior on it.
-      await writeFile(join(lockPath, 'owner.json'), JSON.stringify({
+      const owner: LockOwner = {
+        token: randomUUID(),
+        hostname: hostname(),
         pid: process.pid,
         startedAt: new Date().toISOString(),
-      }), 'utf8').catch(() => undefined)
+      }
+      await writeFile(ownerPath, JSON.stringify(owner), 'utf8')
       let counter = 0
       await writeFile(heartbeatPath, String(counter), 'utf8').catch(() => undefined)
       const heartbeat = setInterval(() => {
@@ -121,7 +169,16 @@ async function acquireLock(
       heartbeat.unref()
       return async () => {
         clearInterval(heartbeat)
-        await rm(lockPath, { recursive: true, force: true })
+        const current = await readOwner(ownerPath)
+        if (current?.token !== owner.token) return
+        const tombstone = `${lockPath}.release-${owner.token}`
+        try {
+          await rename(lockPath, tombstone)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+          throw error
+        }
+        await rm(tombstone, { recursive: true, force: true })
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -136,13 +193,23 @@ async function acquireLock(
         lastObserved = observed
         lastChangeAt = Date.now()
       } else if (Date.now() - lastChangeAt > resolved.lockStaleMs) {
-        await rm(lockPath, { recursive: true, force: true })
-        continue
+        const owner = await readOwner(ownerPath)
+        if (!processIsAlive(owner)) {
+          const tombstone = `${lockPath}.stale-${randomUUID()}`
+          try {
+            await rename(lockPath, tombstone)
+            await rm(tombstone, { recursive: true, force: true })
+          } catch (error) {
+            if (!['ENOENT', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+          }
+          continue
+        }
+        lastChangeAt = Date.now()
       }
       if (Date.now() >= deadline) {
         throw new Error(`memory-queue: timed out waiting for vault lock ${lockPath}`)
       }
-      await sleep(resolved.lockRetryMs)
+      await sleep(resolved.lockRetryMs, signal)
     }
   }
 }
@@ -193,9 +260,9 @@ export function apply(ctx: Context, config: Config): void {
     const current = new Promise<void>((resolve) => { release = resolve })
     const chained = previous.then(() => current)
     lanes.set(key, chained)
-    await previous
-    exec.signal.throwIfAborted()
     try {
+      await waitFor(previous, exec.signal)
+      exec.signal.throwIfAborted()
       if (!resolved.crossProcessLock) return await next()
       const lockPath = lockPathFor(resolveMemoryVaultRoot(resolved.vaultRoot, exec), key)
       await mkdir(dirname(lockPath), { recursive: true })

@@ -33,7 +33,7 @@ kind: "package-reference"
     model: nomic-embed-text
 ```
 
-`endpoint` 与 `model` 必填——任一为空时插件在加载期直接报错。Ollama 或其他 OpenAI 兼容 embeddings 服务均可；`apiKey` 可选。
+`endpoint` 与 `model` 必填——任一为空或 endpoint 不是 HTTP(S) 时，插件在加载期直接报错。Ollama 或其他 OpenAI 兼容 embeddings 服务均可。凭据应放在 `apiKeyEnv` 指定的环境变量；安全运行时配置仍可直接传 `apiKey`。
 
 ### 配置
 
@@ -43,7 +43,9 @@ kind: "package-reference"
 | `extensions` | `string[]` | `['.md']` | 视为笔记的文件扩展名。 |
 | `endpoint` | `string` | 必填 | OpenAI 兼容 embeddings 端点 URL。 |
 | `model` | `string` | 必填 | 端点认识的 embedding 模型名。 |
-| `apiKey` | `string` | `''` | 发往端点的 Bearer token；留空则不带该请求头。 |
+| `apiKey` | `string` | `''` | 直接 Bearer token；为空时读取 `apiKeyEnv`，且永不记录或持久化。 |
+| `apiKeyEnv` | `string` | `'DSH_MEMORY_EMBEDDING_API_KEY'` | 保存 Bearer token 的环境变量名。 |
+| `requestTimeoutMs` | `number` | `30000` | 单次 embeddings 请求的最长时间。 |
 | `maxResults` | `number` | `10` | 返回的最大命中数。 |
 | `maxCharsPerNote` | `number` | `8000` | 单条笔记送去 embedding 的最大 UTF-8 字符数。 |
 | `batchSize` | `number` | `16` | 单次 embeddings 请求的最大输入数。 |

@@ -6,6 +6,7 @@ Suite-level documentation for the DeepSeek Harness plugin collection. Per-packag
 
 | Document | Topic |
 |---|---|
+| [compatibility.md](compatibility.md) | Verified Node, pnpm, Harness, Cordis, and Git versions plus imported APIs |
 | [architecture.md](architecture.md) | The three-layer design (skill / tool calling / MCP), vault layout, and the write-coordination chain |
 | [usage.md](usage.md) | Installing the suite into a dsh profile, mounting skills, tool reference |
 | [mcp-server.md](mcp-server.md) | Running `dsh-memory-mcp` and mounting it in MCP clients |

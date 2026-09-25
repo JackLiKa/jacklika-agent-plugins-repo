@@ -82,7 +82,20 @@ export const Config: z<Config> = z.object({
 /** The shape after schemastery applied the defaults. */
 type ResolvedConfig = Required<Config>
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, ms)
+    const aborted = () => done(signal.reason)
+    function done(error?: unknown): void {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', aborted)
+      if (error === undefined) resolve()
+      else reject(error)
+    }
+    signal.addEventListener('abort', aborted, { once: true })
+  })
+}
 
 /**
  * Run a git command inside `vault`, retrying only on a held `index.lock` —
@@ -91,15 +104,19 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
  * @param args - git arguments after `-C <vault>`.
  * @param resolved - applied plugin configuration.
  */
-async function git(vault: string, args: string[], resolved: ResolvedConfig): Promise<string> {
+async function git(vault: string, args: string[], resolved: ResolvedConfig, signal: AbortSignal): Promise<string> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const { stdout } = await execFileAsync('git', ['-C', vault, ...args])
+      signal.throwIfAborted()
+      const { stdout } = await execFileAsync('git', ['-C', vault, ...args], { signal })
       return stdout
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('memory-git: git executable was not found on PATH', { cause: error })
+      }
       const message = error instanceof Error ? error.message : String(error)
       if (!message.includes('index.lock') || attempt >= resolved.indexLockRetries) throw error
-      await sleep(resolved.indexLockRetryMs)
+      await sleep(resolved.indexLockRetryMs, signal)
     }
   }
 }
@@ -112,7 +129,7 @@ async function git(vault: string, args: string[], resolved: ResolvedConfig): Pro
  * @param id - vault-relative note id as reported by the tool call.
  * @param resolved - applied plugin configuration.
  */
-async function commitWrite(vault: string, id: string, resolved: ResolvedConfig): Promise<void> {
+async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, signal: AbortSignal): Promise<void> {
   containedPath(vault, id)
   await mkdir(vault, { recursive: true })
   const hasOwnRepo = await stat(join(vault, '.git')).then(() => true, () => false)
@@ -121,22 +138,22 @@ async function commitWrite(vault: string, id: string, resolved: ResolvedConfig):
   }
   if (resolved.nestedRepo === 'init' && !hasOwnRepo) {
     if (!resolved.autoInit) throw new Error(`memory-git: ${vault} has no .git and autoInit is off`)
-    await git(vault, ['init'], resolved)
+    await git(vault, ['init'], resolved, signal)
   }
   if (resolved.nestedRepo === 'inherit') {
-    await git(vault, ['rev-parse', '--git-dir'], resolved).catch(async (error: unknown) => {
+    await git(vault, ['rev-parse', '--git-dir'], resolved, signal).catch(async (error: unknown) => {
       if (!resolved.autoInit) throw error
-      await git(vault, ['init'], resolved)
+      await git(vault, ['init'], resolved, signal)
     })
   }
-  const status = await git(vault, ['status', '--porcelain', '--', id], resolved)
+  const status = await git(vault, ['status', '--porcelain', '--', id], resolved, signal)
   if (status.trim() === '') return
-  await git(vault, ['add', '--', id], resolved)
+  await git(vault, ['add', '--', id], resolved, signal)
   await git(vault, [
     '-c', `user.name=${resolved.authorName}`,
     '-c', `user.email=${resolved.authorEmail}`,
     'commit', '-m', `${resolved.commitPrefix}: ${id}`, '--', id,
-  ], resolved)
+  ], resolved, signal)
 }
 
 /**
@@ -182,7 +199,8 @@ export function apply(ctx: Context, config: Config): void {
       return result
     }
     const vault = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
-    await enqueue(() => commitWrite(vault, id, resolved))
+    exec.signal.throwIfAborted()
+    await enqueue(() => commitWrite(vault, id, resolved, exec.signal))
     return result
   })
 }

@@ -16,6 +16,7 @@ let root: string | undefined
 let context: Context | undefined
 let server: Server | undefined
 let requestCount = 0
+let authorization: string | undefined
 
 afterEach(async () => {
   await context?.fiber.dispose()
@@ -25,6 +26,7 @@ afterEach(async () => {
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
   requestCount = 0
+  authorization = undefined
 })
 
 const VOCAB = ['rag', 'cook'] as const
@@ -42,6 +44,7 @@ async function fakeEmbeddingsEndpoint(): Promise<string> {
     req.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
     req.on('end', () => {
       requestCount += 1
+      authorization = req.headers.authorization
       const parsed = JSON.parse(body) as { input: string[] }
       const inputs = Array.isArray(parsed.input) ? parsed.input : [parsed.input]
       res.setHeader('content-type', 'application/json')
@@ -64,7 +67,7 @@ function resultText(result: { content: { type: string; text?: string }[] }): str
  * @param endpoint - fake embeddings endpoint URL.
  * @returns the booted context.
  */
-async function boot(vaultRoot: string, endpoint: string): Promise<Context> {
+async function boot(vaultRoot: string, endpoint: string, extraConfig: string[] = []): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-vector-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
@@ -75,6 +78,7 @@ async function boot(vaultRoot: string, endpoint: string): Promise<Context> {
     `    vaultRoot: ${vaultRoot}`,
     `    endpoint: ${endpoint}`,
     '    model: fake-embed',
+    ...extraConfig,
     '',
   ].join('\n'))
 
@@ -116,6 +120,46 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
     const ctx = await boot(vault, endpoint)
     const names = ctx.tools.schemas().map(s => s.name)
     expect(names).toContain('wiki_semantic_search')
+  })
+
+  it('withdraws wiki_semantic_search when its Loader fiber unloads', async () => {
+    const endpoint = await fakeEmbeddingsEndpoint()
+    const vault = await makeVault()
+    const ctx = await boot(vault, endpoint)
+    const tools = ctx.tools
+    const entry = [...ctx.loader.entries()].find(candidate => candidate.options.name === '@jacklika/dsh-tool-memory-vector')
+    if (entry?.fiber === undefined) throw new Error('active vector entry missing')
+    await entry.fiber.dispose()
+    expect(tools.schemas().some(schema => schema.name === 'wiki_semantic_search')).toBe(false)
+  })
+
+  it('refuses a non-http embeddings endpoint at activation', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, 'file:///tmp/embeddings')
+    expect(ctx.tools.schemas().some(schema => schema.name === 'wiki_semantic_search')).toBe(false)
+  })
+
+  it('reads the bearer token from the configured environment variable without persisting it', async () => {
+    const endpoint = await fakeEmbeddingsEndpoint()
+    const vault = await makeVault()
+    const original = process.env.MEMORY_VECTOR_TEST_KEY
+    process.env.MEMORY_VECTOR_TEST_KEY = 'test-secret-value'
+    try {
+      const ctx = await boot(vault, endpoint, ["    apiKeyEnv: MEMORY_VECTOR_TEST_KEY"])
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId('semantic-auth'),
+        name: 'wiki_semantic_search',
+        arguments: { query: 'rag' },
+      })
+      expect(result.isError).toBe(false)
+      expect(authorization).toBe('Bearer test-secret-value')
+      const index = await readFile(join(vault, '.vector-index.json'), 'utf8')
+      expect(index).not.toContain('test-secret-value')
+    } finally {
+      if (original === undefined) delete process.env.MEMORY_VECTOR_TEST_KEY
+      else process.env.MEMORY_VECTOR_TEST_KEY = original
+    }
   })
 
   it('ranks notes by embedding similarity and caches embeddings across calls', async () => {

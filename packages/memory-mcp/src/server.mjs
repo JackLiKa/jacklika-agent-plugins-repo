@@ -8,7 +8,7 @@
  *   --vault defaults to <cwd>/.dsh/memory/
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
@@ -32,11 +32,32 @@ const EXCLUDE_DIRS = new Set(['.git', 'node_modules', '.obsidian'])
 
 function containedPath(candidate) {
   const absolute = resolve(VAULT, candidate)
-  const withSep = VAULT.endsWith(sep) ? VAULT : `${VAULT}${sep}`
-  if (absolute !== VAULT && !absolute.startsWith(withSep)) {
+  const remainder = relative(VAULT, absolute)
+  if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
     throw new Error(`path ${candidate} is outside vault root ${VAULT}`)
   }
   return absolute
+}
+
+async function containedPathReal(candidate) {
+  const absolute = containedPath(candidate)
+  const canonicalRoot = await realpath(VAULT)
+  let ancestor = absolute
+  for (;;) {
+    try {
+      const canonicalAncestor = await realpath(ancestor)
+      const remainder = relative(canonicalRoot, canonicalAncestor)
+      if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
+        throw new Error(`path ${candidate} resolves outside vault root ${VAULT}`)
+      }
+      return absolute
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+      const parent = dirname(ancestor)
+      if (parent === ancestor) throw error
+      ancestor = parent
+    }
+  }
 }
 
 function splitFrontmatter(text) {
@@ -52,7 +73,7 @@ function splitFrontmatter(text) {
 }
 
 function noteVersion(text) {
-  return createHash('sha1').update(text).digest('hex').slice(0, 12)
+  return createHash('sha1').update(text).digest('hex')
 }
 
 function extractLinks(text) {
@@ -81,10 +102,12 @@ async function listNotePaths(dir = VAULT) {
 async function resolveLinkTarget(link) {
   for (const candidate of [link, ...EXTENSIONS.map(ext => `${link}${ext}`)]) {
     try {
-      const p = containedPath(candidate)
+      const p = await containedPathReal(candidate)
       await readFile(p, 'utf8')
       return p
-    } catch { /* not found */ }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
   }
   // search by basename among indexed notes
   const want = basename(link).replace(/\.[^.]+$/, '')
@@ -136,8 +159,10 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
   if (!EXTENSIONS.some(ext => id.endsWith(ext))) {
     throw new Error(`note id must end with one of ${EXTENSIONS.join(', ')}`)
   }
-  const absolutePath = containedPath(id)
+  await mkdir(VAULT, { recursive: true })
+  const absolutePath = await containedPathReal(id)
   await mkdir(dirname(absolutePath), { recursive: true })
+  await containedPathReal(id)
   let existing
   try {
     existing = await readFile(absolutePath, 'utf8')
@@ -176,7 +201,7 @@ async function buildGraph(id, depth = 1, maxNodes = 200) {
   if (id === undefined) {
     paths = await listNotePaths()
   } else {
-    const start = containedPath(id)
+    const start = await containedPathReal(id)
     const seen = new Map([[idOf(start), start]])
     let frontier = [start]
     for (let level = 0; level < depth && frontier.length > 0; level += 1) {
@@ -257,7 +282,7 @@ const TOOLS = [
 async function callTool(name, a = {}) {
   switch (name) {
     case 'wiki_read':
-      return readNote(containedPath(a.id), MAX_LINK_DEPTH)
+      return readNote(await containedPathReal(a.id), MAX_LINK_DEPTH)
     case 'wiki_search':
       return searchNotes(a.query ?? '')
     case 'wiki_write':
@@ -276,8 +301,9 @@ function send(message) {
 }
 
 const rl = readline.createInterface({ input: process.stdin })
+let requests = Promise.resolve()
 rl.on('line', line => {
-  void (async () => {
+  requests = requests.then(async () => {
     let msg
     try {
       msg = JSON.parse(line)
@@ -321,7 +347,7 @@ rl.on('line', line => {
         case 'resources/read': {
           const uri = params?.uri ?? ''
           const noteId = uri.replace(/^note:\/\/\/?/, '')
-          const text = await readFile(containedPath(noteId), 'utf8')
+          const text = await readFile(await containedPathReal(noteId), 'utf8')
           result = { contents: [{ uri, mimeType: 'text/markdown', text }] }
           break
         }
@@ -334,5 +360,5 @@ rl.on('line', line => {
         send({ jsonrpc: '2.0', id, error: { code: error.code ?? -32603, message: String(error.message ?? error) } })
       }
     }
-  })()
+  })
 })

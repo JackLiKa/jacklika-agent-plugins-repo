@@ -39,32 +39,26 @@ The suite is designed as three complementary layers:
 
 All paths converge on one local Markdown vault; there is no network listener and no telemetry.
 
-## Use in a dsh profile
+## Install
 
-Add the bundle after `@deepseek-ai/dsh-base` in the profile's `dsh.profile.bundles`, or insert the plugin rows from a profile `cordis.patch.yml`:
+The formal entry is the Bundle package, not the monorepo root:
 
-```yaml
-- insert:
-    - id: memory-scope
-      name: '@jacklika/dsh-memory-scope'
-    - id: memory-queue
-      name: '@jacklika/dsh-memory-queue'
-      config: { crossProcessLock: true, laneArgument: id }
-    - id: memory-git
-      name: '@jacklika/dsh-memory-git'
-    - id: tool-memory-filesystem
-      name: '@jacklika/dsh-tool-memory-filesystem'
-    - id: tool-memory-graph
-      name: '@jacklika/dsh-tool-memory-graph'
+```sh
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
+dsh --profile memory --dump-config
 ```
 
-Install into a profile with `dsh plugin --profile <name> add <package>` or `pnpm add` inside the profile directory. `@deepseek-ai/*` peers resolve from the dsh installation at runtime.
+The Bundle installs all six runtime members and must follow `@deepseek-ai/dsh-base`; the Profile also needs an application layer. Packages are not yet published, so use `pnpm test:profile` for the reproducible tarball-level installation test. See [Install and use](docs/usage.md) for registry, local pack, PowerShell, Skill, enable/disable, and uninstall instructions, and [Compatibility](docs/compatibility.md) for exact verified versions.
 
 ## Develop
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
+pnpm typecheck
 pnpm test
+pnpm build
+pnpm test:pack
+pnpm test:profile
 ```
 
 New plugins: add a directory under `packages/`, name it `@jacklika/dsh-<name>`, export `name`/`inject`/`Config`/`apply`, and register a `paths` alias in `tsconfig.base.json`.

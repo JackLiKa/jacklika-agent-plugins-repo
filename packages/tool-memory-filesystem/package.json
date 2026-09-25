@@ -2,49 +2,25 @@
   "name": "@jacklika/dsh-tool-memory-filesystem",
   "description": "Model-facing wiki/memory tools over a local Markdown vault: read, search, and write notes with Obsidian-style links and YAML frontmatter.",
   "version": "0.1.3-alpha.1",
-  "publishConfig": {
-    "access": "public"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/JackLiKa/mydsh-plugin.git",
-    "directory": "packages/tool-memory-filesystem"
-  },
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/mydsh-plugin.git", "directory": "packages/tool-memory-filesystem" },
   "type": "module",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
-    },
-    "./src/*": "./src/*",
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./package.json": "./package.json"
   },
-  "files": [
-    "lib/index.js",
-    "lib/types/**/*.d.ts"
-  ],
+  "files": ["lib/**/*.js", "lib/types/**/*.d.ts"],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.4",
-    "js-yaml": "^4.1.0"
+    "@deepseek-ai/schemastery": "3.18.4",
+    "js-yaml": "^4.2.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/dsh-session": "*",
-    "@deepseek-ai/dsh-system-prompt": "*",
-    "@deepseek-ai/dsh-tools": "*",
-    "@deepseek-ai/cordis": "*"
-  },
-  "devDependencies": {
-    "@deepseek-ai/cordis": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis",
-    "@deepseek-ai/cordis-plugin-include": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include",
-    "@deepseek-ai/cordis-plugin-loader": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader",
-    "@deepseek-ai/dsh-tools": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools",
-    "@deepseek-ai/dsh-util-values": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/util/values",
-    "@types/js-yaml": "^4",
-    "@deepseek-ai/dsh-llm": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm",
-    "@deepseek-ai/dsh-system-prompt": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt"
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-tools": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-util-values": "0.1.7-rc.2"
   }
 }

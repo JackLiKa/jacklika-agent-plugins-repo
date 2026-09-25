@@ -2,48 +2,24 @@
   "name": "@jacklika/dsh-memory-queue",
   "description": "Serializes selected model-facing tool calls (default wiki_write) through the tools/execute waterfall so same-vault mutations cannot race.",
   "version": "0.1.0-alpha.0",
-  "publishConfig": {
-    "access": "public"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/JackLiKa/mydsh-plugin.git",
-    "directory": "packages/memory-queue"
-  },
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/mydsh-plugin.git", "directory": "packages/memory-queue" },
   "type": "module",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
-    },
-    "./src/*": "./src/*",
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./package.json": "./package.json"
   },
-  "files": [
-    "lib/index.js",
-    "lib/types/**/*.d.ts"
-  ],
+  "files": ["lib/**/*.js", "lib/types/**/*.d.ts"],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.4",
+    "@deepseek-ai/schemastery": "3.18.4",
     "@jacklika/dsh-tool-memory-filesystem": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/dsh-session": "*",
-    "@deepseek-ai/dsh-system-prompt": "*",
-    "@deepseek-ai/dsh-tools": "*",
-    "@deepseek-ai/cordis": "*"
-  },
-  "devDependencies": {
-    "@deepseek-ai/cordis": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/cordis",
-    "@deepseek-ai/cordis-plugin-include": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/include",
-    "@deepseek-ai/cordis-plugin-loader": "link:/Users/user/Dev/github/dsh/deepseek-harness/vendor/loader",
-    "@jacklika/dsh-tool-memory-filesystem": "workspace:*",
-    "@deepseek-ai/dsh-tools": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/tools",
-    "@deepseek-ai/dsh-llm": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/llm/llm",
-    "@deepseek-ai/dsh-system-prompt": "link:/Users/user/Dev/github/dsh/deepseek-harness/packages/core/system-prompt"
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-tools": "0.1.7-rc.2"
   }
 }

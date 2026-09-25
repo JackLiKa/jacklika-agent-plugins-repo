@@ -33,7 +33,7 @@ Mount the plugin in a profile or patch file with an endpoint and model:
     model: nomic-embed-text
 ```
 
-`endpoint` and `model` are required — the plugin fails at load when either is empty. An Ollama or other OpenAI-compatible embeddings server works; `apiKey` is optional.
+`endpoint` and `model` are required — the plugin fails at load when either is empty or the endpoint is not HTTP(S). An Ollama or other OpenAI-compatible embeddings server works. Keep credentials in the environment variable named by `apiKeyEnv`; direct `apiKey` remains available for secure runtime configuration.
 
 ### Configure the search
 
@@ -43,7 +43,9 @@ Mount the plugin in a profile or patch file with an endpoint and model:
 | `extensions` | `string[]` | `['.md']` | File extensions treated as notes. |
 | `endpoint` | `string` | required | OpenAI-compatible embeddings endpoint URL. |
 | `model` | `string` | required | Embedding model name understood by the endpoint. |
-| `apiKey` | `string` | `''` | Bearer token sent to the endpoint; empty sends no header. |
+| `apiKey` | `string` | `''` | Direct Bearer token; empty reads `apiKeyEnv`. Never logged or persisted. |
+| `apiKeyEnv` | `string` | `'DSH_MEMORY_EMBEDDING_API_KEY'` | Environment variable containing the Bearer token. |
+| `requestTimeoutMs` | `number` | `30000` | Maximum duration of one embeddings request. |
 | `maxResults` | `number` | `10` | Maximum hits returned. |
 | `maxCharsPerNote` | `number` | `8000` | Maximum UTF-8 characters of one note sent for embedding. |
 | `batchSize` | `number` | `16` | Maximum inputs per embeddings request. |

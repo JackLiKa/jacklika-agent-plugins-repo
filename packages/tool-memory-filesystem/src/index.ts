@@ -9,7 +9,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto'
-import { readdir, readFile, rename, rm, stat, writeFile, mkdir } from 'node:fs/promises'
+import { readdir, readFile, realpath, rename, rm, stat, writeFile, mkdir } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -88,12 +88,42 @@ export function resolveMemoryVaultRoot(
  * @returns the absolute, contained path.
  */
 export function containedPath(root: string, candidate: string): string {
-  const absolute = resolve(root, candidate)
-  const withSep = root.endsWith(sep) ? root : `${root}${sep}`
-  if (absolute !== root && !absolute.startsWith(withSep)) {
+  const absoluteRoot = resolve(root)
+  const absolute = resolve(absoluteRoot, candidate)
+  const remainder = relative(absoluteRoot, absolute)
+  if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
     throw new Error(`tool-memory-filesystem: path ${candidate} is outside vault root ${root}`)
   }
   return absolute
+}
+
+/**
+ * Resolve a vault path and reject an existing symlink or junction component
+ * whose real target leaves the vault. The nearest existing ancestor protects
+ * paths whose final file or directories do not exist yet.
+ * @param root - vault root; it must exist.
+ * @param candidate - vault-relative path.
+ * @returns the absolute lexical path after realpath containment succeeds.
+ */
+export async function containedPathReal(root: string, candidate: string): Promise<string> {
+  const absolute = containedPath(root, candidate)
+  const canonicalRoot = await realpath(resolve(root))
+  let ancestor = absolute
+  for (;;) {
+    try {
+      const canonicalAncestor = await realpath(ancestor)
+      const remainder = relative(canonicalRoot, canonicalAncestor)
+      if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
+        throw new Error(`tool-memory-filesystem: path ${candidate} resolves outside vault root ${root}`)
+      }
+      return absolute
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      const parent = dirname(ancestor)
+      if (parent === ancestor) throw error
+      ancestor = parent
+    }
+  }
 }
 
 /**
@@ -170,14 +200,15 @@ export async function resolveLinkTarget(
   extensions: string[],
   target: string,
 ): Promise<string | undefined> {
-  const candidates: string[] = extensions.map(ext => containedPath(root, `${target}${dottedExtension(ext)}`))
-  candidates.push(containedPath(root, target))
-  for (const path of candidates) {
+  const candidates = extensions.map(ext => `${target}${dottedExtension(ext)}`)
+  candidates.push(target)
+  for (const candidate of candidates) {
     try {
+      const path = await containedPathReal(root, candidate)
       const info = await stat(path)
       if (info.isFile()) return path
-    } catch {
-      // candidate does not exist
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
   }
   return undefined
@@ -372,7 +403,7 @@ export function apply(ctx: Context, config: Config): void {
 
   const vaultRootFor = (exec: ToolRunContext): string => resolveMemoryVaultRoot(resolved.vaultRoot, exec)
 
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_read',
     description: 'Read one Markdown note from the wiki vault, optionally following Obsidian-style [[link]] references up to the configured depth. Returns the note id, frontmatter, body, and linked notes.',
     parameters: {
@@ -388,13 +419,13 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
-      const absolutePath = containedPath(vaultRoot, args.id)
+      const absolutePath = await containedPathReal(vaultRoot, args.id)
       const note = await readNote(vaultRoot, resolved.extensions, resolved.maxLinkDepth, absolutePath)
       return note as unknown as JsonValue
     },
-  }))
+  })))
 
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_search',
     description: 'Search the wiki vault by note title or body keyword. Returns matching note ids, titles, and backlink counts. Use this before asking the user which note to read.',
     parameters: {
@@ -433,9 +464,9 @@ export function apply(ctx: Context, config: Config): void {
       hits.sort((a, b) => b.backlinks.length - a.backlinks.length)
       return hits.slice(0, resolved.maxSearchResults)
     },
-  }))
+  })))
 
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_write',
     description: 'Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header.',
     parameters: {
@@ -474,12 +505,15 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
       const mode = args.mode ?? 'append'
-      const absolutePath = containedPath(vaultRoot, args.id)
+      await mkdir(vaultRoot, { recursive: true })
+      const absolutePath = await containedPathReal(vaultRoot, args.id)
       const hasExtension = resolved.extensions.some(ext => args.id.endsWith(dottedExtension(ext)))
       if (!hasExtension) {
         throw new Error(`tool-memory-filesystem: note id must end with one of ${resolved.extensions.join(', ')}`)
       }
       await mkdir(dirname(absolutePath), { recursive: true })
+      await containedPathReal(vaultRoot, args.id)
+      exec.signal.throwIfAborted()
       let existing: string | undefined
       try {
         existing = await readFile(absolutePath, 'utf8')
@@ -500,8 +534,9 @@ export function apply(ctx: Context, config: Config): void {
         const timestamp = new Date().toISOString()
         finalBody = `${frontmatterText}${body}\n\n## ${timestamp}\n\n${args.content}\n`
       }
+      exec.signal.throwIfAborted()
       await writeAtomic(absolutePath, finalBody)
       return { id: relative(vaultRoot, absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
     },
-  }))
+  })))
 }

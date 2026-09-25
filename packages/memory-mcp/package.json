@@ -2,25 +2,17 @@
   "name": "@jacklika/dsh-memory-mcp",
   "description": "Zero-dependency MCP stdio server exposing the memory vault to any MCP client — one process owns all writes.",
   "version": "0.1.0",
-  "publishConfig": {
-    "access": "public"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/JackLiKa/mydsh-plugin.git",
-    "directory": "packages/memory-mcp"
-  },
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/mydsh-plugin.git", "directory": "packages/memory-mcp" },
   "type": "module",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "src/server.mjs",
-  "bin": {
-    "dsh-memory-mcp": "src/server.mjs"
-  },
+  "types": "src/server.d.ts",
+  "bin": { "dsh-memory-mcp": "src/server.mjs" },
   "exports": {
     ".": "./src/server.mjs",
     "./package.json": "./package.json"
   },
-  "files": [
-    "src/server.mjs"
-  ],
+  "files": ["src/server.mjs", "src/server.d.ts"],
   "license": "MIT"
 }

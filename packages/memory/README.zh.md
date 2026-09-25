@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-memory` 是挂载完整记忆链的 profile bundle——兼容 Obsidian 的 Markdown vault 及其写入阶梯——位于 `dsh-base` 之上。自带的 `memory` profile（`dsh --profile memory`）把 `dsh-base`、本 bundle 与 `dsh-headless` 组合成启用记忆的一次性 CLI 界面。在任何自定义 profile 中挂载本 bundle 即可获得同样的链路。
+`dsh-memory` 是外部 Profile Bundle，在 `dsh-base` 之后挂载完整记忆链——兼容 Obsidian 的 Markdown vault 及其写协调。只需把这一个包安装进自定义 Profile；它的运行时依赖会带齐所有成员插件。
 
 ## 目录
 
@@ -24,13 +24,13 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用本包
 
-运行自带 profile，以记忆链路执行一次性任务：
+通过 Harness Plugin Manager 安装 Bundle；该命令可使用已有 Profile，也可自动创建：
 
 ```sh
-dsh --profile memory "<task>"
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
 ```
 
-或在自定义 profile 的 `dsh.profile.bundles` 中把本 bundle 列在 `dsh-base` 之后。语义搜索默认关闭，需在 profile patch 中提供 embeddings 端点后启用：
+保持 Bundle 位于 `dsh-base` 之后，并加入 `dsh-headless` 或 `dsh-web-app` 等应用层。语义搜索默认关闭，需在 profile patch 中提供 embeddings 端点后启用：
 
 ```yaml
 - id: tool-memory-vector

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile, mkdir, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -90,6 +90,17 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(names).toContain('wiki_read')
     expect(names).toContain('wiki_search')
     expect(names).toContain('wiki_write')
+  })
+
+  it('withdraws registered tools when the Loader entry unloads', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const tools = ctx.tools
+    expect(tools.schemas().some(schema => schema.name === 'wiki_write')).toBe(true)
+    const entry = [...ctx.loader.entries()].find(candidate => candidate.options.name === '@jacklika/dsh-tool-memory-filesystem')
+    if (entry?.fiber === undefined) throw new Error('active memory tool entry missing')
+    await entry.fiber.dispose()
+    expect(tools.schemas().some(schema => schema.name === 'wiki_write')).toBe(false)
   })
 
   it('reads a note and follows Obsidian-style links', async () => {
@@ -206,6 +217,32 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { id: '../embedding.md' },
     })
     expect(result.isError).toBe(true)
+  })
+
+  it('rejects reads and writes through a symlink or junction that leaves the vault', async () => {
+    const vault = await makeVault()
+    const outside = await mkdtemp(join(tmpdir(), 'dsh-memory-outside-'))
+    await writeFile(join(outside, 'secret.md'), 'outside\n')
+    await symlink(outside, join(vault, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
+    const ctx = await boot(vault)
+
+    const read = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('symlink-read'),
+      name: 'wiki_read',
+      arguments: { id: 'escape/secret.md' },
+    })
+    expect(read.isError).toBe(true)
+
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('symlink-write'),
+      name: 'wiki_write',
+      arguments: { id: 'escape/new.md', content: 'must not escape' },
+    })
+    expect(write.isError).toBe(true)
+    await expect(readFile(join(outside, 'new.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await rm(outside, { recursive: true, force: true })
   })
 
   it('defaults the vault to the calling session workspace under .dsh/memory', async () => {

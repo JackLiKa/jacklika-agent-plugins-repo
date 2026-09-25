@@ -108,6 +108,17 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     expect((JSON.parse(resultText(r3)) as { id: string }).id).toBe(join('agents', 'agent-1', 'notes', 'y.md'))
   })
 
+  it('withdraws its tools/execute wrapper when the Loader fiber unloads', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
+    const ctx = await boot(vault)
+    const entry = [...ctx.loader.entries()].find(candidate => candidate.options.name === '@jacklika/dsh-memory-scope')
+    if (entry?.fiber === undefined) throw new Error('active scope entry missing')
+    await entry.fiber.dispose()
+    const result = await write(ctx, 'unscoped', 'notes/x.md', 'agent-1', vault)
+    if (result.isError) throw new Error('expected unscoped write success')
+    expect((JSON.parse(resultText(result)) as { id: string }).id).toBe(join('notes', 'x.md'))
+  })
+
   it('leaves shared zone ids untouched for queue or curator arbitration', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
     const ctx = await boot(vault)

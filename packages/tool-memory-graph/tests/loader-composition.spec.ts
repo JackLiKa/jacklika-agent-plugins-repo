@@ -82,6 +82,16 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     expect(names).toContain('wiki_graph')
   })
 
+  it('withdraws wiki_graph when its Loader fiber unloads', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const tools = ctx.tools
+    const entry = [...ctx.loader.entries()].find(candidate => candidate.options.name === '@jacklika/dsh-tool-memory-graph')
+    if (entry?.fiber === undefined) throw new Error('active graph entry missing')
+    await entry.fiber.dispose()
+    expect(tools.schemas().some(schema => schema.name === 'wiki_graph')).toBe(false)
+  })
+
   it('returns the full vault graph with nodes and resolved edges', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)

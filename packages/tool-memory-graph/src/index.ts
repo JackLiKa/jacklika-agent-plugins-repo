@@ -13,7 +13,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
-  containedPath, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter,
+  containedPathReal, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter,
 } from '@jacklika/dsh-tool-memory-filesystem'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -136,7 +136,7 @@ async function buildSubgraph(
   startId: string,
   depth: number,
 ): Promise<MemoryGraph> {
-  const startPath = containedPath(root, startId)
+  const startPath = await containedPathReal(root, startId)
   const visited = new Map<string, string>([[relative(root, startPath), startPath]])
   let frontier = [startPath]
 
@@ -163,7 +163,7 @@ async function buildSubgraph(
   const edges: GraphEdge[] = []
   const nodes: GraphNode[] = []
   for (const id of ids) {
-    const path = containedPath(root, id)
+    const path = await containedPathReal(root, id)
     nodes.push({ id, title: await noteTitle(path, id) })
     const text = await readFile(path, 'utf8')
     for (const link of extractLinks(text)) {
@@ -186,7 +186,7 @@ export function apply(ctx: Context, config: Config): void {
   assertPositiveInteger('maxDepth', resolved.maxDepth)
   assertPositiveInteger('maxNodes', resolved.maxNodes)
 
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_graph',
     description: 'Return the Obsidian-style [[link]] graph of the wiki vault: note ids, titles, and directed edges. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth.',
     parameters: {
@@ -212,5 +212,5 @@ export function apply(ctx: Context, config: Config): void {
         : await buildSubgraph(vaultRoot, resolved, args.id, depth)
       return graph as unknown as JsonValue
     },
-  }))
+  })))
 }

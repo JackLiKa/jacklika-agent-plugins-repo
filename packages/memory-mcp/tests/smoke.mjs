@@ -1,12 +1,13 @@
 // Smoke test: spawn the server, drive initialize + tools/call over stdio.
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const server = fileURLToPath(new URL('../src/server.mjs', import.meta.url))
 const vault = await mkdtemp(join(tmpdir(), 'dsh-mcp-vault-'))
+const outside = await mkdtemp(join(tmpdir(), 'dsh-mcp-outside-'))
 
 const child = spawn('node', [server, '--vault', vault], { stdio: ['pipe', 'pipe', 'inherit'] })
 let buffer = ''
@@ -57,7 +58,14 @@ try {
 
   const r = await call('tools/call', { name: 'wiki_read', arguments: { id: 'concepts/RAG.md' } })
   const note = JSON.parse(r.content[0].text)
-  assert(note.version.length === 12, 'wiki_read version')
+  assert(note.version.length === 40, 'wiki_read version')
+
+  await Promise.all([
+    call('tools/call', { name: 'wiki_write', arguments: { id: 'concepts/RAG.md', content: 'concurrent-a' } }),
+    call('tools/call', { name: 'wiki_write', arguments: { id: 'concepts/RAG.md', content: 'concurrent-b' } }),
+  ])
+  const serialized = await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8')
+  assert(serialized.includes('concurrent-a') && serialized.includes('concurrent-b'), 'concurrent writes serialized')
 
   const conflict = await call('tools/call', {
     name: 'wiki_write',
@@ -67,6 +75,11 @@ try {
 
   const s = await call('tools/call', { name: 'wiki_search', arguments: { query: 'Retrieval' } })
   assert(JSON.parse(s.content[0].text).length === 1, 'wiki_search hit')
+
+  await writeFile(join(outside, 'secret.md'), 'outside\n')
+  await symlink(outside, join(vault, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
+  const escaped = await call('tools/call', { name: 'wiki_read', arguments: { id: 'escape/secret.md' } }).then(() => null, e => e)
+  assert(escaped !== null, 'symlink escape must error')
 
   const res = await call('resources/list')
   assert(res.resources.length === 1 && res.resources[0].uri === 'note:///concepts/RAG.md', 'resources/list')
@@ -78,4 +91,5 @@ try {
 } finally {
   child.kill()
   await rm(vault, { recursive: true, force: true })
+  await rm(outside, { recursive: true, force: true })
 }

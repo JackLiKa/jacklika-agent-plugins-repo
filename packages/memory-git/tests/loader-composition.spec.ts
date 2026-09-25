@@ -99,6 +99,17 @@ describe('memory-git real Loader composition through cordis.yml', () => {
     expect(log).toContain('shared/summary.md')
   })
 
+  it('withdraws its tools/execute wrapper when the Loader fiber unloads', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-git-vault-'))
+    const ctx = await boot(vault)
+    const entry = [...ctx.loader.entries()].find(candidate => candidate.options.name === '@jacklika/dsh-memory-git')
+    if (entry?.fiber === undefined) throw new Error('active git entry missing')
+    await entry.fiber.dispose()
+    const result = await write(ctx, 'untracked', 'shared/untracked.md')
+    expect(result.isError).toBe(false)
+    await expect(gitLog(vault)).rejects.toBeDefined()
+  })
+
   it('leaves writes outside the configured prefixes uncommitted', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-git-vault-'))
     const ctx = await boot(vault)

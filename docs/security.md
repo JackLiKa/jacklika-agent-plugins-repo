@@ -18,7 +18,7 @@
 
 - Plugins and skills are trusted code/configuration: they run inside the dsh process with full host privileges. Only install versions you control.
 - `nestedRepo` default (`init`) prevents memory commits from silently entering an enclosing project repository — a real boundary found during development, now closed by default.
-- Path containment rejects `..` escapes on every tool call; writes publish atomically via temp-file rename.
+- Path containment rejects `..`, absolute-path, cross-root, and existing symlink/junction escapes. Reads verify the real target; writes verify the nearest existing ancestor before and after directory creation, then publish atomically via a sibling temp-file rename.
 
 ## Concurrency truth table
 
