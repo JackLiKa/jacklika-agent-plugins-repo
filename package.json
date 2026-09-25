@@ -18,6 +18,7 @@
     "typecheck": "tsc -b",
     "lint": "oxlint .",
     "build": "tsc -b",
+    "verify-translation-pairing": "node scripts/verify-translation-pairing.mjs",
     "pack:all": "pnpm build && node scripts/pack-all.mjs",
     "test:pack": "pnpm build && node scripts/verify-pack.mjs",
     "test:profile": "pnpm build && node scripts/verify-profile-install.mjs",

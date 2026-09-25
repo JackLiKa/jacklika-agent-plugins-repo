@@ -7,7 +7,7 @@
 各包发布后，把 Bundle 安装进已有或新 Profile：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.1
 ```
 
 Bundle 以运行时依赖带齐六个成员包，无需逐个安装。确保 `@deepseek-ai/dsh-base` 位于记忆 Bundle 之前，并加入 `@deepseek-ai/dsh-headless` 或 `@deepseek-ai/dsh-web-app` 等应用层。检查最终顺序：
@@ -27,6 +27,53 @@ dsh plugin --profile memory remove @jacklika/dsh-memory
 ```
 
 卸载只移除包代码与 Bundle 选择，不会删除 `<workspace>/.dsh/memory/` 或显式配置的 Vault。
+
+## 私人安装与本地安装
+
+本套件是私人插件包，不发布到公共 registry。直接从 checkout 安装，不需要 registry，也不需要发布：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+dsh plugin --profile memory add /absolute/path/to/mydsh-plugin/packages/memory
+```
+
+传入绝对路径，并指向 **Bundle** 包，绝不要指向仓库根。各平台只有写法不同：
+
+| 平台 | 传入的路径 |
+|---|---|
+| macOS / Linux | `/home/me/src/mydsh-plugin/packages/memory` |
+| Windows（PowerShell） | `C:\src\mydsh-plugin\packages\memory` |
+| Windows（也接受正斜杠） | `C:/src/mydsh-plugin/packages/memory` |
+
+路径含空格时请加引号。
+
+必须先执行 `pnpm build`：`lib/` 被 gitignore，而 Bundle 的 `main` 与 `types` 入口就在其中。改动源码后重新执行 `pnpm build` 即可，Profile 本身无需重装。
+
+Profile 会把该 Bundle 记录为 `link:` 依赖 —— Windows 上是目录 junction，POSIX 上是符号链接 —— 因此 checkout 必须留在你传入的位置。其余行为与从 registry 安装一致：
+
+```sh
+dsh --profile memory --dump-config
+dsh plugin --profile memory remove @jacklika/dsh-memory
+```
+
+不要单独传入成员包（例如 `packages/tool-memory-filesystem`）。它不声明 `dsh.bundle`，`dsh plugin` 只会把它装成普通依赖，不会构成 Profile 层。
+
+### 为什么只装 Bundle tarball 不够
+
+`pnpm pack` 会把 Bundle 的 `workspace:*` 成员依赖改写成精确版本号。这些成员尚未发布，因此只装 tarball 会向 registry 请求它们，并以 `ERR_PNPM_FETCH_404` 失败；随后 `dsh plugin` 会还原 Profile 的 manifest 与 lockfile。要通过 tarball 分发，请使用私人 registry，或改用上面的 checkout 路径。
+
+### 私人 registry
+
+需要在多台机器安装或分享时，把全部八个包发布到私人 registry，并让 Plugin Manager 指向它。Harness 对不在其配置集合内的 registry 单独询问，因此私人 registry 不会回落到公共 registry。在 `plugin-manager` row 上设置 `registry`；认证沿用 pnpm 自身配置（`.npmrc`）：
+
+```yaml
+- id: plugin-manager
+  config:
+    registry: 'https://npm.example.internal/'
+```
+
+然后按[从 registry 安装](#从-registry-安装)中的方式按名称与版本安装。
 
 ## 未发布时的本地 tarball 验证
 
@@ -117,6 +164,8 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 | 现象 | 处理 |
 |---|---|
 | Bundle 无法识别 | 安装 `@jacklika/dsh-memory`，不要安装仓库根；检查打包后的 `package.json` 含 `dsh.bundle.patch`。 |
+| 成员包装上了但不构成 Profile 层 | 应传 `packages/memory`，而不是 `packages/tool-memory-filesystem`；不含 `dsh.bundle` 的包只会成为普通依赖。 |
+| 安装 Bundle tarball 报 `ERR_PNPM_FETCH_404` | 改用 checkout 路径安装（见[私人安装与本地安装](#私人安装与本地安装)），或把全部成员包发布到私人 registry。 |
 | 缺少 `lib/index.js` | 运行 `pnpm build`；发布前运行 `pnpm test:pack`。 |
 | peer 版本不兼容 | 使用 [compatibility.zh.md](compatibility.zh.md) 中的精确 Harness 版本；不要压制 peer 检查。 |
 | Git 不存在 | 安装 Git 并确认 `git --version` 可在 `PATH` 运行，或在自定义 Bundle 中不挂 `memory-git`。 |

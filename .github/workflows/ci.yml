@@ -27,6 +27,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm run verify-translation-pairing
       - run: pnpm test
       - run: pnpm build
       - run: pnpm test:multiprocess
