@@ -1,8 +1,8 @@
 # 双语文档配对
 
-每个面向用户的包都必须保持英文和中文 README 同步。每个包在 README 对旁边
-放置 `README.i18n.yaml`，记录最近一次确认一致时两种语言的 git blob hash。
-两种语言具有同等效力。
+每个面向用户的包以及套件级文档目录都必须保持英文和中文文件同步。每一对
+双语文件由 `i18n.yaml` 记录最近一次确认一致时两种语言的 git blob hash。两种
+语言具有同等效力。
 
 ## 工作流
 
@@ -20,7 +20,7 @@
    pnpm run verify-translation-pairing --write packages/<name>/README.zh.md
    ```
 
-4. 一起提交两个 README 和更新后的 `README.i18n.yaml`。
+4. 一起提交两侧文件和更新后的 `i18n.yaml`。
 
 ## 验证
 

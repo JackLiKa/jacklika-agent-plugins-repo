@@ -1,5 +1,5 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 
@@ -36,16 +36,52 @@ function replaceHashes(text, hashes) {
   return lines.join('\n')
 }
 
-async function* walkZhMdFiles(dir) {
+function posixPath(absolutePath) {
+  return relative(root, absolutePath).replace(/\\/g, '/')
+}
+
+async function* walkMdFiles(dir) {
   const entries = await readdir(dir, { withFileTypes: true })
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue
-      yield* walkZhMdFiles(join(dir, entry.name))
-    } else if (entry.name.endsWith('.zh.md')) {
+      yield* walkMdFiles(join(dir, entry.name))
+    } else if (entry.name.endsWith('.md')) {
       yield join(dir, entry.name)
     }
   }
+}
+
+function languageSuffix(file) {
+  if (file.endsWith('.zh.md')) return 'zh'
+  if (file.endsWith('.md')) return 'en'
+  return undefined
+}
+
+function baseName(file) {
+  return file.replace(/\.zh\.md$/, '').replace(/\.md$/, '')
+}
+
+function enName(base) { return `${base}.md` }
+function zhName(base) { return `${base}.zh.md` }
+
+const recordTemplate = `# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write
+`
+
+async function loadAllRecords() {
+  const records = new Map() // posix file path -> { i18nPath, hash }
+  for await (const i18nPath of walkI18nFiles(root)) {
+    const dir = dirname(i18nPath)
+    const text = await readFile(i18nPath, 'utf8')
+    const hashes = parseHashes(text)
+    for (const [file, hash] of Object.entries(hashes)) {
+      records.set(posixPath(join(dir, file)), { i18nPath, hash })
+    }
+  }
+  return records
 }
 
 async function* walkI18nFiles(dir) {
@@ -60,56 +96,75 @@ async function* walkI18nFiles(dir) {
   }
 }
 
-function baseName(zhFile) {
-  return basename(zhFile, '.zh.md')
-}
+async function collectBilingualPairs() {
+  const groups = new Map() // base name (filename only) -> dir -> { en?: string, zh?: string }
+  const scopes = [join(root, 'docs'), join(root, 'packages')]
+  const mdFiles = explicitPaths.length > 0
+    ? explicitPaths.map(p => resolve(root, p))
+    : []
 
-function posixPath(absolutePath) {
-  return relative(root, absolutePath).replace(/\\/g, '/')
+  if (explicitPaths.length > 0) {
+    for (const p of mdFiles) {
+      const dir = dirname(p)
+      const file = posixPath(p).split('/').pop()
+      const lang = languageSuffix(file)
+      if (lang !== 'en' && lang !== 'zh') continue
+      const base = baseName(file)
+      const entry = groups.get(`${dir}\n${base}`) ?? {}
+      entry[lang] = p
+      entry[lang === 'en' ? 'zh' : 'en'] = join(dir, lang === 'en' ? zhName(base) : enName(base))
+      groups.set(`${dir}\n${base}`, entry)
+    }
+  } else {
+    for (const scope of scopes) {
+      for await (const mdPath of walkMdFiles(scope)) {
+        const dir = dirname(mdPath)
+        const file = posixPath(mdPath).split('/').pop()
+        const lang = languageSuffix(file)
+        if (lang !== 'en' && lang !== 'zh') continue
+        const base = baseName(file)
+        const key = `${dir}\n${base}`
+        const entry = groups.get(key) ?? {}
+        entry[lang] = mdPath
+        groups.set(key, entry)
+      }
+    }
+  }
+  return groups
 }
 
 async function main() {
-  // Load every recorded hash from every i18n.yaml record.
-  const records = new Map() // key -> { i18nPath, file, hash }
-  const i18nFiles = explicitPaths.length > 0
-    ? explicitPaths.map(p => resolve(root, p))
-    : await Array.fromAsync(walkI18nFiles(root))
-
-  for (const i18nPath of i18nFiles) {
-    const dir = dirname(i18nPath)
-    const text = await readFile(i18nPath, 'utf8')
-    const hashes = parseHashes(text)
-    for (const [file, hash] of Object.entries(hashes)) {
-      records.set(posixPath(join(dir, file)), { i18nPath, file, hash })
-    }
-  }
-
-  // Discover every *.zh.md and its English counterpart.
-  const zhFiles = explicitPaths.length > 0
-    ? explicitPaths.map(p => resolve(root, p))
-    : await Array.fromAsync(walkZhMdFiles(root))
-
+  const records = await loadAllRecords()
+  const pairs = await collectBilingualPairs()
   let failed = false
   const updatesByI18n = new Map() // i18nPath -> { text, hashes }
 
-  for (const zhPath of zhFiles) {
-    const dir = dirname(zhPath)
-    const base = baseName(zhPath)
-    const zhFile = `${base}.zh.md`
-    const enFile = `${base}.md`
-    const enPath = join(dir, enFile)
-    const zhKey = posixPath(zhPath)
-    const enKey = posixPath(enPath)
+  for (const [key, { en: enPath, zh: zhPath }] of pairs) {
+    const [dirPart, base] = key.split('\n')
+    const dir = dirPart
+    const enFile = enName(base)
+    const zhFile = zhName(base)
+    const scope = posixPath(dir)
 
-    const zhRecord = records.get(zhKey)
-    const enRecord = records.get(enKey)
-    if (!enRecord || !zhRecord || enRecord.i18nPath !== zhRecord.i18nPath) {
+    if (!enPath || !zhPath) {
       failed = true
-      process.stderr.write(`${relative(root, dir)}: bilingual pair ${enFile} ↔ ${zhFile} is not guarded by an i18n.yaml record\n`)
+      process.stderr.write(`${scope}: incomplete bilingual pair (${enPath ? 'EN' : 'missing EN'}, ${zhPath ? 'ZH' : 'missing ZH'})\n`)
       continue
     }
 
-    const i18nPath = enRecord.i18nPath
+    const enKey = posixPath(enPath)
+    const zhKey = posixPath(zhPath)
+    const enRecord = records.get(enKey)
+    const zhRecord = records.get(zhKey)
+    const i18nPath = enRecord?.i18nPath ?? zhRecord?.i18nPath
+    const expectedI18n = join(dir, 'i18n.yaml')
+
+    if (!enRecord || !zhRecord || enRecord.i18nPath !== zhRecord.i18nPath) {
+      failed = true
+      process.stderr.write(`${scope}: ${enFile} ↔ ${zhFile} is not guarded by ${posixPath(expectedI18n)}\n`)
+      continue
+    }
+
     const actualEn = hashFile(enPath)
     const actualZh = hashFile(zhPath)
     const drifted = []
@@ -117,26 +172,36 @@ async function main() {
     if (zhRecord.hash !== actualZh) drifted.push(zhFile)
 
     if (drifted.length === 0) {
-      process.stdout.write(`${relative(root, dir)}: ${enFile} ↔ ${zhFile} match recorded hashes\n`)
+      process.stdout.write(`${scope}: ${enFile} ↔ ${zhFile} match recorded hashes\n`)
       continue
     }
 
     if (writeFlag) {
       let entry = updatesByI18n.get(i18nPath)
       if (!entry) {
-        entry = { text: await readFile(i18nPath, 'utf8'), hashes: {} }
+        let text
+        try {
+          text = await readFile(i18nPath, 'utf8')
+        } catch (error) {
+          if ((error?.code ?? '') === 'ENOENT') {
+            text = recordTemplate
+          } else {
+            throw error
+          }
+        }
+        entry = { text, hashes: {} }
         updatesByI18n.set(i18nPath, entry)
       }
       if (enRecord.hash !== actualEn) entry.hashes[enFile] = actualEn
       if (zhRecord.hash !== actualZh) entry.hashes[zhFile] = actualZh
-      process.stdout.write(`${relative(root, dir)}: re-recorded hashes for ${drifted.join(', ')}\n`)
+      process.stdout.write(`${scope}: re-recorded hashes for ${drifted.join(', ')}\n`)
     } else {
       failed = true
       if (enRecord.hash !== actualEn) {
-        process.stderr.write(`${relative(root, dir)}/${enFile}: hash drift (recorded ${enRecord.hash}, actual ${actualEn})\n`)
+        process.stderr.write(`${scope}/${enFile}: hash drift (recorded ${enRecord.hash}, actual ${actualEn})\n`)
       }
       if (zhRecord.hash !== actualZh) {
-        process.stderr.write(`${relative(root, dir)}/${zhFile}: hash drift (recorded ${zhRecord.hash}, actual ${actualZh})\n`)
+        process.stderr.write(`${scope}/${zhFile}: hash drift (recorded ${zhRecord.hash}, actual ${actualZh})\n`)
       }
     }
   }

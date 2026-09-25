@@ -1,9 +1,10 @@
 # Bilingual documentation pairing
 
-Every package that ships user-facing documentation must keep its English and
-Chinese READMEs in sync. Each package stores a `README.i18n.yaml` next to the
-pair with the git blob hash of each language as of the last confirmed-consistent
-state. Both languages carry equal authority.
+Every package and suite-level documentation directory that ships
+user-facing docs must keep its English and Chinese files in sync. Each
+bilingual pair is guarded by an `i18n.yaml` record that stores the git blob
+hash of each language as of the last confirmed-consistent state. Both
+languages carry equal authority.
 
 ## Workflow
 
@@ -21,7 +22,7 @@ state. Both languages carry equal authority.
    pnpm run verify-translation-pairing --write packages/<name>/README.zh.md
    ```
 
-4. Commit both READMEs and the updated `README.i18n.yaml` together.
+4. Commit both sides and the updated `i18n.yaml` together.
 
 ## Verification
 
