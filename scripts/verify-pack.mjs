@@ -8,17 +8,44 @@ const root = resolve(import.meta.dirname, '..')
 const scratch = await mkdtemp(join(tmpdir(), 'mydsh-pack-'))
 const tarballs = join(scratch, 'tarballs')
 const install = join(scratch, 'install')
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const tar = process.platform === 'win32' ? 'tar.exe' : 'tar'
+
+const tarIsGnu = (() => {
+  const result = spawnSync(tar, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  return (result.stdout ?? '').includes('GNU tar')
+})()
+
+/** Convert a Windows path to POSIX form when GNU tar (e.g. from Git for Windows) is in use. */
+function tarPath(absolutePath) {
+  if (process.platform !== 'win32' || !tarIsGnu) return absolutePath
+  return absolutePath
+    .replace(/^[A-Za-z]:[\\/]/, match => `/${match[0].toLowerCase()}/`)
+    .replace(/\\/g, '/')
+}
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
   if (result.status !== 0) {
-    process.stderr.write(result.stdout)
-    process.stderr.write(result.stderr)
+    process.stderr.write(result.stdout ?? '')
+    process.stderr.write(result.stderr ?? '')
     process.exit(result.status ?? 1)
   }
-  return result.stdout
+  return result.stdout ?? ''
+}
+
+function runPnpm(args, cwd) {
+  if (process.platform === 'win32') {
+    // pnpm is installed as a shell/batch shim on Windows; spawnSync needs a shell to execute it.
+    const command = ['pnpm', ...args.map(a => JSON.stringify(a))].join(' ')
+    const result = spawnSync(command, { cwd, encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    if (result.status !== 0) {
+      process.stderr.write(result.stdout ?? '')
+      process.stderr.write(result.stderr ?? '')
+      process.exit(result.status ?? 1)
+    }
+    return result.stdout ?? ''
+  }
+  return run('pnpm', args, cwd)
 }
 
 try {
@@ -30,7 +57,7 @@ try {
   const packageSpecs = new Map()
   for (const file of files) {
     const path = join(tarballs, file)
-    const entries = run(tar, ['-tf', path], root).split(/\r?\n/).filter(Boolean)
+    const entries = run(tar, ['-tf', tarPath(path)], root).split(/\r?\n/).filter(Boolean)
     if (!entries.includes('package/package.json')) throw new Error(`${file}: package.json missing`)
     if (file.includes('dsh-memory-0.1.7')) {
       if (!entries.includes('package/cordis.patch.yml')) throw new Error(`${file}: cordis.patch.yml missing`)
@@ -39,7 +66,7 @@ try {
       throw new Error(`${file}: forbidden package content`)
     }
     const spec = `file:${path}`
-    const manifestText = run(tar, ['-xOf', path, 'package/package.json'], root)
+    const manifestText = run(tar, ['-xOf', tarPath(path), 'package/package.json'], root)
     if (/workspace:|link:|\/Users\/[^/]+\/|[A-Za-z]:\\/.test(manifestText)) throw new Error(`${file}: non-portable dependency spec`)
     const manifest = JSON.parse(manifestText)
     for (const field of ['main', 'types']) {
@@ -53,16 +80,16 @@ try {
   await mkdir(install)
   await writeFile(join(install, 'package.json'), JSON.stringify({ name: 'memory-pack-smoke', private: true }, undefined, 2) + '\n')
   const overrides = [...packageSpecs].map(([name, spec]) => `  '${name}': '${spec.replaceAll("'", "''")}'`).join('\n')
-  await writeFile(join(install, 'pnpm-workspace.yaml'), `autoInstallPeers: true\noverrides:\n${overrides}\n`)
+  await writeFile(join(install, 'pnpm-workspace.yaml'), `packages:\n  - '.'\nautoInstallPeers: true\noverrides:\n${overrides}\n`)
   const bundleSpec = packageSpecs.get('@jacklika/dsh-memory')
   const mcpSpec = packageSpecs.get('@jacklika/dsh-memory-mcp')
   if (bundleSpec === undefined || mcpSpec === undefined) throw new Error('entry package tarballs missing')
-  run(pnpm, ['add', bundleSpec, mcpSpec], install)
+  runPnpm(['add', '-w', bundleSpec, mcpSpec], install)
   const bundle = JSON.parse(await readFile(join(install, 'node_modules', '@jacklika', 'dsh-memory', 'package.json'), 'utf8'))
   if (bundle.dsh?.bundle?.patch !== './cordis.patch.yml') throw new Error('installed bundle metadata missing')
   for (const dependency of Object.keys(bundle.dependencies ?? {})) {
     if (!dependency.startsWith('@jacklika/')) continue
-    const listed = run(pnpm, ['list', dependency, '--depth', 'Infinity', '--json'], install)
+    const listed = runPnpm(['list', dependency, '--depth', 'Infinity', '--json'], install)
     if (!listed.includes(dependency)) throw new Error(`${dependency}: installed dependency missing`)
   }
   run(process.execPath, ['--input-type=module', '--eval', "await import('@jacklika/dsh-memory')"], install)
