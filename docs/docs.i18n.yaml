@@ -1,0 +1,18 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/README.md
+README.md: f09337c6467480793abffb1014bd12cb9bc8a84b
+README.zh.md: 2c0597702bc019444b75ca1547a5a398495d1e05
+adding-plugins.md: d922fc2d1bd8fd74cdd4b929a495ca5b9edf7602
+adding-plugins.zh.md: 6330ca8d86a6b7beb0e991c1125be0488e135f9c
+architecture.md: 8c5df10c4728650a5e058cfaf1609d7a8acc87fc
+architecture.zh.md: 1c8ae1d543e877c86397667ebb0b285dbf41b7cd
+compatibility.md: 25b7866b68fc26cad207342d4bb9fbfb66205885
+compatibility.zh.md: 4b9f05f5b08730ac71e9f40e0ebb69abd4be7f2c
+mcp-server.md: f15efd72325fd68aa1e06ed19920518b588ad72a
+mcp-server.zh.md: 5fe45d5b151f683cb73fbab4f0f89925242b313b
+security.md: a1d5a395d578d9b4fe3d70ab4c89503ffbc66ded
+security.zh.md: 6a3f2f2ef9190af3374f53c01491a71879347a4c
+usage.md: 77861366256584af0e9164b81889eba9a9c6a1e2
+usage.zh.md: 3e7ff50d792bba056b9ec3f6b11afb60bd655ef9
