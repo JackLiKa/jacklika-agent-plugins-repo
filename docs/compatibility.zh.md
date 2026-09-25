@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | `^22.19.0 || >=24.0.0` | 本地：22.23.2；CI 覆盖 Linux、macOS、Windows 上的 22.19.0 与当前 24.x |
 | pnpm | 仓库开发使用 11.7.0 | 11.7.0 |
-| DeepSeek Harness 包 | 精确 peer `0.1.7-rc.2` | Harness checkout 与已发布包 `0.1.7-rc.2` |
+| DeepSeek Harness 包 | 精确 peer `0.1.7-rc.1` | Harness checkout 与已发布包 `0.1.7-rc.1` |
 | Cordis | 精确 peer `4.0.4` | 4.0.4 |
 | Git | `git` 必须在 `PATH`；插件使用 `-C`、`init`、`rev-parse`、`status`、`add`、`commit` | 本地：Apple Git 2.50.1；CI 使用各 runner 的 Git |
 

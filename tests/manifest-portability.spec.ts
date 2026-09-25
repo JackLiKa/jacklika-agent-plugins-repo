@@ -29,7 +29,7 @@ describe('published package manifests', () => {
       expect(serialized, path).not.toMatch(/link:\/|link:[A-Za-z]:\\/)
       const peers = value.peerDependencies as Record<string, string> | undefined
       for (const [name, range] of Object.entries(peers ?? {})) {
-        if (name.startsWith('@deepseek-ai/dsh-')) expect(range, `${path}: ${name}`).toBe('0.1.7-rc.2')
+        if (name.startsWith('@deepseek-ai/dsh-')) expect(range, `${path}: ${name}`).toBe('0.1.7-rc.1')
         else if (name.startsWith('@deepseek-ai/')) expect(range, `${path}: ${name}`).not.toBe('*')
       }
     }

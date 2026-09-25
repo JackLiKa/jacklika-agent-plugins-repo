@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | `^22.19.0 || >=24.0.0` | Local: 22.23.2; CI covers 22.19.0 and current 24.x on Linux, macOS, and Windows |
 | pnpm | repository development uses 11.7.0 | 11.7.0 |
-| DeepSeek Harness packages | exact `0.1.7-rc.2` peers | Harness checkout and published packages at `0.1.7-rc.2` |
+| DeepSeek Harness packages | exact `0.1.7-rc.1` peers | Harness checkout and published packages at `0.1.7-rc.1` |
 | Cordis | exact `4.0.4` peer | 4.0.4 |
 | Git | `git` must be on `PATH`; the plugin uses `-C`, `init`, `rev-parse`, `status`, `add`, and `commit` | Local: Apple Git 2.50.1; CI uses each runner's Git |
 

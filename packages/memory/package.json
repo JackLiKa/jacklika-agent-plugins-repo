@@ -17,7 +17,7 @@
   "license": "MIT",
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "0.1.7-rc.2"
+    "@deepseek-ai/dsh-tools": "0.1.7-rc.1"
   },
   "dependencies": {
     "@jacklika/dsh-memory-git": "workspace:*",
