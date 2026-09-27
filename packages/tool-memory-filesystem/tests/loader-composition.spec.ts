@@ -136,6 +136,22 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(hits.some(h => h.id === 'embedding.md')).toBe(true)
   })
 
+  it('matches keywords that appear only in the note body', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-body-only'),
+      name: 'wiki_search',
+      arguments: { query: 'dense vector' },
+    })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected wiki_search success')
+    const hits = JSON.parse(resultText(result)) as { id: string; title: string }[]
+    expect(hits.some(h => h.id === 'embedding.md')).toBe(true)
+    expect(hits.every(h => !Object.hasOwn(h, 'body'))).toBe(true)
+  })
+
   it('appends to a note while preserving frontmatter', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)

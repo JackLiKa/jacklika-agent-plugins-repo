@@ -32,3 +32,13 @@ export interface SearchResult {
   /** Paths of notes that link to this note. */
   backlinks: string[]
 }
+
+/**
+ * In-memory index entry: the public hit plus the note body kept as keyword
+ * haystack. `wiki_search` matches against the body but never emits it, so the
+ * tool output stays a bounded metadata list.
+ */
+export interface IndexedNote extends SearchResult {
+  /** Note body text used for keyword matching only. */
+  body: string
+}

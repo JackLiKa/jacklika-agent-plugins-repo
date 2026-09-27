@@ -16,7 +16,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import yaml from 'js-yaml'
-import type { Note, SearchResult } from './types.ts'
+import type { IndexedNote, Note, SearchResult } from './types.ts'
 
 export type * from './types.ts'
 
@@ -322,8 +322,9 @@ export async function readNote(
 }
 
 /**
- * Build a search index of note titles and backlinks. The title is the first
- * Markdown `# heading` or the basename without extension.
+ * Build a search index of note titles, bodies, and backlinks. The title is the
+ * first Markdown `# heading` or the basename without extension; the body keeps
+ * keyword search honest about the documented "titles and bodies" contract.
  * @param root - vault root.
  * @param extensions - note extensions.
  * @param indexHiddenDirs - descend into dot-directories besides the fixed exclusions.
@@ -333,7 +334,7 @@ export async function buildIndex(
   root: string,
   extensions: string[],
   indexHiddenDirs = false,
-): Promise<Map<string, SearchResult>> {
+): Promise<Map<string, IndexedNote>> {
   const paths = await listNotePaths(root, extensions, indexHiddenDirs)
   const notes: Note[] = []
   for (const path of paths) {
@@ -348,13 +349,13 @@ export async function buildIndex(
       version: noteVersion(text),
     })
   }
-  const index = new Map<string, SearchResult>()
+  const index = new Map<string, IndexedNote>()
   for (const note of notes) {
     const headingMatch = /^#\s+(.+)$/m.exec(note.body)
     const title = headingMatch !== null && headingMatch[1] !== undefined
       ? headingMatch[1].trim()
       : note.id.replace(/\.[^.]+$/, '')
-    index.set(note.id, { id: note.id, title, backlinks: [] })
+    index.set(note.id, { id: note.id, title, backlinks: [], body: note.body })
   }
   for (const note of notes) {
     for (const link of note.links) {
@@ -464,9 +465,9 @@ export function apply(ctx: Context, config: Config): void {
       const terms = args.query.toLowerCase().split(/\s+/).filter(Boolean)
       const hits: SearchResult[] = []
       for (const result of index.values()) {
-        const haystack = `${result.id} ${result.title} ${result.backlinks.join(' ')}`.toLowerCase()
+        const haystack = `${result.id} ${result.title} ${result.backlinks.join(' ')} ${result.body}`.toLowerCase()
         if (terms.every(term => haystack.includes(term))) {
-          hits.push(result)
+          hits.push({ id: result.id, title: result.title, backlinks: result.backlinks })
         }
       }
       hits.sort((a, b) => b.backlinks.length - a.backlinks.length)
