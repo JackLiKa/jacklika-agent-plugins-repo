@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JackLiKa/mydsh-plugin.git",
+    "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git",
     "directory": "packages/memory-scope"
   },
   "type": "module",

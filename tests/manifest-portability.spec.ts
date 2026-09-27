@@ -1,10 +1,38 @@
+import { spawnSync } from 'node:child_process'
 import { readFile, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const packageRoot = join(root, 'packages')
+
+/**
+ * Reduce a declared or remote Git URL to `host/owner/repo` so the spellings npm
+ * accepts compare equal: `git+https://…`, `ssh://…`, and `git@host:owner/repo`.
+ * @param url - the raw Git URL.
+ * @returns the lowercased URL without its transport prefix or `.git` suffix.
+ */
+function normalizeGitUrl(url: string): string {
+  return url.trim()
+    .replace(/^git\+/, '')
+    .replace(/^ssh:\/\//, '')
+    .replace(/^git@([^:]+):/, 'https://$1/')
+    .replace(/\.git$/, '')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+}
+
+/**
+ * Read the checkout's `origin` URL.
+ * @returns the remote URL, or undefined when the checkout has no readable origin.
+ */
+function originUrl(): string | undefined {
+  const result = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: root, encoding: 'utf8' })
+  if (result.error !== undefined || result.status !== 0) return undefined
+  const url = result.stdout.trim()
+  return url === '' ? undefined : url
+}
 
 async function packageManifests(): Promise<{ path: string; value: Record<string, unknown> }[]> {
   const names = await readdir(packageRoot)
@@ -45,6 +73,44 @@ describe('published package manifests', () => {
       expect(value.types, path).toBeTypeOf('string')
       expect(value.files, path).toBeInstanceOf(Array)
       expect(value.exports, path).toBeTypeOf('object')
+    }
+  })
+
+  it('names one repository URL that still matches the checkout it lives in', async () => {
+    const rootPath = join(root, 'package.json')
+    const rootManifest = JSON.parse(await readFile(rootPath, 'utf8')) as Record<string, unknown>
+    const packages = await packageManifests()
+
+    const urls = new Set<string>()
+    for (const { path, value } of [{ path: rootPath, value: rootManifest }, ...packages]) {
+      const repository = value.repository as { type?: string; url?: string; directory?: string } | undefined
+      expect(repository?.type, path).toBe('git')
+      expect(repository?.url, path).toBeTypeOf('string')
+      urls.add(normalizeGitUrl(repository!.url!))
+    }
+
+    // Every manifest in the workspace names the same repository.
+    expect([...urls], 'manifests disagree on the repository URL').toHaveLength(1)
+
+    // A package's `directory` is its own path, so a moved or renamed package fails.
+    for (const { path, value } of packages) {
+      const directory = (value.repository as { directory?: string }).directory
+      expect(directory, path).toBe(relative(root, dirname(path)).split(sep).join('/'))
+    }
+    expect(
+      (rootManifest.repository as { directory?: string }).directory,
+      'the root package must not claim a subdirectory',
+    ).toBeUndefined()
+
+    // The repository name is the part that drifts — a stale rename once survived
+    // this suite. Only the name is compared, never the owner, so a fork's
+    // checkout (same name, different owner) still passes.
+    const remote = originUrl()
+    if (remote !== undefined) {
+      const declaredName = [...urls][0]!.split('/').pop()
+      expect(declaredName, 'manifests must name the checkout origin repository').toBe(
+        normalizeGitUrl(remote).split('/').pop(),
+      )
     }
   })
 })

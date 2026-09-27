@@ -3,7 +3,7 @@
   "description": "Serializes selected model-facing tool calls (default wiki_write) through the tools/execute waterfall so same-vault mutations cannot race.",
   "version": "0.1.0-alpha.0",
   "publishConfig": { "access": "public" },
-  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/mydsh-plugin.git", "directory": "packages/memory-queue" },
+  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git", "directory": "packages/memory-queue" },
   "type": "module",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "lib/index.js",

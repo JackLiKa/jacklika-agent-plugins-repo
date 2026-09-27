@@ -3,7 +3,7 @@
   "description": "The dsh memory bundle: an Obsidian-compatible Markdown vault with per-agent write namespaces, serialized writes, and git history as a patch layer over dsh-base",
   "version": "0.1.7-rc.2",
   "publishConfig": { "access": "public" },
-  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/mydsh-plugin.git", "directory": "packages/memory" },
+  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git", "directory": "packages/memory" },
   "type": "module",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "lib/index.js",

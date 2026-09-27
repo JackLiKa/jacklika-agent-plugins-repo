@@ -3,7 +3,7 @@
   "description": "Commits successful memory-tool writes to git through the tools/execute waterfall — opt-in version history, rollback, and audit for the vault.",
   "version": "0.1.0-alpha.0",
   "publishConfig": { "access": "public" },
-  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/mydsh-plugin.git", "directory": "packages/memory-git" },
+  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git", "directory": "packages/memory-git" },
   "type": "module",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "lib/index.js",

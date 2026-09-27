@@ -3,7 +3,7 @@
   "description": "Zero-dependency MCP stdio server exposing the memory vault to any MCP client — one process owns all writes.",
   "version": "0.1.0",
   "publishConfig": { "access": "public" },
-  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/mydsh-plugin.git", "directory": "packages/memory-mcp" },
+  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git", "directory": "packages/memory-mcp" },
   "type": "module",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "src/server.mjs",

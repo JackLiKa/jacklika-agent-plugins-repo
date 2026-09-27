@@ -11,7 +11,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JackLiKa/mydsh-plugin.git"
+    "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git"
   },
   "scripts": {
     "test": "vitest run && node packages/memory-mcp/tests/smoke.mjs",
