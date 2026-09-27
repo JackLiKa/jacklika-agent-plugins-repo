@@ -7,7 +7,7 @@
 各包发布后，把 Bundle 安装进已有或新 Profile：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.1
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
 ```
 
 Bundle 以运行时依赖带齐六个成员包，无需逐个安装。确保 `@deepseek-ai/dsh-base` 位于记忆 Bundle 之前，并加入 `@deepseek-ai/dsh-headless` 或 `@deepseek-ai/dsh-web-app` 等应用层。检查最终顺序：

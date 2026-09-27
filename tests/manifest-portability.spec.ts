@@ -8,6 +8,15 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const packageRoot = join(root, 'packages')
 
 /**
+ * The Harness release line this suite verifies: bounded, not exact. The
+ * application updates itself, and an exact peer turns every unrelated release
+ * into a load-time refusal even when the plugin is compatible. A release joins
+ * the window only after the full compatibility matrix passes on it, and the
+ * range keeps the next release line refused before code loads.
+ */
+const HARNESS_PEER_WINDOW = '>=0.1.7-rc.1 <0.1.8'
+
+/**
  * Reduce a declared or remote Git URL to `host/owner/repo` so the spellings npm
  * accepts compare equal: `git+https://…`, `ssh://…`, and `git@host:owner/repo`.
  * @param url - the raw Git URL.
@@ -51,13 +60,13 @@ describe('published package manifests', () => {
     }
   })
 
-  it('contain no machine-specific links or wildcard Harness peers', async () => {
+  it('contain no machine-specific links and pin the verified Harness peer window', async () => {
     for (const { path, value } of await packageManifests()) {
       const serialized = JSON.stringify(value)
       expect(serialized, path).not.toMatch(/link:\/|link:[A-Za-z]:\\/)
       const peers = value.peerDependencies as Record<string, string> | undefined
       for (const [name, range] of Object.entries(peers ?? {})) {
-        if (name.startsWith('@deepseek-ai/dsh-')) expect(range, `${path}: ${name}`).toBe('0.1.7-rc.1')
+        if (name.startsWith('@deepseek-ai/dsh-')) expect(range, `${path}: ${name}`).toBe(HARNESS_PEER_WINDOW)
         else if (name.startsWith('@deepseek-ai/')) expect(range, `${path}: ${name}`).not.toBe('*')
       }
     }
