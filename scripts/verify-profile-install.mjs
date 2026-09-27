@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 
 const root = resolve(import.meta.dirname, '..')
-const scratch = await mkdtemp(join(tmpdir(), 'mydsh-profile-'))
+const scratch = await mkdtemp(join(tmpdir(), 'dsh-profile-'))
 const tarballs = join(scratch, 'tarballs')
 const cliRoot = join(scratch, 'cli')
 const home = join(scratch, 'home')

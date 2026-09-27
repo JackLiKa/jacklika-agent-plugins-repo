@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 
 const root = resolve(import.meta.dirname, '..')
-const scratch = await mkdtemp(join(tmpdir(), 'mydsh-pack-'))
+const scratch = await mkdtemp(join(tmpdir(), 'dsh-pack-'))
 const tarballs = join(scratch, 'tarballs')
 const install = join(scratch, 'install')
 const tar = process.platform === 'win32' ? 'tar.exe' : 'tar'

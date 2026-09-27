@@ -10,7 +10,7 @@ import { expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 it('discovers memory-vault through skill-filesystem.customSkillDirs', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mydsh-skill-home-'))
+  const home = await mkdtemp(join(tmpdir(), 'dsh-skill-home-'))
   const ctx = new Context()
   try {
     await ctx.plugin(SkillRegistry)

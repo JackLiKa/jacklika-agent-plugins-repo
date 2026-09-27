@@ -7,7 +7,7 @@ import process from 'node:process'
 
 const root = resolve(import.meta.dirname, '..')
 const worker = join(root, 'scripts', 'queue-worker.mjs')
-const vault = await mkdtemp(join(tmpdir(), 'mydsh-multiprocess-'))
+const vault = await mkdtemp(join(tmpdir(), 'dsh-multiprocess-'))
 
 function start(mode, marker) {
   return spawn(process.execPath, [worker, mode, vault, marker], { stdio: ['ignore', 'pipe', 'pipe'] })
