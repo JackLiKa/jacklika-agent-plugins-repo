@@ -17,7 +17,7 @@ node packages/memory-mcp/src/server.mjs --vault /path/to/vault [--max-link-depth
   "mcpServers": {
     "memory": {
       "command": "node",
-      "args": ["/path/to/mydsh-plugin/packages/memory-mcp/src/server.mjs", "--vault", "/path/to/vault"]
+      "args": ["/path/to/jacklika-agent-plugins-repo/packages/memory-mcp/src/server.mjs", "--vault", "/path/to/vault"]
     }
   }
 }

@@ -35,16 +35,16 @@ This suite is a private plugin package; it is not published to a public registry
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
-dsh plugin --profile memory add /absolute/path/to/mydsh-plugin/packages/memory
+dsh plugin --profile memory add /absolute/path/to/jacklika-agent-plugins-repo/packages/memory
 ```
 
 Pass an absolute path, and point it at the **Bundle** package — never the repository root. Only the spelling differs per platform:
 
 | Platform | Path to pass |
 |---|---|
-| macOS / Linux | `/home/me/src/mydsh-plugin/packages/memory` |
-| Windows (PowerShell) | `C:\src\mydsh-plugin\packages\memory` |
-| Windows (forward slashes are also accepted) | `C:/src/mydsh-plugin/packages/memory` |
+| macOS / Linux | `/home/me/src/jacklika-agent-plugins-repo/packages/memory` |
+| Windows (PowerShell) | `C:\src\jacklika-agent-plugins-repo\packages\memory` |
+| Windows (forward slashes are also accepted) | `C:/src/jacklika-agent-plugins-repo/packages/memory` |
 
 Quote the path when it contains spaces.
 
@@ -130,7 +130,7 @@ POSIX path:
 ```yaml
 - id: skill-filesystem
   config:
-    customSkillDirs: ['/home/me/src/mydsh-plugin/skills']
+    customSkillDirs: ['/home/me/src/jacklika-agent-plugins-repo/skills']
 ```
 
 Windows YAML path (forward slashes avoid backslash escaping):
@@ -138,7 +138,7 @@ Windows YAML path (forward slashes avoid backslash escaping):
 ```yaml
 - id: skill-filesystem
   config:
-    customSkillDirs: ['C:/src/mydsh-plugin/skills']
+    customSkillDirs: ['C:/src/jacklika-agent-plugins-repo/skills']
 ```
 
 An invalid directory is diagnosed by `skill-filesystem`; it does not affect installation of the memory tools.

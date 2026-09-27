@@ -27,7 +27,7 @@ npx dsh-memory-mcp --vault /path/to/vault
   "mcpServers": {
     "memory": {
       "command": "node",
-      "args": ["/path/to/mydsh-plugin/packages/memory-mcp/src/server.mjs", "--vault", "/path/to/vault"]
+      "args": ["/path/to/jacklika-agent-plugins-repo/packages/memory-mcp/src/server.mjs", "--vault", "/path/to/vault"]
     }
   }
 }

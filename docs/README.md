@@ -1,4 +1,4 @@
-# mydsh-plugin documentation
+# jacklika-agent-plugins-repo documentation
 
 Suite-level documentation for the DeepSeek Harness plugin collection. Per-package configuration references live in each package's own `README.md` / `README.zh.md`.
 

@@ -1,4 +1,4 @@
-# mydsh-plugin 文档
+# jacklika-agent-plugins-repo 文档
 
 DeepSeek Harness 插件套件的套件级文档。各包的配置参考在各包自己的 `README.md` / `README.zh.md` 中。
 

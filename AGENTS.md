@@ -1,4 +1,4 @@
-# mydsh-plugin contributor rules
+# jacklika-agent-plugins-repo contributor rules
 
 - This is a private pnpm workspace of third-party DeepSeek Harness plugins. `@jacklika/dsh-memory` is the installable Bundle; the repository root is not installable.
 - Support Node.js `^22.19.0 || >=24.0.0` and pnpm 11.7.0 on Windows, macOS, and Linux. Never commit machine-local `link:` dependencies or absolute developer paths.

@@ -1,4 +1,4 @@
-# mydsh-plugin
+# jacklika-agent-plugins-repo
 
 DeepSeek Harness plugin suite: the memory vault chain plus future plugin packs. See [docs/](docs/README.md) ([中文](docs/README.zh.md)) for suite-level documentation.
 
@@ -26,7 +26,7 @@ Mount it through `skill-filesystem` in a profile `cordis.patch.yml`:
 ```yaml
 - id: skill-filesystem
   config:
-    customSkillDirs: ['/path/to/mydsh-plugin/skills']
+    customSkillDirs: ['/path/to/jacklika-agent-plugins-repo/skills']
 ```
 
 ## Three-layer robustness

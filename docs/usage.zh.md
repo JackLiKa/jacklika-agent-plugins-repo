@@ -35,16 +35,16 @@ dsh plugin --profile memory remove @jacklika/dsh-memory
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
-dsh plugin --profile memory add /absolute/path/to/mydsh-plugin/packages/memory
+dsh plugin --profile memory add /absolute/path/to/jacklika-agent-plugins-repo/packages/memory
 ```
 
 传入绝对路径，并指向 **Bundle** 包，绝不要指向仓库根。各平台只有写法不同：
 
 | 平台 | 传入的路径 |
 |---|---|
-| macOS / Linux | `/home/me/src/mydsh-plugin/packages/memory` |
-| Windows（PowerShell） | `C:\src\mydsh-plugin\packages\memory` |
-| Windows（也接受正斜杠） | `C:/src/mydsh-plugin/packages/memory` |
+| macOS / Linux | `/home/me/src/jacklika-agent-plugins-repo/packages/memory` |
+| Windows（PowerShell） | `C:\src\jacklika-agent-plugins-repo\packages\memory` |
+| Windows（也接受正斜杠） | `C:/src/jacklika-agent-plugins-repo/packages/memory` |
 
 路径含空格时请加引号。
 
@@ -130,7 +130,7 @@ POSIX 路径：
 ```yaml
 - id: skill-filesystem
   config:
-    customSkillDirs: ['/home/me/src/mydsh-plugin/skills']
+    customSkillDirs: ['/home/me/src/jacklika-agent-plugins-repo/skills']
 ```
 
 Windows YAML 路径（正斜杠可避免反斜杠转义）：
@@ -138,7 +138,7 @@ Windows YAML 路径（正斜杠可避免反斜杠转义）：
 ```yaml
 - id: skill-filesystem
   config:
-    customSkillDirs: ['C:/src/mydsh-plugin/skills']
+    customSkillDirs: ['C:/src/jacklika-agent-plugins-repo/skills']
 ```
 
 目录无效时由 `skill-filesystem` 给出诊断，不影响记忆工具的安装。

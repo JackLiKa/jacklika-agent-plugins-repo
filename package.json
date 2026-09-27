@@ -1,5 +1,5 @@
 {
-  "name": "mydsh-plugin",
+  "name": "jacklika-agent-plugins-repo",
   "private": true,
   "version": "0.1.0",
   "description": "JackLiKa's DeepSeek Harness plugin suite: the memory vault chain and future plugin packs.",
