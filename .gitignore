@@ -2,3 +2,8 @@ node_modules/
 lib/
 artifacts/
 *.tsbuildinfo
+
+# Local dsh session state: the memory vault defaults to
+# <session workspace>/.dsh/memory/, so running the suite in this repository
+# would otherwise leave untracked notes here.
+.dsh/
