@@ -406,6 +406,12 @@ function assertPositiveInteger(name: string, value: number): void {
  * @param config - deployment's explicit vault configuration.
  */
 export function apply(ctx: Context, config: Config): void {
+  const tools = ctx.get('tools') as { register?: unknown } | undefined
+  if (typeof tools?.register !== 'function') {
+    ctx.logger?.warn('tool-memory-filesystem: ctx.tools.register unavailable; wiki tools will not register.')
+    return
+  }
+
   const resolved = config as ResolvedConfig
   assertPositiveInteger('maxLinkDepth', resolved.maxLinkDepth)
   assertPositiveInteger('maxSearchResults', resolved.maxSearchResults)

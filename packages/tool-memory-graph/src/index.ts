@@ -181,6 +181,12 @@ async function buildSubgraph(
  * @param config - deployment's explicit vault configuration.
  */
 export function apply(ctx: Context, config: Config): void {
+  const tools = ctx.get('tools') as { register?: unknown } | undefined
+  if (typeof tools?.register !== 'function') {
+    ctx.logger?.warn('tool-memory-graph: ctx.tools.register unavailable; wiki_graph tool will not register.')
+    return
+  }
+
   const resolved = config as ResolvedConfig
   assertPositiveInteger('maxDepth', resolved.maxDepth)
   assertPositiveInteger('maxNodes', resolved.maxNodes)

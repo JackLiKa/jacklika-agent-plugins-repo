@@ -14,7 +14,7 @@ const packageRoot = join(root, 'packages')
  * the window only after the full compatibility matrix passes on it, and the
  * range keeps the next release line refused before code loads.
  */
-const HARNESS_PEER_WINDOW = '>=0.1.7-rc.1 <0.1.8'
+const HARNESS_PEER_WINDOW = '>=0.1.7-rc.1 <0.3.0'
 
 /**
  * Reduce a declared or remote Git URL to `host/owner/repo` so the spellings npm

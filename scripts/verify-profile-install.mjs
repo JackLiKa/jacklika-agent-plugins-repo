@@ -77,7 +77,8 @@ try {
     '  protobufjs: false',
     '',
   ].join('\n'))
-  runShell(pnpm, ['add', '@deepseek-ai/dsh@0.1.7-rc.2'], cliRoot)
+  const dshVersion = process.env.DSH_TEST_VERSION ?? '0.1.7-rc.2'
+  runShell(pnpm, ['add', `@deepseek-ai/dsh@${dshVersion}`], cliRoot)
   runShell(dsh, ['plugin', '--profile', profile, 'root'], workspace)
 
   const files = (await readdir(tarballs)).filter(file => file.endsWith('.tgz'))

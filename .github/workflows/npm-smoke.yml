@@ -1,0 +1,77 @@
+name: NPM install smoke test (cross-platform)
+
+# Verifies that @jacklika/dsh-memory can be installed from the npm registry
+# into a fresh DeepSeek Harness profile on Linux, macOS, and Windows.
+# This is the primary cross-platform "plugin introduction" path for end users.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_version:
+        description: '@jacklika/dsh-memory version to test'
+        required: true
+        default: '0.1.7-rc.2'
+      dsh_version:
+        description: '@deepseek-ai/dsh version to install as the runtime'
+        required: true
+        default: '0.1.7-rc.2'
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace (for helper scripts only)
+        run: pnpm install --frozen-lockfile
+
+      - name: Create isolated profile
+        shell: bash
+        run: |
+          mkdir -p /tmp/dsh-smoke
+          cd /tmp/dsh-smoke
+          pnpm init
+          pnpm add "@deepseek-ai/dsh@${{ github.event.inputs.dsh_version || '0.1.7-rc.2' }}"
+
+      - name: Initialize profile
+        shell: bash
+        run: |
+          cd /tmp/dsh-smoke
+          npx dsh plugin --profile smoke root
+
+      - name: Install Bundle from npm
+        shell: bash
+        run: |
+          cd /tmp/dsh-smoke
+          npx dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.2' }}"
+
+      - name: Verify profile dump-config
+        shell: bash
+        run: |
+          cd /tmp/dsh-smoke
+          npx dsh --profile smoke --dump-config > /tmp/dump-config.yml
+          for id in memory-scope memory-queue memory-git tool-memory-filesystem tool-memory-graph; do
+            grep -q "id: $id" /tmp/dump-config.yml || (echo "missing $id" && exit 1)
+          done
+          grep -q "id: tool-memory-vector" /tmp/dump-config.yml || (echo "missing tool-memory-vector" && exit 1)
+          if grep -qi "incompatible" /tmp/dump-config.yml; then
+            echo "compatibility warning found"
+            exit 1
+          fi
+          echo "Cross-platform npm smoke test passed on ${{ matrix.os }}"

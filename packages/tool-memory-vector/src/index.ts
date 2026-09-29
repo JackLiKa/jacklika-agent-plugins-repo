@@ -220,6 +220,12 @@ async function refreshIndex(root: string, resolved: ResolvedConfig, signal: Abor
  * @param config - deployment's explicit search configuration.
  */
 export function apply(ctx: Context, config: Config): void {
+  const tools = ctx.get('tools') as { register?: unknown } | undefined
+  if (typeof tools?.register !== 'function') {
+    ctx.logger?.warn('tool-memory-vector: ctx.tools.register unavailable; wiki_semantic_search tool will not register.')
+    return
+  }
+
   const resolved = config as ResolvedConfig
   if (resolved.endpoint.trim() === '') {
     throw new Error('tool-memory-vector: endpoint is required')

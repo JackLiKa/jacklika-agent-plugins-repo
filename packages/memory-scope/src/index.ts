@@ -91,6 +91,12 @@ function agentKey(exec: ToolDispatchExecution, configured: string): string {
  * @param config - deployment's explicit scope configuration.
  */
 export function apply(ctx: Context, config: Config): void {
+  const tools = ctx.get('tools') as { execute?: unknown } | undefined
+  if (typeof tools?.execute !== 'function') {
+    ctx.logger?.warn('memory-scope: ctx.tools.execute unavailable; id namespacing disabled.')
+    return
+  }
+
   const resolved = config as ResolvedConfig
   if (resolved.toolNames.length === 0) {
     throw new Error('memory-scope: toolNames must not be empty')
