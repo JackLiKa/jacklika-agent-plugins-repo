@@ -54,7 +54,15 @@ jobs:
 
           publish() {
             for tgz in "$@"; do
-              echo "Publishing $tgz"
+              # Read name and version from the tarball package.json.
+              meta=$(tar -xzf "$tgz" package.json -O | node -e "let d=''; process.stdin.on('data', c => d += c).on('end', () => { const p = JSON.parse(d); console.log(p.name + ' ' + p.version); })")
+              name=$(echo "$meta" | cut -d' ' -f1)
+              version=$(echo "$meta" | cut -d' ' -f2)
+              if [ -z "$dry_run" ] && npm view "$name@$version" version >/dev/null 2>&1; then
+                echo "$name@$version already published; skipping"
+                continue
+              fi
+              echo "Publishing $name@$version"
               npm publish --access public --tag next $dry_run "$tgz"
             done
           }
