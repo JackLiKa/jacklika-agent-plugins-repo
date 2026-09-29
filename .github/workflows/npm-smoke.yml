@@ -12,9 +12,9 @@ on:
         required: true
         default: '0.1.7-rc.2'
       dsh_version:
-        description: '@deepseek-ai/dsh version to install as the runtime'
+        description: '@deepseek-ai/dsh runtime version to install'
         required: true
-        default: '0.1.7-rc.2'
+        default: '0.2.0-rc.1'
   release:
     types: [published]
 
@@ -28,6 +28,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      DSH_HOME: /tmp/dsh-smoke/.dsh
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -38,34 +40,53 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install workspace (for helper scripts only)
-        run: pnpm install --frozen-lockfile
-
       - name: Create isolated profile
         shell: bash
         run: |
           mkdir -p /tmp/dsh-smoke
           cd /tmp/dsh-smoke
           pnpm init
-          pnpm add "@deepseek-ai/dsh@${{ github.event.inputs.dsh_version || '0.1.7-rc.2' }}"
+
+          # 0.2.0-rc.1 is a fresh pre-release; allow it for this smoke test.
+          cat > .npmrc <<EOF
+          minimum-release-age=0
+          ignore-build-scripts=true
+          EOF
+
+          # Match the allowBuilds policy used by the local profile test.
+          cat > pnpm-workspace.yaml <<'EOF'
+          autoInstallPeers: true
+          allowBuilds:
+            '@deepseek-ai/dsh-subprocess-local': true
+            '@google/genai': false
+            koffi: true
+            node-pty: true
+            protobufjs: false
+          EOF
+
+      - name: Install DeepSeek Harness runtime
+        shell: bash
+        run: |
+          cd /tmp/dsh-smoke
+          pnpm add "@deepseek-ai/dsh@${{ github.event.inputs.dsh_version || '0.2.0-rc.1' }}"
 
       - name: Initialize profile
         shell: bash
         run: |
           cd /tmp/dsh-smoke
-          npx dsh plugin --profile smoke root
+          pnpm exec dsh plugin --profile smoke root
 
       - name: Install Bundle from npm
         shell: bash
         run: |
           cd /tmp/dsh-smoke
-          npx dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.2' }}"
+          pnpm exec dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.2' }}"
 
       - name: Verify profile dump-config
         shell: bash
         run: |
           cd /tmp/dsh-smoke
-          npx dsh --profile smoke --dump-config > /tmp/dump-config.yml
+          pnpm exec dsh --profile smoke --dump-config > /tmp/dump-config.yml
           for id in memory-scope memory-queue memory-git tool-memory-filesystem tool-memory-graph; do
             grep -q "id: $id" /tmp/dump-config.yml || (echo "missing $id" && exit 1)
           done
