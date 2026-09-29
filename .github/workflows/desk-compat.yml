@@ -1,0 +1,88 @@
+name: Desk compatibility smoke test
+
+# Runs scripts/desk-smoke.mjs against an installed DeepSeek Harness desktop app.
+#
+# This workflow is intended for self-hosted runners where the desk app is
+# already installed at a known path, because the public update feed URL is not
+# directly downloadable without authentication. Provide the host-specific path
+# via the workflow inputs.
+#
+# To run on GitHub-hosted runners, supply a direct installer URL and extend the
+# "Install desk" step to mount the .dmg (macOS) or run the installer silently
+# (Windows).
+
+on:
+  workflow_dispatch:
+    inputs:
+      desk_app_path:
+        description: 'Path to the installed desk app (macOS: /Applications/DeepSeek Harness.app, Windows: C:\Program Files\DeepSeek Harness)'
+        required: true
+      bundle_spec:
+        description: 'Bundle to install (npm spec or local path)'
+        required: true
+        default: '@jacklika/dsh-memory@0.1.7-rc.2'
+      desk_version:
+        description: 'Desk version being tested'
+        required: true
+        default: '0.2.0-rc.1'
+  schedule:
+    # 02:00 UTC every day. Only useful when a self-hosted runner is registered.
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  desk-smoke-macos:
+    runs-on: macos-latest
+    if: github.event.inputs.desk_app_path == '' || startsWith(github.event.inputs.desk_app_path, '/')
+    env:
+      DSH_DESK_APP: ${{ github.event.inputs.desk_app_path || '/Applications/DeepSeek Harness.app' }}
+      DSH_BUNDLE_SPEC: ${{ github.event.inputs.bundle_spec || '@jacklika/dsh-memory@0.1.7-rc.2' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install asar extractor
+        run: npm install -g @electron/asar
+
+      - name: Run desk smoke test
+        run: node scripts/desk-smoke.mjs --bundle "$DSH_BUNDLE_SPEC" --profile desk-compat-${{ github.run_id }}
+
+  desk-smoke-windows:
+    runs-on: windows-latest
+    if: github.event.inputs.desk_app_path == '' || contains(github.event.inputs.desk_app_path, ':\')
+    env:
+      DSH_DESK_APP: ${{ github.event.inputs.desk_app_path || 'C:\Program Files\DeepSeek Harness' }}
+      DSH_DESK_NODE: ${{ github.event.inputs.desk_app_path || 'C:\Program Files\DeepSeek Harness' }}\resources\runtime\bin\node
+      DSH_DESK_NODE_BIN: ${{ github.event.inputs.desk_app_path || 'C:\Program Files\DeepSeek Harness' }}\resources\runtime\primary-runtime\dependencies\node\node.exe
+      DSH_DESK_PNPM: ${{ github.event.inputs.desk_app_path || 'C:\Program Files\DeepSeek Harness' }}\resources\runtime\pnpm\bin\pnpm.mjs
+      DSH_BUNDLE_SPEC: ${{ github.event.inputs.bundle_spec || '@jacklika/dsh-memory@0.1.7-rc.2' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install asar extractor
+        run: npm install -g @electron/asar
+
+      - name: Run desk smoke test
+        shell: pwsh
+        run: node scripts/desk-smoke.mjs --bundle "$env:DSH_BUNDLE_SPEC" --profile desk-compat-${{ github.run_id }}
