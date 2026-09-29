@@ -1,0 +1,69 @@
+name: Publish to npm
+
+# Publishes the workspace packages to the npm registry from pre-built tarballs.
+# Trigger manually in dry-run mode first, then for real when a release is cut.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run npm publish --dry-run instead of publishing'
+        type: boolean
+        default: true
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install and build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Produce and verify tarballs
+        run: |
+          pnpm pack:all
+          pnpm test:pack
+
+      # Publish in dependency order: tools -> memory primitives -> Bundle.
+      # Tarball glob ordering matters; the Bundle tarball is matched last by
+      # requiring the version to start with a digit.
+      - name: Publish packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          dry_run=''
+          if [ '${{ github.event.inputs.dry_run || 'false' }}' = 'true' ]; then
+            dry_run='--dry-run'
+          fi
+
+          publish() {
+            for tgz in "$@"; do
+              echo "Publishing $tgz"
+              npm publish --access public $dry_run "$tgz"
+            done
+          }
+
+          cd artifacts/packages
+          publish jacklika-dsh-tool-memory-filesystem-*.tgz
+          publish jacklika-dsh-tool-memory-vector-*.tgz
+          publish jacklika-dsh-tool-memory-graph-*.tgz
+          publish jacklika-dsh-memory-scope-*.tgz
+          publish jacklika-dsh-memory-queue-*.tgz
+          publish jacklika-dsh-memory-git-*.tgz
+          publish jacklika-dsh-memory-[0-9]*.tgz

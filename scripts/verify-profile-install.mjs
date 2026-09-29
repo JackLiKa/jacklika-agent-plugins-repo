@@ -77,7 +77,7 @@ try {
     '  protobufjs: false',
     '',
   ].join('\n'))
-  const dshVersion = process.env.DSH_TEST_VERSION ?? '0.1.7-rc.2'
+  const dshVersion = process.env.DSH_TEST_VERSION ?? '0.2.0-rc.1'
   runShell(pnpm, ['add', `@deepseek-ai/dsh@${dshVersion}`], cliRoot)
   runShell(dsh, ['plugin', '--profile', profile, 'root'], workspace)
 
