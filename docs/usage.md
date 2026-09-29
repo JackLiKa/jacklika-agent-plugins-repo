@@ -109,6 +109,31 @@ Without `vaultRoot`, every call uses `<session workspace>/.dsh/memory/`. A relat
     indexHiddenDirs: false
 ```
 
+To share one Vault across all workspaces, set the same absolute `vaultRoot` on every plugin that resolves it: `tool-memory-filesystem`, `tool-memory-graph`, `tool-memory-vector` (if enabled), `memory-queue`, and `memory-git`. Otherwise the queue lock directory, graph index, and git commits stay in the per-workspace default and the shared Vault becomes inconsistent.
+
+```yaml
+- id: tool-memory-filesystem
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+    extensions: ['.md']
+    maxLinkDepth: 1
+    maxSearchResults: 20
+    indexHiddenDirs: false
+- id: tool-memory-graph
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+- id: memory-queue
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+    crossProcessLock: true
+    laneArgument: id
+- id: memory-git
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+    prefixes: ['shared/']
+    nestedRepo: init
+```
+
 Use `agentKey` for a stable private namespace across sessions:
 
 ```yaml

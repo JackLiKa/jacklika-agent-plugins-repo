@@ -109,6 +109,31 @@ pnpm test:profile
     indexHiddenDirs: false
 ```
 
+若要在所有工作区之间共享同一个 Vault，需要在每个会解析 `vaultRoot` 的插件上设置相同的绝对路径：`tool-memory-filesystem`、`tool-memory-graph`、`tool-memory-vector`（若启用）、`memory-queue` 和 `memory-git`。否则队列锁目录、图谱索引与 git 提交仍会留在按工作区隔离的默认位置，导致共享 Vault 不一致。
+
+```yaml
+- id: tool-memory-filesystem
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+    extensions: ['.md']
+    maxLinkDepth: 1
+    maxSearchResults: 20
+    indexHiddenDirs: false
+- id: tool-memory-graph
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+- id: memory-queue
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+    crossProcessLock: true
+    laneArgument: id
+- id: memory-git
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
+    prefixes: ['shared/']
+    nestedRepo: init
+```
+
 使用 `agentKey` 获得跨 session 稳定的私有命名空间：
 
 ```yaml
