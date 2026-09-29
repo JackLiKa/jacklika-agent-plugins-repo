@@ -10,6 +10,10 @@ on:
         description: 'Run npm publish --dry-run instead of publishing'
         type: boolean
         default: true
+      tag:
+        description: 'npm dist-tag to apply'
+        type: string
+        default: 'latest'
   release:
     types: [published]
 
@@ -51,6 +55,7 @@ jobs:
           if [ '${{ github.event.inputs.dry_run || 'false' }}' = 'true' ]; then
             dry_run='--dry-run'
           fi
+          tag='${{ github.event.inputs.tag || 'latest' }}'
 
           publish() {
             for tgz in "$@"; do
@@ -58,12 +63,19 @@ jobs:
               meta=$(tar -xzf "$tgz" package/package.json -O | node -e "let d=''; process.stdin.on('data', c => d += c).on('end', () => { const p = JSON.parse(d); console.log(p.name + ' ' + p.version); })")
               name=$(echo "$meta" | cut -d' ' -f1)
               version=$(echo "$meta" | cut -d' ' -f2)
-              if [ -z "$dry_run" ] && npm view "$name@$version" version >/dev/null 2>&1; then
-                echo "$name@$version already published; skipping"
+              if [ -n "$dry_run" ]; then
+                echo "[dry-run] $name@$version"
+                npm publish --access public --tag "$tag" $dry_run "$tgz"
                 continue
               fi
-              echo "Publishing $name@$version"
-              npm publish --access public --tag next $dry_run "$tgz"
+              if npm view "$name@$version" version >/dev/null 2>&1; then
+                echo "$name@$version already published"
+              else
+                echo "Publishing $name@$version"
+                npm publish --access public --tag "$tag" "$tgz"
+              fi
+              echo "Tagging $name@$version as $tag"
+              npm dist-tag add "$name@$version" "$tag"
             done
           }
 
