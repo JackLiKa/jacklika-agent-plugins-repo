@@ -182,7 +182,7 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 | A member package installs but adds no Profile layer | Pass `packages/memory`, not `packages/tool-memory-filesystem`; a package without `dsh.bundle` is a plain dependency. |
 | Bundle tarball install fails with `ERR_PNPM_FETCH_404` | Install from a checkout path ([Private and local installation](#private-and-local-installation)), or publish every member package to a private registry. |
 | `lib/index.js` is missing | Run `pnpm build`; use `pnpm test:pack` before publishing. |
-| Peer version mismatch | Use the exact Harness release in [compatibility.md](compatibility.md); do not suppress the peer check. |
+| Peer version mismatch | Use a Harness release inside the bounded range declared in [compatibility.md](compatibility.md); do not suppress the peer check. |
 | Git is missing | Install Git and ensure `git --version` works on `PATH`, or omit `memory-git` from a custom Bundle. |
 | Git identity error | The plugin supplies command-local identity with `git -c`; it never edits global config. Inspect the surfaced Git error. |
 | Vault permission error | Select a writable `vaultRoot`; the original filesystem error is returned. |

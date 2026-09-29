@@ -182,7 +182,7 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 | 成员包装上了但不构成 Profile 层 | 应传 `packages/memory`，而不是 `packages/tool-memory-filesystem`；不含 `dsh.bundle` 的包只会成为普通依赖。 |
 | 安装 Bundle tarball 报 `ERR_PNPM_FETCH_404` | 改用 checkout 路径安装（见[私人安装与本地安装](#私人安装与本地安装)），或把全部成员包发布到私人 registry。 |
 | 缺少 `lib/index.js` | 运行 `pnpm build`；发布前运行 `pnpm test:pack`。 |
-| peer 版本不兼容 | 使用 [compatibility.zh.md](compatibility.zh.md) 中的精确 Harness 版本；不要压制 peer 检查。 |
+| peer 版本不兼容 | 使用 [compatibility.zh.md](compatibility.zh.md) 中声明的有界 Harness 版本范围内的版本；不要压制 peer 检查。 |
 | Git 不存在 | 安装 Git 并确认 `git --version` 可在 `PATH` 运行，或在自定义 Bundle 中不挂 `memory-git`。 |
 | Git identity 错误 | 插件通过 `git -c` 提供单次命令 identity，永不改全局配置；查看原样返回的 Git 错误。 |
 | Vault 无权限 | 选择可写的 `vaultRoot`；原始文件系统错误会返回。 |
