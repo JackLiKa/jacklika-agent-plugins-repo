@@ -91,6 +91,7 @@ jobs:
             grep -q "id: $id" /tmp/dump-config.yml || (echo "missing $id" && exit 1)
           done
           grep -q "id: tool-memory-vector" /tmp/dump-config.yml || (echo "missing tool-memory-vector" && exit 1)
+          grep -A1 "id: tool-memory-vector" /tmp/dump-config.yml | grep -q "disabled: true" || (echo "tool-memory-vector should be disabled by default" && exit 1)
           if grep -qi "incompatible" /tmp/dump-config.yml; then
             echo "compatibility warning found"
             exit 1

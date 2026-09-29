@@ -239,6 +239,13 @@ export async function listNotePaths(
   const results: string[] = []
   const exclude = new Set(['.git', 'node_modules', '.obsidian'])
 
+  try {
+    if (!(await stat(root)).isDirectory()) return results
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return results
+    throw err
+  }
+
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true })
     for (const entry of entries) {

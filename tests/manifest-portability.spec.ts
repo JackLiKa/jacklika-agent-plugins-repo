@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { satisfies } from 'semver'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const packageRoot = join(root, 'packages')
@@ -14,7 +15,7 @@ const packageRoot = join(root, 'packages')
  * the window only after the full compatibility matrix passes on it, and the
  * range keeps the next release line refused before code loads.
  */
-const HARNESS_PEER_WINDOW = '>=0.1.7-rc.1 <0.3.0'
+const HARNESS_PEER_WINDOW = '>=0.1.7-rc.1 <0.3.0-0'
 
 /**
  * Reduce a declared or remote Git URL to `host/owner/repo` so the spellings npm
@@ -120,6 +121,19 @@ describe('published package manifests', () => {
       expect(declaredName, 'manifests must name the checkout origin repository').toBe(
         normalizeGitUrl(remote).split('/').pop(),
       )
+    }
+  })
+
+  it('rejects the next release line prereleases before code loads', () => {
+    // The runtime checks peers with includePrerelease enabled. Without the -0
+    // suffix on the upper bound, <0.3.0 would match 0.3.0-rc.1 and 0.3.0-alpha.0.
+    const accepts = ['0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.99-rc.1']
+    const rejects = ['0.3.0', '0.3.0-alpha.0', '0.3.0-rc.1', '0.3.1-rc.1']
+    for (const version of accepts) {
+      expect(satisfies(version, HARNESS_PEER_WINDOW, { includePrerelease: true })).toBe(true)
+    }
+    for (const version of rejects) {
+      expect(satisfies(version, HARNESS_PEER_WINDOW, { includePrerelease: true })).toBe(false)
     }
   })
 })

@@ -25,9 +25,9 @@ on:
         description: 'Desk version being tested'
         required: true
         default: '0.2.0-rc.1'
-  schedule:
-    # 02:00 UTC every day. Only useful when a self-hosted runner is registered.
-    - cron: '0 2 * * *'
+  # Nightly cron is intentionally omitted: GitHub-hosted runners do not have
+  # DeepSeek Harness Desktop installed. Re-enable only on self-hosted runners
+  # or after adding an installer download step.
 
 permissions:
   contents: read

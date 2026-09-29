@@ -7,3 +7,4 @@ artifacts/
 # <session workspace>/.dsh/memory/, so running the suite in this repository
 # would otherwise leave untracked notes here.
 .dsh/
+.playwright-mcp/
