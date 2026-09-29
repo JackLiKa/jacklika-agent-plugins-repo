@@ -1,18 +1,34 @@
 {
   "name": "@jacklika/dsh-tool-memory-filesystem",
   "description": "Model-facing wiki/memory tools over a local Markdown vault: read, search, and write notes with Obsidian-style links and YAML frontmatter.",
-  "version": "0.1.3-alpha.1",
-  "publishConfig": { "access": "public" },
-  "repository": { "type": "git", "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git", "directory": "packages/tool-memory-filesystem" },
+  "version": "0.1.3-alpha.2",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git",
+    "directory": "packages/tool-memory-filesystem"
+  },
   "type": "module",
-  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["lib/**/*.js", "lib/types/**/*.d.ts", "README.md", "README.zh.md"],
+  "files": [
+    "lib/**/*.js",
+    "lib/types/**/*.d.ts",
+    "README.md",
+    "README.zh.md"
+  ],
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.4",
