@@ -55,7 +55,7 @@ jobs:
           publish() {
             for tgz in "$@"; do
               echo "Publishing $tgz"
-              npm publish --access public $dry_run "$tgz"
+              npm publish --access public --tag next $dry_run "$tgz"
             done
           }
 
