@@ -7,7 +7,7 @@
 各包发布后，把 Bundle 安装进已有或新 Profile：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.6
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.7
 ```
 
 Bundle 以运行时依赖带齐六个成员包，无需逐个安装。确保 `@deepseek-ai/dsh-base` 位于记忆 Bundle 之前，并加入 `@deepseek-ai/dsh-headless` 或 `@deepseek-ai/dsh-web-app` 等应用层。检查最终顺序：
@@ -120,6 +120,10 @@ Bundle patch 默认设置 `vaultRoot: '.plugins/memory'`，因此每次调用使
     vaultRoot: '.dsh/memory'
     prefixes: ['shared/']
     nestedRepo: init
+# tool-memory-vector 默认禁用；只在启用时才需要覆盖。
+- id: tool-memory-vector
+  config:
+    vaultRoot: '.dsh/memory'
 ```
 
 若要在所有工作区之间共享同一个 Vault，需要在每个会解析 `vaultRoot` 的插件上设置相同的绝对路径：`tool-memory-filesystem`、`tool-memory-graph`、`tool-memory-vector`（若启用）、`memory-queue` 和 `memory-git`。否则队列锁目录、图谱索引与 git 提交仍会留在按工作区隔离的默认位置，导致共享 Vault 不一致。
@@ -145,6 +149,10 @@ Bundle patch 默认设置 `vaultRoot: '.plugins/memory'`，因此每次调用使
     vaultRoot: '/Users/user/Documents/memory-vault'
     prefixes: ['shared/']
     nestedRepo: init
+# tool-memory-vector 默认禁用；只在启用时才需要覆盖。
+- id: tool-memory-vector
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
 ```
 
 Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，让它跟随项目并能在 Obsidian 中直接打开该文件夹作为 vault。首次写入时会自动创建该目录；仓库的 `.gitignore` 已经把 `.plugins/` 忽略。
@@ -170,7 +178,13 @@ Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，�
     vaultRoot: '.plugins/memory'
     prefixes: ['shared/']
     nestedRepo: init
+# tool-memory-vector 默认禁用；只在启用时才需要覆盖。
+- id: tool-memory-vector
+  config:
+    vaultRoot: '.plugins/memory'
 ```
+
+如果你之前安装过 `0.1.7-rc.5` 或更早的 Bundle，默认知识库位置是 `<workspace>/.dsh/memory/`。升级后，可以把旧笔记迁移到 `.plugins/memory/`（例如 `mv .dsh/memory .plugins/memory`），或者在 Profile patch 中把每个 `vaultRoot` 都改回 `.dsh/memory/`。
 
 ## Memory curator 工作流
 
@@ -225,6 +239,7 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 - id: tool-memory-vector
   disabled: false
   config:
+    vaultRoot: '.plugins/memory'
     endpoint: 'http://127.0.0.1:11434/v1/embeddings'
     model: 'nomic-embed-text'
     apiKeyEnv: 'DSH_MEMORY_EMBEDDING_API_KEY'

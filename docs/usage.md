@@ -7,7 +7,7 @@ The installable entry is `@jacklika/dsh-memory`. The repository root is a privat
 After the packages are published, install the Bundle into an existing or new Profile:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.6
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.7
 ```
 
 The Bundle carries all six member packages as runtime dependencies. Do not install them one by one. Keep `@deepseek-ai/dsh-base` before the memory Bundle and add an application layer such as `@deepseek-ai/dsh-headless` or `@deepseek-ai/dsh-web-app`. Inspect the effective order with:
@@ -120,6 +120,10 @@ The Bundle patch sets `vaultRoot: '.plugins/memory'`, so every call uses `<sessi
     vaultRoot: '.dsh/memory'
     prefixes: ['shared/']
     nestedRepo: init
+# tool-memory-vector is disabled by default; include it only when enabled.
+- id: tool-memory-vector
+  config:
+    vaultRoot: '.dsh/memory'
 ```
 
 To share one Vault across all workspaces, set the same absolute `vaultRoot` on every plugin that resolves it: `tool-memory-filesystem`, `tool-memory-graph`, `tool-memory-vector` (if enabled), `memory-queue`, and `memory-git`. Otherwise the queue lock directory, graph index, and git commits stay in the per-workspace default and the shared Vault becomes inconsistent.
@@ -145,6 +149,10 @@ To share one Vault across all workspaces, set the same absolute `vaultRoot` on e
     vaultRoot: '/Users/user/Documents/memory-vault'
     prefixes: ['shared/']
     nestedRepo: init
+# tool-memory-vector is disabled by default; include it only when enabled.
+- id: tool-memory-vector
+  config:
+    vaultRoot: '/Users/user/Documents/memory-vault'
 ```
 
 The Bundle's default `.plugins/memory/` keeps the vault inside the project workspace so it travels with the project and opens cleanly in Obsidian. The directory is created on first write and is gitignored by default:
@@ -170,7 +178,13 @@ The Bundle's default `.plugins/memory/` keeps the vault inside the project works
     vaultRoot: '.plugins/memory'
     prefixes: ['shared/']
     nestedRepo: init
+# tool-memory-vector is disabled by default; include it only when enabled.
+- id: tool-memory-vector
+  config:
+    vaultRoot: '.plugins/memory'
 ```
+
+If you previously installed Bundle versions `0.1.7-rc.5` or older, the default vault was `<workspace>/.dsh/memory/`. After upgrading, move existing notes into `.plugins/memory/` (for example `mv .dsh/memory .plugins/memory`), or override every `vaultRoot` back to `.dsh/memory/` in your Profile patch.
 
 ## Memory curator workflow
 
@@ -225,6 +239,7 @@ Vector search is disabled in the Bundle. Enable it only with an explicit HTTP(S)
 - id: tool-memory-vector
   disabled: false
   config:
+    vaultRoot: '.plugins/memory'
     endpoint: 'http://127.0.0.1:11434/v1/embeddings'
     model: 'nomic-embed-text'
     apiKeyEnv: 'DSH_MEMORY_EMBEDDING_API_KEY'

@@ -12,7 +12,7 @@ node packages/memory-mcp/src/server.mjs --vault /path/to/vault
 npx dsh-memory-mcp --vault /path/to/vault
 ```
 
-`--vault` 默认为 `<cwd>/.dsh/memory/`；`--max-link-depth N` 控制 `wiki_read` 的链接展开深度（默认 1）。
+`--vault` 默认为 `<cwd>/.plugins/memory/`，与 dsh-memory Bundle 默认保持一致；`--max-link-depth N` 控制 `wiki_read` 的链接展开深度（默认 1）。
 
 ## 暴露面
 

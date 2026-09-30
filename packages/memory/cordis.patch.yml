@@ -45,8 +45,11 @@
     #   - id: tool-memory-vector
     #     disabled: false
     #     config:
+    #       vaultRoot: '.plugins/memory'
     #       endpoint: http://localhost:11434/v1/embeddings
     #       model: nomic-embed-text
     - id: tool-memory-vector
       name: '@jacklika/dsh-tool-memory-vector'
       disabled: true
+      config:
+        vaultRoot: '.plugins/memory'

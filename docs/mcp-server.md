@@ -8,7 +8,7 @@
 node packages/memory-mcp/src/server.mjs --vault /path/to/vault [--max-link-depth N]
 ```
 
-`--vault` defaults to `<cwd>/.dsh/memory/`. The server has no dependencies and no build step.
+`--vault` defaults to `<cwd>/.plugins/memory/` to match the dsh-memory Bundle default. The server has no dependencies and no build step.
 
 ## Client configuration
 

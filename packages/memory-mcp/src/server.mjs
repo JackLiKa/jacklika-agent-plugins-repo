@@ -5,7 +5,7 @@
  * serialize through the server instead of negotiating filesystem locks.
  *
  * Usage: dsh-memory-mcp [--vault <path>] [--max-link-depth N]
- *   --vault defaults to <cwd>/.dsh/memory/
+ *   --vault defaults to <cwd>/.plugins/memory/ to match the Bundle default.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
@@ -23,7 +23,7 @@ function argValue(flag, fallback) {
   const i = args.indexOf(flag)
   return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback
 }
-const VAULT = resolve(argValue('--vault', join(process.cwd(), '.dsh', 'memory')))
+const VAULT = resolve(argValue('--vault', join(process.cwd(), '.plugins', 'memory')))
 const MAX_LINK_DEPTH = Number(argValue('--max-link-depth', '1'))
 const EXTENSIONS = ['.md']
 const EXCLUDE_DIRS = new Set(['.git', 'node_modules', '.obsidian'])

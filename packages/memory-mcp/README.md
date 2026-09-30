@@ -12,7 +12,7 @@ node packages/memory-mcp/src/server.mjs --vault /path/to/vault
 npx dsh-memory-mcp --vault /path/to/vault
 ```
 
-`--vault` defaults to `<cwd>/.dsh/memory/`; `--max-link-depth N` controls `wiki_read` link following (default 1).
+`--vault` defaults to `<cwd>/.plugins/memory/` to match the dsh-memory Bundle default; `--max-link-depth N` controls `wiki_read` link following (default 1).
 
 ## Surface
 

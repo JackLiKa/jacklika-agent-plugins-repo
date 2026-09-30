@@ -8,7 +8,7 @@
 node packages/memory-mcp/src/server.mjs --vault /path/to/vault [--max-link-depth N]
 ```
 
-`--vault` 默认 `<cwd>/.dsh/memory/`。server 零依赖、无构建步骤。
+`--vault` 默认 `<cwd>/.plugins/memory/`，与 dsh-memory Bundle 默认保持一致。server 零依赖、无构建步骤。
 
 ## 客户端配置
 
