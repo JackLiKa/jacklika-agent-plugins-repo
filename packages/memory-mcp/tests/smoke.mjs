@@ -12,10 +12,20 @@ const server = fileURLToPath(new URL('../src/server.mjs', import.meta.url))
 
 function assert(cond, msg) { if (!cond) throw new Error(`assert: ${msg}`) }
 
+let activeChild = null
+
 async function runSmoke() {
   const vault = await mkdtemp(join(tmpdir(), 'dsh-mcp-vault-'))
   const outside = await mkdtemp(join(tmpdir(), 'dsh-mcp-outside-'))
   const child = spawn(process.execPath, [server, '--vault', vault], { stdio: ['pipe', 'pipe', 'inherit'] })
+  activeChild = child
+
+  const earlyExit = new Promise((_, reject) => {
+    child.on('exit', (code, signal) => {
+      reject(new Error(`server exited early with code=${code ?? 'null'} signal=${signal ?? 'null'}`))
+    })
+    child.on('error', reject)
+  })
 
   let buffer = ''
   const pending = new Map()
@@ -47,74 +57,88 @@ async function runSmoke() {
   })
 
   try {
-    const init = await call('initialize', {
+    const init = await Promise.race([call('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: { name: 'smoke', version: '0' },
-    })
+    }), earlyExit])
     assert(init.serverInfo.name === 'dsh-memory-mcp', 'initialize serverInfo')
 
-    const list = await call('tools/list')
+    const list = await Promise.race([call('tools/list'), earlyExit])
     assert(list.tools.length === 4, `tools/list count ${list.tools.length}`)
 
-    const w = await call('tools/call', {
+    const w = await Promise.race([call('tools/call', {
       name: 'wiki_write',
       arguments: { id: 'concepts/RAG.md', content: '# RAG\n\nRetrieval notes link [[Graphs]].' },
-    })
+    }), earlyExit])
     assert(w.result ?? w, 'wiki_write result')
     const disk = await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8')
     assert(disk.includes('Retrieval notes'), 'note persisted')
 
-    const r = await call('tools/call', { name: 'wiki_read', arguments: { id: 'concepts/RAG.md' } })
+    const r = await Promise.race([call('tools/call', { name: 'wiki_read', arguments: { id: 'concepts/RAG.md' } }), earlyExit])
     const note = JSON.parse(r.content[0].text)
     assert(note.version.length === 40, 'wiki_read version')
 
     await Promise.all([
-      call('tools/call', { name: 'wiki_write', arguments: { id: 'concepts/RAG.md', content: 'concurrent-a' } }),
-      call('tools/call', { name: 'wiki_write', arguments: { id: 'concepts/RAG.md', content: 'concurrent-b' } }),
+      Promise.race([call('tools/call', { name: 'wiki_write', arguments: { id: 'concepts/RAG.md', content: 'concurrent-a' } }), earlyExit]),
+      Promise.race([call('tools/call', { name: 'wiki_write', arguments: { id: 'concepts/RAG.md', content: 'concurrent-b' } }), earlyExit]),
     ])
     const serialized = await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8')
     assert(serialized.includes('concurrent-a') && serialized.includes('concurrent-b'), 'concurrent writes serialized')
 
-    const conflict = await call('tools/call', {
+    const conflict = await Promise.race([call('tools/call', {
       name: 'wiki_write',
       arguments: { id: 'concepts/RAG.md', content: 'x', baseVersion: 'stale' },
-    }).then(() => null, e => e)
+    }), earlyExit]).then(() => null, e => e)
     assert(conflict !== null, 'baseVersion conflict must error')
 
-    const s = await call('tools/call', { name: 'wiki_search', arguments: { query: 'Retrieval' } })
+    const s = await Promise.race([call('tools/call', { name: 'wiki_search', arguments: { query: 'Retrieval' } }), earlyExit])
     assert(JSON.parse(s.content[0].text).length === 1, 'wiki_search hit')
 
     await writeFile(join(outside, 'secret.md'), 'outside\n')
-    let escapeTested = false
+    let linked = false
     try {
       await symlink(outside, join(vault, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
-      const escaped = await call('tools/call', { name: 'wiki_read', arguments: { id: 'escape/secret.md' } }).then(() => null, e => e)
-      assert(escaped !== null, 'symlink escape must error')
-      escapeTested = true
+      linked = true
     } catch (error) {
-      console.error('[smoke] symlink escape probe skipped:', error.message)
+      console.warn('[smoke] symlink escape probe skipped:', error.message)
+    }
+    if (linked) {
+      const escaped = await Promise.race([call('tools/call', { name: 'wiki_read', arguments: { id: 'escape/secret.md' } }), earlyExit]).then(() => null, e => e)
+      assert(escaped !== null, 'symlink escape must error')
     }
 
-    const res = await call('resources/list')
+    const res = await Promise.race([call('resources/list'), earlyExit])
     assert(res.resources.length === 1 && res.resources[0].uri === 'note:///concepts/RAG.md', 'resources/list')
 
-    const rr = await call('resources/read', { uri: 'note:///concepts/RAG.md' })
+    const rr = await Promise.race([call('resources/read', { uri: 'note:///concepts/RAG.md' }), earlyExit])
     assert(rr.contents[0].text.includes('Retrieval'), 'resources/read')
 
     console.log('memory-mcp smoke: all assertions passed')
-    if (!escapeTested) {
+    if (!linked) {
       console.warn('memory-mcp smoke: symlink escape probe was skipped on this platform')
     }
   } finally {
-    child.kill()
+    if (activeChild?.exitCode === null && activeChild?.killed === false) {
+      activeChild.kill()
+    }
+    activeChild = null
     await rm(vault, { recursive: true, force: true })
     await rm(outside, { recursive: true, force: true })
   }
+
+  return null
 }
 
 const timeout = new Promise((_, reject) => {
-  setTimeout(() => reject(new Error(`smoke timed out after ${TIMEOUT_MS}ms`)), TIMEOUT_MS)
+  const t = setTimeout(() => {
+    if (activeChild?.exitCode === null && activeChild?.killed === false) {
+      activeChild.kill()
+    }
+    reject(new Error(`smoke timed out after ${TIMEOUT_MS}ms`))
+  }, TIMEOUT_MS)
+  // Unref so a successful run is not kept alive solely by this timer.
+  if (typeof t.unref === 'function') t.unref()
 })
 
 Promise.race([runSmoke(), timeout]).then(
