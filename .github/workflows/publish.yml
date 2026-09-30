@@ -72,7 +72,17 @@ jobs:
                 echo "$name@$version already published"
               else
                 echo "Publishing $name@$version"
-                npm publish --access public --tag "$tag" "$tgz"
+                if ! npm publish --access public --tag "$tag" "$tgz" 2>&1; then
+                  publish_status=$?
+                  # npm may return E403 if the version was published but not yet
+                  # visible to npm view due to registry propagation; confirm.
+                  sleep 5
+                  if npm view "$name@$version" version >/dev/null 2>&1; then
+                    echo "$name@$version already published (confirmed after E403)"
+                  else
+                    exit "$publish_status"
+                  fi
+                fi
               fi
               echo "Tagging $name@$version as $tag"
               npm dist-tag add "$name@$version" "$tag"
