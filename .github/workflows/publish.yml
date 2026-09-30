@@ -87,4 +87,5 @@ jobs:
           publish jacklika-dsh-memory-queue-*.tgz
           publish jacklika-dsh-memory-git-*.tgz
           publish jacklika-dsh-memory-mcp-*.tgz
+          publish jacklika-dsh-memory-curator-*.tgz
           publish jacklika-dsh-memory-[0-9]*.tgz
