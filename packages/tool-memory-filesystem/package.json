@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-tool-memory-filesystem",
   "description": "Model-facing wiki/memory tools over a local Markdown vault: read, search, and write notes with Obsidian-style links and YAML frontmatter.",
-  "version": "0.1.3-alpha.3",
+  "version": "0.1.3-alpha.4",
   "publishConfig": {
     "access": "public"
   },
@@ -32,6 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.4",
+    "@jacklika/dsh-memory-time": "workspace:^",
     "js-yaml": "^4.2.0"
   },
   "peerDependencies": {

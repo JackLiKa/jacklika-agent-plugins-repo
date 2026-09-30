@@ -39,6 +39,6 @@
     "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1 <0.3.0-0"
   },
   "devDependencies": {
-    "@jacklika/dsh-tool-memory-filesystem": "workspace:*"
+    "@jacklika/dsh-tool-memory-filesystem": "workspace:^"
   }
 }

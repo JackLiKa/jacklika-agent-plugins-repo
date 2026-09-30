@@ -24,6 +24,7 @@
     "paths": {
       "@jacklika/dsh-memory": ["./packages/memory/src"],
       "@jacklika/dsh-memory-curator": ["./packages/memory-curator/src"],
+      "@jacklika/dsh-memory-time": ["./packages/memory-time/src"],
       "@jacklika/dsh-memory-git": ["./packages/memory-git/src"],
       "@jacklika/dsh-memory-queue": ["./packages/memory-queue/src"],
       "@jacklika/dsh-memory-scope": ["./packages/memory-scope/src"],

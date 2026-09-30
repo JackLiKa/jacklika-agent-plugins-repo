@@ -7,9 +7,5 @@
   },
   "include": [
     "src"
-  ],
-  "references": [
-    { "path": "../memory-time" },
-    { "path": "../tool-memory-filesystem" }
   ]
 }

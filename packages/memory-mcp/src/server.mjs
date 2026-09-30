@@ -12,6 +12,7 @@ import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
+import { formatBeijingTime } from '@jacklika/dsh-memory-time'
 
 const PROTOCOL_VERSION = '2024-11-05'
 const SERVER_INFO = { name: 'dsh-memory-mcp', version: '0.1.0' }
@@ -183,7 +184,7 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
     const fm = Object.keys(frontmatter).length > 0
       ? `---\n${Object.entries(frontmatter).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n`
       : ''
-    finalBody = `${fm}${body}\n\n## ${new Date().toISOString()}\n\n${content}\n`
+    finalBody = `${fm}${body}\n\n## ${formatBeijingTime(new Date())}\n\n${content}\n`
   }
   const tmp = `${absolutePath}.tmp-${process.pid}-${randomUUID()}`
   try {

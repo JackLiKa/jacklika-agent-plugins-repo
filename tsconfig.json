@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "packages/memory-time" },
     { "path": "packages/memory" },
     { "path": "packages/memory-curator" },
     { "path": "packages/memory-git" },

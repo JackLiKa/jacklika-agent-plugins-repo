@@ -17,33 +17,8 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { formatBeijingTime } from '@jacklika/dsh-memory-time'
 import yaml from 'js-yaml'
-
-/**
- * Format a Date as an ISO-like string in Asia/Shanghai (+08:00).
- * The project convention is to store all vault timestamps in Beijing time.
- * Keep this in sync with the helper in `@jacklika/dsh-tool-memory-filesystem`.
- */
-function formatBeijingTime(date: Date): string {
-  const parts = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(date)
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
-  const yyyy = get('year')
-  const MM = get('month')
-  const dd = get('day')
-  const HH = get('hour')
-  const mm = get('minute')
-  const ss = get('second')
-  return `${yyyy}-${MM}-${dd}T${HH}:${mm}:${ss}+08:00`
-}
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'memory-curator'

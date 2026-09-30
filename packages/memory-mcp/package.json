@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-mcp",
   "description": "Zero-dependency MCP stdio server exposing the memory vault to any MCP client — one process owns all writes.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publishConfig": {
     "access": "public"
   },
@@ -29,5 +29,8 @@
     "README.md",
     "README.zh.md"
   ],
+  "dependencies": {
+    "@jacklika/dsh-memory-time": "workspace:^"
+  },
   "license": "MIT"
 }

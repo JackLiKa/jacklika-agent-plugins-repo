@@ -119,12 +119,15 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.4
         version: 3.18.4
+      '@jacklika/dsh-memory-time':
+        specifier: workspace:^
+        version: link:../memory-time
       js-yaml:
         specifier: ^4.2.0
         version: 4.3.2
     devDependencies:
       '@jacklika/dsh-tool-memory-filesystem':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tool-memory-filesystem
 
   packages/memory-git:
@@ -133,10 +136,14 @@ importers:
         specifier: 3.18.4
         version: 3.18.4
       '@jacklika/dsh-tool-memory-filesystem':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tool-memory-filesystem
 
-  packages/memory-mcp: {}
+  packages/memory-mcp:
+    dependencies:
+      '@jacklika/dsh-memory-time':
+        specifier: workspace:^
+        version: link:../memory-time
 
   packages/memory-queue:
     dependencies:
@@ -144,7 +151,7 @@ importers:
         specifier: 3.18.4
         version: 3.18.4
       '@jacklika/dsh-tool-memory-filesystem':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tool-memory-filesystem
 
   packages/memory-scope:
@@ -154,14 +161,19 @@ importers:
         version: 3.18.4
     devDependencies:
       '@jacklika/dsh-tool-memory-filesystem':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tool-memory-filesystem
+
+  packages/memory-time: {}
 
   packages/tool-memory-filesystem:
     dependencies:
       '@deepseek-ai/schemastery':
         specifier: 3.18.4
         version: 3.18.4
+      '@jacklika/dsh-memory-time':
+        specifier: workspace:^
+        version: link:../memory-time
       js-yaml:
         specifier: ^4.2.0
         version: 4.3.2
@@ -172,7 +184,7 @@ importers:
         specifier: 3.18.4
         version: 3.18.4
       '@jacklika/dsh-tool-memory-filesystem':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tool-memory-filesystem
 
   packages/tool-memory-vector:
@@ -181,7 +193,7 @@ importers:
         specifier: 3.18.4
         version: 3.18.4
       '@jacklika/dsh-tool-memory-filesystem':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tool-memory-filesystem
 
 packages:

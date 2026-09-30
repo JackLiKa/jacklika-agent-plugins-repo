@@ -99,6 +99,7 @@ jobs:
           }
 
           cd artifacts/packages
+          publish jacklika-dsh-memory-time-*.tgz
           publish jacklika-dsh-tool-memory-filesystem-*.tgz
           publish jacklika-dsh-tool-memory-vector-*.tgz
           publish jacklika-dsh-tool-memory-graph-*.tgz

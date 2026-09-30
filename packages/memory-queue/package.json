@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-queue",
   "description": "Serializes selected model-facing tool calls (default wiki_write) through the tools/execute waterfall so same-vault mutations cannot race.",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "publishConfig": {
     "access": "public"
   },
@@ -32,7 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.4",
-    "@jacklika/dsh-tool-memory-filesystem": "workspace:*"
+    "@jacklika/dsh-tool-memory-filesystem": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
