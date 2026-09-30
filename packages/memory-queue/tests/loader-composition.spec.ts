@@ -204,13 +204,16 @@ describe('memory-queue real Loader composition through cordis.yml', () => {
     const reclaimed = await call(ctx, 'reclaim')
     expect(reclaimed.isError).toBe(false)
 
-    // A legacy holder without a heartbeat file stays alive by refreshing the
-    // directory mtime; liveness is change-detection on our local clock, never
-    // an absolute-time comparison, so it survives past lockStaleMs.
+    // A live holder keeps a heartbeat counter inside the lock directory.
+    // Directory mtime is not reliable on Windows (coarse granularity), so the
+    // cross-process protocol relies on a changing heartbeat file for liveness.
     await mkdir(lockPath)
+    const heartbeatPath = join(lockPath, 'heartbeat')
+    let counter = 0
+    let lastWrite = writeFile(heartbeatPath, String(counter), 'utf8')
     const refresh = setInterval(() => {
-      const now = new Date()
-      void utimes(lockPath, now, now).catch(() => undefined)
+      counter += 1
+      lastWrite = writeFile(heartbeatPath, String(counter), 'utf8').catch(() => undefined)
     }, 100)
     try {
       const blocked = await call(ctx, 'blocked')
@@ -218,6 +221,7 @@ describe('memory-queue real Loader composition through cordis.yml', () => {
       await expect(stat(lockPath)).resolves.toBeDefined()
     } finally {
       clearInterval(refresh)
+      await lastWrite
       await rm(lockPath, { recursive: true, force: true })
     }
   })
@@ -240,10 +244,12 @@ describe('memory-queue real Loader composition through cordis.yml', () => {
     // mtime or absolute-time comparison.
     const lockPath = join(vault, '.memory-queue.lock')
     await mkdir(lockPath)
+    const heartbeatPath = join(lockPath, 'heartbeat')
     let counter = 0
+    let lastWrite = Promise.resolve() as Promise<unknown>
     const refresh = setInterval(() => {
       counter += 1
-      void writeFile(join(lockPath, 'heartbeat'), String(counter), 'utf8').catch(() => undefined)
+      lastWrite = writeFile(heartbeatPath, String(counter), 'utf8').catch(() => undefined)
     }, 100)
     try {
       const blocked = await call(ctx, 'still-held')
@@ -252,6 +258,7 @@ describe('memory-queue real Loader composition through cordis.yml', () => {
       await expect(stat(lockPath)).resolves.toBeDefined()
     } finally {
       clearInterval(refresh)
+      await lastWrite
       await rm(lockPath, { recursive: true, force: true })
     }
   })
