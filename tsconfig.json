@@ -1,6 +1,10 @@
 {
   "files": [],
   "references": [
+    { "path": "packages/connector-core" },
+    { "path": "packages/qoder-connect" },
+    { "path": "packages/devin-connect" },
+    { "path": "packages/connector" },
     { "path": "packages/memory-time" },
     { "path": "packages/memory" },
     { "path": "packages/memory-curator" },

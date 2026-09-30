@@ -1,0 +1,7 @@
+# Qoder + Devin connector bundle patch
+- insert:
+    - id: llm-qoder
+      name: '@jacklika/dsh-qoder-connect'
+
+    - id: llm-devin
+      name: '@jacklika/dsh-devin-connect'
