@@ -121,7 +121,7 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     const read1 = JSON.parse(resultText(r1r)) as { frontmatter: { title?: string; tags?: string[]; created?: string }; body: string }
     expect(read1.frontmatter.title).toBe('Project conventions')
     expect(read1.frontmatter.tags).toEqual(['conventions', 'node', 'pnpm'])
-    expect(read1.frontmatter.created).toBeDefined()
+    expect(read1.frontmatter.created).toMatch(/\+08:00$/)
     expect(read1.body).toContain('Use pnpm 11.7.0 and Node ^22.19.0.')
 
     const notePath = join(vault, 'shared', 'notes', 'project-conventions.md')

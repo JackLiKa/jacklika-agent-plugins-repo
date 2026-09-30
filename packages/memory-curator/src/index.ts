@@ -19,6 +19,31 @@ import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import yaml from 'js-yaml'
 
+/**
+ * Format a Date as an ISO-like string in Asia/Shanghai (+08:00).
+ * The project convention is to store all vault timestamps in Beijing time.
+ */
+function formatBeijingTime(date: Date): string {
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  const yyyy = get('year')
+  const MM = get('month')
+  const dd = get('day')
+  const HH = get('hour')
+  const mm = get('minute')
+  const ss = get('second')
+  return `${yyyy}-${MM}-${dd}T${HH}:${mm}:${ss}+08:00`
+}
+
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'memory-curator'
 
@@ -279,7 +304,7 @@ export function apply(ctx: Context, config: Config): void {
         }
       }
 
-      const now = new Date().toISOString()
+      const now = formatBeijingTime(new Date())
       const detailsText = args.details ? `\n\n## Details\n\n${args.details}` : ''
       const appendContent = `${args.summary}${detailsText}\n`
       const frontmatter = {
