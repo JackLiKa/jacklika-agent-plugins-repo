@@ -72,24 +72,32 @@ jobs:
                 echo "$name@$version already published"
               else
                 echo "Publishing $name@$version"
-                if npm publish --access public --tag "$tag" "$tgz" 2>&1; then
+                npm publish --access public --tag "$tag" "$tgz" >npm_publish.log 2>&1
+                publish_status=$?
+                if [ "$publish_status" -eq 0 ]; then
                   : # published successfully
                 else
-                  publish_status=$?
                   # npm may return E403/E409 if the version was published but
-                  # not yet visible to npm view due to registry propagation;
-                  # retry the lookup for up to a minute before failing the job.
-                  confirmed=0
-                  for i in 1 2 3 4 5 6; do
-                    if npm view "$name@$version" version >/dev/null 2>&1; then
-                      echo "$name@$version already published (confirmed after E403/E409)"
-                      confirmed=1
-                      break
+                  # not yet visible to npm view due to registry propagation.
+                  # If the error message explicitly says the version already
+                  # exists, trust it and move on; otherwise retry npm view for up
+                  # to two minutes before failing the job.
+                  if grep -qiE 'previously published|already exists|Cannot publish over' npm_publish.log; then
+                    echo "$name@$version already published (per npm error message)"
+                  else
+                    cat npm_publish.log
+                    confirmed=0
+                    for i in $(seq 1 12); do
+                      if npm view "$name@$version" version >/dev/null 2>&1; then
+                        echo "$name@$version already published (confirmed after E403/E409)"
+                        confirmed=1
+                        break
+                      fi
+                      sleep 10
+                    done
+                    if [ "$confirmed" -ne 1 ]; then
+                      exit "$publish_status"
                     fi
-                    sleep 10
-                  done
-                  if [ "$confirmed" -ne 1 ]; then
-                    exit "$publish_status"
                   fi
                 fi
               fi
