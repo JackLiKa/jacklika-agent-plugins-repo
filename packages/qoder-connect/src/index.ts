@@ -1,6 +1,7 @@
-import { CliLlmAdapter, type CliVariant } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, createControlKey, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import Schema from '@deepseek-ai/schemastery'
+import { registerQoderWebRoutes, type PatStore } from './server.js'
 
 const DEFAULT_MODELS: LlmModelInfo[] = [
   { provider: 'qoder', id: 'efficient', name: 'Qoder Efficient', inputModalities: ['text'] },
@@ -10,13 +11,20 @@ const DEFAULT_MODELS: LlmModelInfo[] = [
   { provider: 'qoder', id: 'o4-mini', name: 'OpenAI o4-mini', inputModalities: ['text'] },
 ]
 
-const QODER_VARIANTS: CliVariant[] = [
+const QODER_VARIANTS: (CliVariant & {
+  statusPath: string
+  authPath: string
+  probePath: string
+})[] = [
   {
     id: 'qoder',
     displayName: 'Qoder',
     cliCommand: 'qodercli',
     envToken: 'QODER_PERSONAL_ACCESS_TOKEN',
     defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder' })),
+    statusPath: '/plugins/dsh-qoder-connect/status',
+    authPath: '/plugins/dsh-qoder-connect/auth',
+    probePath: '/plugins/dsh-qoder-connect/probe',
   },
   {
     id: 'qoder-global',
@@ -24,6 +32,9 @@ const QODER_VARIANTS: CliVariant[] = [
     cliCommand: 'qodercli',
     envToken: 'QODER_GLOBAL_PERSONAL_ACCESS_TOKEN',
     defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder-global' })),
+    statusPath: '/plugins/dsh-qoder-connect/global/status',
+    authPath: '/plugins/dsh-qoder-connect/global/auth',
+    probePath: '/plugins/dsh-qoder-connect/global/probe',
   },
 ]
 
@@ -103,6 +114,23 @@ class QoderAdapter extends CliLlmAdapter {
   }
 }
 
+function createPatStore(envToken: string): PatStore {
+  let saved: string | undefined
+  return {
+    get() {
+      return saved ?? process.env[envToken]
+    },
+    async set(value: string) {
+      saved = value
+      return { ok: true as const, tail: `***${value.slice(-4)}` }
+    },
+    async clear() {
+      saved = undefined
+      return { ok: true as const }
+    },
+  }
+}
+
 export function apply(ctx: any, config: QoderConfig) {
   if (!config.enabled) return
 
@@ -132,5 +160,19 @@ export function apply(ctx: any, config: QoderConfig) {
   ctx.effect(() => () => {
     releaseAdapters.forEach((release) => release())
     releaseDirectory?.()
+  })
+
+  ctx.inject(['webServer'], (webCtx: WebRouteContext) => {
+    const runtimes = QODER_VARIANTS.map((variant) => ({
+      id: variant.id,
+      envToken: variant.envToken,
+      statusPath: variant.statusPath,
+      authPath: variant.authPath,
+      probePath: variant.probePath,
+      store: createPatStore(variant.envToken),
+      authKey: createControlKey(),
+      probeKey: createControlKey(),
+    }))
+    registerQoderWebRoutes(webCtx, runtimes)
   })
 }

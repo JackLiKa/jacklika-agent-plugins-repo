@@ -12,6 +12,8 @@ import type {
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 
+export * from './web.js'
+
 export interface CliVariant {
   id: string
   displayName: string
