@@ -174,6 +174,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     if (readResult.isError) throw new Error('expected wiki_read success')
     const note = JSON.parse(resultText(readResult)) as { body: string; frontmatter: Record<string, unknown> }
     expect(note.body).toContain('New insight.')
+    expect(note.body).toMatch(/## \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
     expect(note.frontmatter.tags).toEqual(['llm', 'architecture'])
   })
 

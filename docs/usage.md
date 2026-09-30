@@ -7,7 +7,7 @@ The installable entry is `@jacklika/dsh-memory`. The repository root is a privat
 After the packages are published, install the Bundle into an existing or new Profile:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.8
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.9
 ```
 
 The Bundle carries all six member packages as runtime dependencies. Do not install them one by one. Keep `@deepseek-ai/dsh-base` before the memory Bundle and add an application layer such as `@deepseek-ai/dsh-headless` or `@deepseek-ai/dsh-web-app`. Inspect the effective order with:

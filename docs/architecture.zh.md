@@ -19,6 +19,8 @@ Vault          <workspace>/.plugins/memory/     — Obsidian 兼容的 Markdown 
 - 笔记是普通 Markdown，可选 `---` YAML frontmatter 和 `[[wiki 链接]]`。
 - `agents/<key>/` 是各 agent 的命名空间（写入由 `memory-scope` 自动重写）；`shared/` 是公共策展区。
 
+所有存入 Vault、给人看的时间戳都使用 **Asia/Shanghai（`+08:00`）** 时间，包括笔记 frontmatter 的 `created` 和 append 追加小节的标题。这保证了本地审计日志的可读性，也避免 UTC `Z` 与本地时间混用。
+
 ## 写协调链（tool-calling 路径）
 
 ```

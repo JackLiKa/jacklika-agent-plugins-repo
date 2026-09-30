@@ -27,7 +27,7 @@ English | [中文](README.zh.md)
 Install the Bundle through the Harness Plugin Manager; the Profile may already exist or be created by the command:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.8
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.9
 ```
 
 Keep the Bundle after `dsh-base` and include an application layer such as `dsh-headless` or `dsh-web-app`. Semantic search stays disabled until the profile patch supplies an embeddings endpoint:

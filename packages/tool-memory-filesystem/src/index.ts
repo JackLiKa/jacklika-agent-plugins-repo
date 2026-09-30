@@ -28,6 +28,32 @@ export function vaultRelativeId(root: string, absolutePath: string): string {
   return relative(root, absolutePath).replace(/\\/g, '/')
 }
 
+/**
+ * Format a Date as an ISO-like string in Asia/Shanghai (+08:00).
+ * The project convention is to store all vault timestamps in Beijing time.
+ * Keep this in sync with the helper in `@jacklika/dsh-memory-curator`.
+ */
+export function formatBeijingTime(date: Date): string {
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  const yyyy = get('year')
+  const MM = get('month')
+  const dd = get('day')
+  const HH = get('hour')
+  const mm = get('minute')
+  const ss = get('second')
+  return `${yyyy}-${MM}-${dd}T${HH}:${mm}:${ss}+08:00`
+}
+
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-memory-filesystem'
 
@@ -553,7 +579,7 @@ export function apply(ctx: Context, config: Config): void {
         const frontmatterText = Object.keys(frontmatter).length > 0
           ? `---\n${yaml.dump(frontmatter).trim()}\n---\n\n`
           : ''
-        const timestamp = new Date().toISOString()
+        const timestamp = formatBeijingTime(new Date())
         finalBody = `${frontmatterText}${body}\n\n## ${timestamp}\n\n${args.content}\n`
       }
       exec.signal.throwIfAborted()

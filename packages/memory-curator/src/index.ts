@@ -22,6 +22,7 @@ import yaml from 'js-yaml'
 /**
  * Format a Date as an ISO-like string in Asia/Shanghai (+08:00).
  * The project convention is to store all vault timestamps in Beijing time.
+ * Keep this in sync with the helper in `@jacklika/dsh-tool-memory-filesystem`.
  */
 function formatBeijingTime(date: Date): string {
   const parts = new Intl.DateTimeFormat('sv-SE', {

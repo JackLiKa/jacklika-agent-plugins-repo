@@ -19,6 +19,8 @@ Vault          <workspace>/.plugins/memory/     — Obsidian-compatible Markdown
 - Notes are plain Markdown with optional `---` YAML frontmatter and `[[wiki links]]`.
 - `agents/<key>/` holds per-agent namespaces (writes are rewritten there by `memory-scope`); `shared/` is the curated public zone.
 
+All human-facing timestamps stored in the vault use **Asia/Shanghai (`+08:00`)** time, including note `created` frontmatter and append-section headings. This keeps the local audit log readable for the project maintainer and avoids mixing UTC `Z` with local wall-clock dates.
+
 ## Write-coordination chain (tool-calling path)
 
 ```
