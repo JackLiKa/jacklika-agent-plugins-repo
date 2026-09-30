@@ -32,6 +32,7 @@ export interface QoderCredits {
   total?: number
   totalSize?: number
   cycleResetTime?: string
+  error?: string
 }
 
 export interface QoderAccount {
