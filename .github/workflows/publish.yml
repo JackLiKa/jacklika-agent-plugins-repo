@@ -100,8 +100,9 @@ jobs:
                   fi
                 fi
               fi
-              echo "Tagging $name@$version as $tag"
-              npm dist-tag add "$name@$version" "$tag"
+              echo "Published $name@$version with tag $tag"
+              # npm publish --tag already sets the dist-tag; skip a separate
+              # dist-tag add to avoid transient 404s on brand-new scoped packages.
             done
           }
 
