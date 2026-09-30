@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (packages/qoder-connect/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write
+README.md: a5eb51dca944fab82fb5c52323e07f08e18c7204
+README.zh.md: 7b112fb83a211f1a0e96f6f5cd3c8aada9903970

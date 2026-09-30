@@ -57,7 +57,10 @@ export async function readBody(req: IncomingMessage): Promise<string | undefined
 export function safeMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, '[redacted token]')
-    .replace(/(\b(?:code|token|pat)=)[^&\s]+/giu, '$1[redacted]')
+    .replace(/\b(jrt-|jt-|pt-)[A-Za-z0-9_-]+/giu, '[redacted token]')
+    .replace(/\bBearer\s+[^\s]+/giu, 'Bearer [redacted]')
+    .replace(/\bBasic\s+[A-Za-z0-9+/=]+/giu, 'Basic [redacted]')
+    .replace(/(\b(?:code|token|pat|secret|api[_-]?key)=)[^&\s]+/giu, '$1[redacted]')
     .slice(0, 500)
 }
 

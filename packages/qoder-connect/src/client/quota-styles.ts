@@ -22,6 +22,10 @@ export const QUOTA_CSS = `
 .qdp-list { list-style: none; padding: 0; margin: 0; }
 .qdp-error { color: var(--error, #ff4d4f); }
 .qdp-muted { color: var(--text-secondary, #888); }
+.qdp-blockTitle { font-size: 1rem; font-weight: 600; margin: 16px 0 8px; color: var(--text, #000); }
+.qdp-footBar, .qdp-footFill { display: block; }
+.qdp-primaryButton { background: var(--dsw-alias-button-primary-fill, #1677ff); color: var(--dsw-alias-label-primary-foreground, #fff); border: 1px solid var(--dsw-alias-button-primary-fill, #1677ff); }
+[class*="_footArea"] [class*="_footerActions"] { flex-direction: column !important; }
 `.trim()
 
 export function injectQuotaCss(): () => void {

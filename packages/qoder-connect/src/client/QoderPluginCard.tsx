@@ -508,7 +508,14 @@ const quotaTitleStyle: React.CSSProperties = { fontSize: '1rem', margin: '12px 0
 const rowStyle: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }
 const statusStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6 }
 const buttonStyle: React.CSSProperties = { padding: '4px 10px', border: '1px solid #ccc', borderRadius: 4, background: '#f5f5f5', cursor: 'pointer' }
-const primaryButtonStyle: React.CSSProperties = { padding: '4px 10px', border: '1px solid #1677ff', borderRadius: 4, background: '#1677ff', color: '#fff', cursor: 'pointer' }
+const primaryButtonStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  border: '1px solid var(--dsw-alias-button-primary-fill, #1677ff)',
+  borderRadius: 4,
+  background: 'var(--dsw-alias-button-primary-fill, #1677ff)',
+  color: 'var(--dsw-alias-label-primary-foreground, #fff)',
+  cursor: 'pointer',
+}
 const bodyStyle: React.CSSProperties = { margin: '8px 0', color: '#333' }
 const errorStyle: React.CSSProperties = { color: '#ff4d4f' }
 const noticeStyle: React.CSSProperties = { color: '#52c41a' }
