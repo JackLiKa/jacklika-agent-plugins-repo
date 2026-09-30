@@ -27,7 +27,7 @@ kind: "package-bundle"
 通过 Harness Plugin Manager 安装 Bundle；该命令可使用已有 Profile，也可自动创建：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.4
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.5
 ```
 
 保持 Bundle 位于 `dsh-base` 之后，并加入 `dsh-headless` 或 `dsh-web-app` 等应用层。语义搜索默认关闭，需在 profile patch 中提供 embeddings 端点后启用：

@@ -44,7 +44,7 @@ All paths converge on one local Markdown vault; there is no network listener and
 The formal entry is the Bundle package, not the monorepo root:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.4
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.5
 dsh --profile memory --dump-config
 ```
 
