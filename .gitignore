@@ -8,3 +8,7 @@ artifacts/
 # would otherwise leave untracked notes here.
 .dsh/
 .playwright-mcp/
+
+# Per-project memory vault when users configure a relative vaultRoot such as
+# .plugins/memory/ inside their workspace.
+.plugins/

@@ -10,7 +10,7 @@ on:
       bundle_version:
         description: '@jacklika/dsh-memory version to test'
         required: true
-        default: '0.1.7-rc.2'
+        default: '0.1.7-rc.4'
       dsh_version:
         description: '@deepseek-ai/dsh runtime version to install'
         required: true
@@ -80,14 +80,14 @@ jobs:
         shell: bash
         run: |
           cd /tmp/dsh-smoke
-          pnpm exec dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.2' }}"
+          pnpm exec dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.4' }}"
 
       - name: Verify profile dump-config
         shell: bash
         run: |
           cd /tmp/dsh-smoke
           pnpm exec dsh --profile smoke --dump-config > /tmp/dump-config.yml
-          for id in memory-scope memory-queue memory-git tool-memory-filesystem tool-memory-graph; do
+          for id in memory-scope memory-queue memory-git memory-curator tool-memory-filesystem tool-memory-graph; do
             grep -q "id: $id" /tmp/dump-config.yml || (echo "missing $id" && exit 1)
           done
           grep -q "id: tool-memory-vector" /tmp/dump-config.yml || (echo "missing tool-memory-vector" && exit 1)

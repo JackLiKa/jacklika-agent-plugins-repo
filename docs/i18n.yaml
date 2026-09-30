@@ -8,11 +8,11 @@ adding-plugins.md: d922fc2d1bd8fd74cdd4b929a495ca5b9edf7602
 adding-plugins.zh.md: 6330ca8d86a6b7beb0e991c1125be0488e135f9c
 architecture.md: 8c5df10c4728650a5e058cfaf1609d7a8acc87fc
 architecture.zh.md: 1c8ae1d543e877c86397667ebb0b285dbf41b7cd
-compatibility.md: b6117520aa4d18434b80df075d4506ce69f4cbde
-compatibility.zh.md: c89a6ec2126e3438113dcdab3298249e1a86cb24
+compatibility.md: 829673b5ae942002736d360ed5c169b6c0ea35c1
+compatibility.zh.md: 52a06ab1812c7117c5bf9dbc2eb97c4ee45e5814
 mcp-server.md: ed2c5bf29e49272cac7381b2b25f54092ad034c3
 mcp-server.zh.md: ebd1c0df21d13b74fc8ecb5c384552f041d9c305
 security.md: a1d5a395d578d9b4fe3d70ab4c89503ffbc66ded
 security.zh.md: 6a3f2f2ef9190af3374f53c01491a71879347a4c
-usage.md: b6a1c445043e285573a390fb9683eeb5843d416f
-usage.zh.md: 86a5791d0d7c8c0ba7db319fe1bdd18ffa96e45c
+usage.md: cbee0ad9c40da7617099ac305c494db82e83d318
+usage.zh.md: 72474b5f318508a498f54e53eb8447738276df85

@@ -21,6 +21,9 @@
     - id: tool-memory-filesystem
       name: '@jacklika/dsh-tool-memory-filesystem'
 
+    - id: memory-curator
+      name: '@jacklika/dsh-memory-curator'
+
     - id: tool-memory-graph
       name: '@jacklika/dsh-tool-memory-graph'
 

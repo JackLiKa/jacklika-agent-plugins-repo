@@ -92,6 +92,9 @@ importers:
 
   packages/memory:
     dependencies:
+      '@jacklika/dsh-memory-curator':
+        specifier: workspace:*
+        version: link:../memory-curator
       '@jacklika/dsh-memory-git':
         specifier: workspace:*
         version: link:../memory-git
@@ -110,6 +113,19 @@ importers:
       '@jacklika/dsh-tool-memory-vector':
         specifier: workspace:*
         version: link:../tool-memory-vector
+
+  packages/memory-curator:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.4
+        version: 3.18.4
+      js-yaml:
+        specifier: ^4.2.0
+        version: 4.3.2
+    devDependencies:
+      '@jacklika/dsh-tool-memory-filesystem':
+        specifier: workspace:*
+        version: link:../tool-memory-filesystem
 
   packages/memory-git:
     dependencies:

@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory",
   "description": "The dsh memory bundle: an Obsidian-compatible Markdown vault with per-agent write namespaces, serialized writes, and git history as a patch layer over dsh-base",
-  "version": "0.1.7-rc.3",
+  "version": "0.1.7-rc.4",
   "publishConfig": {
     "access": "public"
   },
@@ -39,6 +39,7 @@
     "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1 <0.3.0-0"
   },
   "dependencies": {
+    "@jacklika/dsh-memory-curator": "workspace:*",
     "@jacklika/dsh-memory-git": "workspace:*",
     "@jacklika/dsh-memory-queue": "workspace:*",
     "@jacklika/dsh-memory-scope": "workspace:*",

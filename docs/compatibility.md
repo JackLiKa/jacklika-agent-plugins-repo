@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | `^22.19.0 || >=24.0.0` | Local: 22.23.2; CI covers 22.19.0 and current 24.x on Linux, macOS, and Windows |
 | pnpm | repository development uses 11.7.0 | 11.7.0 |
-| DeepSeek Harness packages | `>=0.1.7-rc.1 <0.3.0-0` peers | `0.1.7-rc.1`, `0.1.7-rc.2`, and `0.2.0-rc.1` each ran the full suite |
+| DeepSeek Harness packages | `>=0.1.7-rc.1 <0.3.0-0` peers | `0.1.7-rc.4` and `0.2.0-rc.1` each ran the full suite |
 | Cordis | exact `4.0.4` peer | 4.0.4 |
 | Git | `git` must be on `PATH`; the plugin uses `-C`, `init`, `rev-parse`, `status`, `add`, and `commit` | Local: Apple Git 2.50.1; CI uses each runner's Git |
 
@@ -21,6 +21,6 @@ Harness checks every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer before regis
 | all Cordis plugins | `Context` from `@deepseek-ai/cordis`; Schemastery config from `@deepseek-ai/schemastery` |
 | scope | `ToolCallId` from `@deepseek-ai/dsh-llm`; `ToolDispatchExecution`, `ToolExecutionResult`, and `ctx.tools.execute` from `@deepseek-ai/dsh-tools` |
 | queue and git | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools` |
-| filesystem, graph, vector | `defineTool` / `ToolRunContext` from `@deepseek-ai/dsh-tools`; filesystem and graph also use `JsonValue` from `@deepseek-ai/dsh-util-values` |
+| filesystem, graph, vector, curator | `defineTool` / `ToolRunContext` from `@deepseek-ai/dsh-tools`; filesystem, graph, and curator also use `JsonValue` from `@deepseek-ai/dsh-util-values` |
 
-The Bundle itself contains only a Cordis patch and runtime dependencies on the six member packages.
+The Bundle itself contains only a Cordis patch and runtime dependencies on the seven member packages.

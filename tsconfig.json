@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/memory" },
+    { "path": "packages/memory-curator" },
     { "path": "packages/memory-git" },
     { "path": "packages/memory-queue" },
     { "path": "packages/memory-scope" },

@@ -7,7 +7,7 @@ The installable entry is `@jacklika/dsh-memory`. The repository root is a privat
 After the packages are published, install the Bundle into an existing or new Profile:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.4
 ```
 
 The Bundle carries all six member packages as runtime dependencies. Do not install them one by one. Keep `@deepseek-ai/dsh-base` before the memory Bundle and add an application layer such as `@deepseek-ai/dsh-headless` or `@deepseek-ai/dsh-web-app`. Inspect the effective order with:
@@ -133,6 +133,42 @@ To share one Vault across all workspaces, set the same absolute `vaultRoot` on e
     prefixes: ['shared/']
     nestedRepo: init
 ```
+
+To keep the vault inside a project workspace (so it travels with the project and opens cleanly in Obsidian), use a relative `vaultRoot` such as `.plugins/memory/`. The directory is created on first write and should be gitignored:
+
+```yaml
+- id: tool-memory-filesystem
+  config:
+    vaultRoot: '.plugins/memory'
+    extensions: ['.md']
+    maxLinkDepth: 1
+    maxSearchResults: 20
+    indexHiddenDirs: false
+- id: tool-memory-graph
+  config:
+    vaultRoot: '.plugins/memory'
+- id: memory-queue
+  config:
+    vaultRoot: '.plugins/memory'
+    crossProcessLock: true
+    laneArgument: id
+- id: memory-git
+  config:
+    vaultRoot: '.plugins/memory'
+    prefixes: ['shared/']
+    nestedRepo: init
+```
+
+## Memory curator workflow
+
+The Bundle includes `memory-curator`, which exposes two high-level tools:
+
+- `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context.
+- `memory_capture(title, summary, ...)` — Call this at the end of a significant task. It derives a stable note id from the title, checks for conflicting notes, asks for your approval if one exists, and writes the captured knowledge to the shared curated zone.
+
+`memory_capture` defaults to `scope: shared`, which lands under `shared/notes/` and is committed by `memory-git`. Use `scope: private` when the note should stay inside the current agent namespace (`agents/<key>/`).
+
+If a conflict is found and the deployment has no approval service (for example in CI), `memory_capture` fails closed by default. Set `conflictPolicy: skip` in the plugin config or on the individual call to let it silently skip instead.
 
 Use `agentKey` for a stable private namespace across sessions:
 

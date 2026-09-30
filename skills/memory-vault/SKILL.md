@@ -5,23 +5,29 @@ description: Use when the session needs durable cross-session memory — reading
 
 # Memory vault workflow
 
-The vault is an Obsidian-compatible Markdown store under `.dsh/memory/` of the session workspace (or the configured `vaultRoot`). Four tools operate on it: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` (plus `wiki_semantic_search` when enabled).
+The vault is an Obsidian-compatible Markdown store under `.dsh/memory/` of the session workspace (or the configured `vaultRoot`). Four tools operate on it: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` (plus `wiki_semantic_search` when enabled). A curator layer also provides `memory_recall` and `memory_capture`; prefer those for routine task-start/task-end memory work.
 
-## When to read
+## Task-start recall
 
-- At task start, `wiki_search` for the domain concepts, prior decisions, and people involved before asking the user to repeat context.
-- `wiki_graph` to see how a note connects to the rest of the vault before extending it.
-- `wiki_read` returns a `version` fingerprint — keep it when you intend to write back to the same note.
+- Call `memory_recall(query)` with the user's task or the domain concepts involved.
+- If it returns relevant notes, read the most relevant ones with `wiki_read` and incorporate the context into your plan.
+- `memory_recall` is a thin wrapper over `wiki_search` and returns note ids, titles, and backlink counts.
 
-## When to write
+## Task-end capture
 
-Write only durable knowledge: decisions and their rationale, discovered APIs/paths/commands, project conventions, user preferences, TODO states worth surviving the session. Do not write transient reasoning, per-step progress, or content already in the repository.
+- At the end of a significant task — especially when you reached a decision, fixed a bug, discovered an API, or clarified a convention — call `memory_capture(title, summary, ...)`.
+- It will derive a stable note id from the title, check for conflicts with existing notes, ask the user for approval if one exists, and write the captured knowledge to the shared curated zone.
+- Use `scope: shared` (the default) for knowledge meant for every agent and future session. Use `scope: private` only for notes that must stay inside the current agent namespace.
 
-## Where to write
+## Direct vault tools
 
-- Your notes land under `agents/<your key>/` automatically — do not add the prefix yourself.
-- `shared/` is the curated public zone; write there only for knowledge meant for every agent and future session.
-- Prefer one note per concept under `concepts/`, dated logs under `daily/`.
+Use `wiki_read`, `wiki_search`, `wiki_write`, and `wiki_graph` directly only when the curator tools do not fit (for example, reading a specific linked note, updating an existing note with a known id, or inspecting the link graph).
+
+## Where notes land
+
+- `memory_capture` with `scope: shared` writes under `shared/notes/` by default.
+- Private notes land under `agents/<your key>/` automatically — do not add the prefix yourself.
+- Prefer one note per concept; `memory_capture` will append a timestamped section to an existing note when the same title already exists and is approved.
 
 ## Safe write protocol
 

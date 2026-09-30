@@ -18,7 +18,7 @@
  * Example (npm bundle):
  *   node scripts/desk-smoke.mjs \
  *     --desk-app "/Applications/DeepSeek Harness.app" \
- *     --bundle "@jacklika/dsh-memory@0.1.7-rc.2" \
+ *     --bundle "@jacklika/dsh-memory@0.1.7-rc.4" \
  *     --profile desk-smoke
  */
 

@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | `^22.19.0 || >=24.0.0` | 本地：22.23.2；CI 覆盖 Linux、macOS、Windows 上的 22.19.0 与当前 24.x |
 | pnpm | 仓库开发使用 11.7.0 | 11.7.0 |
-| DeepSeek Harness 包 | peer `>=0.1.7-rc.1 <0.3.0-0` | `0.1.7-rc.1`、`0.1.7-rc.2` 与 `0.2.0-rc.1` 均跑过完整套件 |
+| DeepSeek Harness 包 | peer `>=0.1.7-rc.1 <0.3.0-0` | `0.1.7-rc.4` 与 `0.2.0-rc.1` 均跑过完整套件 |
 | Cordis | 精确 peer `4.0.4` | 4.0.4 |
 | Git | `git` 必须在 `PATH`；插件使用 `-C`、`init`、`rev-parse`、`status`、`add`、`commit` | 本地：Apple Git 2.50.1；CI 使用各 runner 的 Git |
 
@@ -21,6 +21,6 @@ Harness 会在 registry 安装前以及 Profile 组合前检查每个 `@deepseek
 | 所有 Cordis 插件 | `@deepseek-ai/cordis` 的 `Context`；`@deepseek-ai/schemastery` 的配置 schema |
 | scope | `@deepseek-ai/dsh-llm` 的 `ToolCallId`；`@deepseek-ai/dsh-tools` 的 `ToolDispatchExecution`、`ToolExecutionResult` 与 `ctx.tools.execute` |
 | queue 与 git | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` waterfall |
-| filesystem、graph、vector | `@deepseek-ai/dsh-tools` 的 `defineTool` / `ToolRunContext`；filesystem 与 graph 还使用 `@deepseek-ai/dsh-util-values` 的 `JsonValue` |
+| filesystem、graph、vector、curator | `@deepseek-ai/dsh-tools` 的 `defineTool` / `ToolRunContext`；filesystem、graph 与 curator 还使用 `@deepseek-ai/dsh-util-values` 的 `JsonValue` |
 
-Bundle 本身只包含 Cordis patch，以及六个成员包的运行时依赖。
+Bundle 本身只包含 Cordis patch，以及七个成员包的运行时依赖。

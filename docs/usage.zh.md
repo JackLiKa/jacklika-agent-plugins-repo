@@ -7,7 +7,7 @@
 各包发布后，把 Bundle 安装进已有或新 Profile：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.2
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.4
 ```
 
 Bundle 以运行时依赖带齐六个成员包，无需逐个安装。确保 `@deepseek-ai/dsh-base` 位于记忆 Bundle 之前，并加入 `@deepseek-ai/dsh-headless` 或 `@deepseek-ai/dsh-web-app` 等应用层。检查最终顺序：
@@ -133,6 +133,42 @@ pnpm test:profile
     prefixes: ['shared/']
     nestedRepo: init
 ```
+
+若想把知识库放在项目工作区内部（让它跟随项目，并能在 Obsidian 中直接打开该文件夹作为 vault），可以使用相对路径如 `.plugins/memory/`。首次写入时会自动创建该目录；仓库的 `.gitignore` 已经把 `.plugins/` 忽略。
+
+```yaml
+- id: tool-memory-filesystem
+  config:
+    vaultRoot: '.plugins/memory'
+    extensions: ['.md']
+    maxLinkDepth: 1
+    maxSearchResults: 20
+    indexHiddenDirs: false
+- id: tool-memory-graph
+  config:
+    vaultRoot: '.plugins/memory'
+- id: memory-queue
+  config:
+    vaultRoot: '.plugins/memory'
+    crossProcessLock: true
+    laneArgument: id
+- id: memory-git
+  config:
+    vaultRoot: '.plugins/memory'
+    prefixes: ['shared/']
+    nestedRepo: init
+```
+
+## Memory curator 工作流
+
+Bundle 包含 `memory-curator`，提供两个高层工具：
+
+- `memory_recall(query)` — 在开发任务开始时调用。搜索知识库中的相关笔记，让 agent 基于已有上下文继续工作，而不是重复提问。
+- `memory_capture(title, summary, ...)` — 在有意义的任务结束时调用。它根据标题生成稳定笔记 id，检查是否与现有笔记冲突；若发现冲突，会请求用户审批，通过后再把知识写入共享策展区。
+
+`memory_capture` 默认 `scope: shared`，笔记落在 `shared/notes/` 下，由 `memory-git` 自动提交。若使用 `scope: private`，笔记会进入当前 agent 命名空间（`agents/<key>/`），不被其他 session 共享。
+
+当发现冲突但部署环境没有 approval 服务（如 CI）时，`memory_capture` 默认失败关闭，不会静默覆盖。可以在插件配置或单次调用中设置 `conflictPolicy: skip`，让它在冲突时静默跳过。
 
 使用 `agentKey` 获得跨 session 稳定的私有命名空间：
 
