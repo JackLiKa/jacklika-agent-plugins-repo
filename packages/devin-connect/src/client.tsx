@@ -1,7 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis'
+import '@deepseek-ai/dsh-client-locale/client'
 import '@deepseek-ai/dsh-client-ui-renderer/client'
 import '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ReactNode } from 'react'
+import { DevinSettingsCard } from './client/DevinSettingsCard.tsx'
+import { DEVIN_LOCALES } from './client/locales.ts'
 
 export const name = 'jacklika/devin-connect-client'
 
@@ -19,22 +21,17 @@ export const inject = [
 
 export function apply(ctx: Context): void {
   ctx.effect(() => {
-    const dispose = ctx.slots.register({
+    const disposeDict = ctx.locale.register('devin', DEVIN_LOCALES)
+    const disposeSlot = ctx.slots.register({
       name: 'settings.section',
       id: 'devin',
       order: 210,
       label: 'Devin',
-    } as const, DevinSettingsSection)
-    return dispose
+      locale: 'devin',
+    } as const, DevinSettingsCard)
+    return () => {
+      disposeSlot()
+      disposeDict()
+    }
   })
-}
-
-function DevinSettingsSection(props: { close: () => void }): ReactNode {
-  return (
-    <div>
-      <h2>Devin connector</h2>
-      <p>Client UI modules are being implemented.</p>
-      <button onClick={props.close}>Close</button>
-    </div>
-  )
 }

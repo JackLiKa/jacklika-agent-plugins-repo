@@ -1,7 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
+import '@deepseek-ai/dsh-client-locale/client'
 import '@deepseek-ai/dsh-client-ui-renderer/client'
 import '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ReactNode } from 'react'
+import { QuotaSettingsCard } from './client/QuotaSettingsCard.tsx'
+import { injectQuotaCss } from './client/quota-styles.ts'
+import { QODER_LOCALES } from './client/locales.ts'
 
 export const name = 'jacklika/qoder-connect-client'
 
@@ -19,22 +22,19 @@ export const inject = [
 
 export function apply(ctx: Context): void {
   ctx.effect(() => {
-    const dispose = ctx.slots.register({
+    const disposeDict = ctx.locale.register('qoder', QODER_LOCALES)
+    const disposeCss = injectQuotaCss()
+    const disposeSlot = ctx.slots.register({
       name: 'settings.section',
       id: 'qoder',
       order: 200,
       label: 'Qoder',
-    } as const, QoderSettingsSection)
-    return dispose
+      locale: 'qoder',
+    } as const, QuotaSettingsCard)
+    return () => {
+      disposeSlot()
+      disposeCss()
+      disposeDict()
+    }
   })
-}
-
-function QoderSettingsSection(props: { close: () => void }): ReactNode {
-  return (
-    <div>
-      <h2>Qoder connector</h2>
-      <p>Client UI modules are being implemented.</p>
-      <button onClick={props.close}>Close</button>
-    </div>
-  )
 }
