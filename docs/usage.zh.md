@@ -155,7 +155,7 @@ Bundle patch 默认设置 `vaultRoot: '.plugins/memory'`，因此每次调用使
     vaultRoot: '/Users/user/Documents/memory-vault'
 ```
 
-Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，让它跟随项目并能在 Obsidian 中直接打开该文件夹作为 vault。首次写入时会自动创建该目录；仓库的 `.gitignore` 已经把 `.plugins/` 忽略。
+Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，让它跟随项目。请在 Obsidian 中直接打开 `.plugins/memory/` 作为 vault 根目录（而不是打开整个项目根目录，因为 Obsidian 会把 `.plugins/` 这类点开头的目录从文件浏览器和图谱中隐藏掉）。首次写入时会自动创建该目录；仓库的 `.gitignore` 已经把 `.plugins/` 忽略。
 
 ```yaml
 - id: tool-memory-filesystem
@@ -188,7 +188,7 @@ Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，�
 
 ## Memory curator 工作流
 
-Bundle 包含 `memory-curator`，提供两个高层工具：
+Bundle 包含 `memory-curator`，提供两个高层工具。它们会自动注册到工具表，但除非挂载 `memory-vault` skill（见[单独挂载 Skill](#单独挂载-skill)），模型不会主动在任务前后调用它们。
 
 - `memory_recall(query)` — 在开发任务开始时调用。搜索知识库中的相关笔记，让 agent 基于已有上下文继续工作，而不是重复提问。
 - `memory_capture(title, summary, ...)` — 在有意义的任务结束时调用。它根据标题生成稳定笔记 id，检查是否与现有笔记冲突；若发现冲突，会请求用户审批，通过后再把知识写入共享策展区。

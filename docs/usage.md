@@ -155,7 +155,7 @@ To share one Vault across all workspaces, set the same absolute `vaultRoot` on e
     vaultRoot: '/Users/user/Documents/memory-vault'
 ```
 
-The Bundle's default `.plugins/memory/` keeps the vault inside the project workspace so it travels with the project and opens cleanly in Obsidian. The directory is created on first write and is gitignored by default:
+The Bundle's default `.plugins/memory/` keeps the vault inside the project workspace so it travels with the project. Open `.plugins/memory/` directly in Obsidian as the vault root (not the project root, because Obsidian hides dot-directories such as `.plugins/` from its file explorer and graph). The directory is created on first write and is gitignored by default:
 
 ```yaml
 - id: tool-memory-filesystem
@@ -188,7 +188,7 @@ If you previously installed Bundle versions `0.1.7-rc.5` or older, the default v
 
 ## Memory curator workflow
 
-The Bundle includes `memory-curator`, which exposes two high-level tools:
+The Bundle includes `memory-curator`, which exposes two high-level tools. They register automatically, but the model will not call them on its own unless the `memory-vault` skill is mounted (see [Mount the Skill separately](#mount-the-skill-separately)).
 
 - `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context.
 - `memory_capture(title, summary, ...)` — Call this at the end of a significant task. It derives a stable note id from the title, checks for conflicting notes, asks for your approval if one exists, and writes the captured knowledge to the shared curated zone.
