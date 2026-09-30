@@ -78,11 +78,17 @@ jobs:
                   publish_status=$?
                   # npm may return E403/E409 if the version was published but
                   # not yet visible to npm view due to registry propagation;
-                  # confirm before failing the job.
-                  sleep 5
-                  if npm view "$name@$version" version >/dev/null 2>&1; then
-                    echo "$name@$version already published (confirmed after E403/E409)"
-                  else
+                  # retry the lookup for up to a minute before failing the job.
+                  confirmed=0
+                  for i in 1 2 3 4 5 6; do
+                    if npm view "$name@$version" version >/dev/null 2>&1; then
+                      echo "$name@$version already published (confirmed after E403/E409)"
+                      confirmed=1
+                      break
+                    fi
+                    sleep 10
+                  done
+                  if [ "$confirmed" -ne 1 ]; then
                     exit "$publish_status"
                   fi
                 fi
