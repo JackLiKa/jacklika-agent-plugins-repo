@@ -10,3 +10,8 @@ artifacts/
 .dsh/
 .plugins/
 .playwright-mcp/
+
+# pnpm may create a per-project virtual store depending on configuration.
+# The real global store is elsewhere; this local directory should never be
+# committed because it contains resolved symlinks and absolute-ish paths.
+.pnpm-store/
