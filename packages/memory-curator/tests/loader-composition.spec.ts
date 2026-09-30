@@ -94,26 +94,44 @@ async function recall(ctx: Context, callId: string, query: string, agentId: stri
   })
 }
 
+async function readNote(ctx: Context, callId: string, id: string, agentId: string, cwd: string) {
+  return ctx.tools.execute({
+    signal: new AbortController().signal,
+    callId: ToolCallId(callId),
+    name: 'wiki_read',
+    arguments: { id },
+    agent: agent(agentId, cwd),
+  })
+}
+
 describe('memory-curator real Loader composition through cordis.yml', () => {
   it('captures a new shared note and recalls it later', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
     const ctx = await boot(vault)
 
-    const r1 = await capture(ctx, 'c1', 'Project conventions', 'Use pnpm 11.7.0 and Node ^22.19.0.', 'agent-1', vault)
+    const r1 = await capture(ctx, 'c1', 'Project conventions', 'Use pnpm 11.7.0 and Node ^22.19.0.', 'agent-1', vault, { tags: ['conventions', 'node', 'pnpm'] })
     expect(r1.isError).toBe(false)
     const out1 = JSON.parse(resultText(r1)) as { written: boolean; id: string; mode: string }
     expect(out1.written).toBe(true)
     expect(out1.id).toBe('shared/notes/project-conventions.md')
-    expect(out1.mode).toBe('append')
+    expect(out1.mode).toBe('overwrite')
+
+    const r1r = await readNote(ctx, 'r1-read', 'shared/notes/project-conventions.md', 'agent-1', vault)
+    expect(r1r.isError).toBe(false)
+    const read1 = JSON.parse(resultText(r1r)) as { frontmatter: { title?: string; tags?: string[]; created?: string }; body: string }
+    expect(read1.frontmatter.title).toBe('Project conventions')
+    expect(read1.frontmatter.tags).toEqual(['conventions', 'node', 'pnpm'])
+    expect(read1.frontmatter.created).toBeDefined()
+    expect(read1.body).toContain('Use pnpm 11.7.0 and Node ^22.19.0.')
 
     const notePath = join(vault, 'shared', 'notes', 'project-conventions.md')
     const text = await readFile(notePath, 'utf8')
-    expect(text).toContain('---')
+    expect(text.startsWith('---')).toBe(true)
     expect(text).toContain('title: Project conventions')
     expect(text).toContain('# Project conventions')
     expect(text).toContain('Use pnpm 11.7.0 and Node ^22.19.0.')
 
-    const r2 = await recall(ctx, 'r1', 'pnpm Node project conventions', 'agent-1', vault)
+    const r2 = await recall(ctx, 'r1-recall', 'pnpm Node project conventions', 'agent-1', vault)
     expect(r2.isError).toBe(false)
     const out2 = JSON.parse(resultText(r2)) as { query: string; hits: { id: string; title: string; backlinks: string[] }[]; total: number }
     expect(out2.total).toBeGreaterThan(0)

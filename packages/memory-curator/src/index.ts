@@ -289,9 +289,9 @@ export function apply(ctx: Context, config: Config): void {
       }
       const newNoteContent = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
 
-      const noteExists = conflictExists
-      const content = noteExists && mode === 'append' ? appendContent : newNoteContent
-      const writeMode: 'append' | 'overwrite' = mode
+      const appending = conflictExists && mode === 'append'
+      const content = appending ? appendContent : newNoteContent
+      const writeMode: 'append' | 'overwrite' = appending ? 'append' : 'overwrite'
 
       await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: finalId,
