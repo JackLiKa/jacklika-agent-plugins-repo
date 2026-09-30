@@ -6,13 +6,13 @@ README.md: fd00b5b62a0d6125496164ebeb113e57b304e0f6
 README.zh.md: fe68ea7852ff555978f3b088924013640ca1e6ea
 adding-plugins.md: d922fc2d1bd8fd74cdd4b929a495ca5b9edf7602
 adding-plugins.zh.md: 6330ca8d86a6b7beb0e991c1125be0488e135f9c
-architecture.md: 8c5df10c4728650a5e058cfaf1609d7a8acc87fc
-architecture.zh.md: 1c8ae1d543e877c86397667ebb0b285dbf41b7cd
+architecture.md: 50caa6793c144de6e6e63b01207501ac2fdef235
+architecture.zh.md: 201178ab70d140d1ad31d5f4de0e4ee19340c148
 compatibility.md: 64b3a89c44b7c6f69457e7fea26e42bfbcd34760
 compatibility.zh.md: a9302f27db986e77f72103ce848b2b0a4a012005
 mcp-server.md: ed2c5bf29e49272cac7381b2b25f54092ad034c3
 mcp-server.zh.md: ebd1c0df21d13b74fc8ecb5c384552f041d9c305
 security.md: a1d5a395d578d9b4fe3d70ab4c89503ffbc66ded
 security.zh.md: 6a3f2f2ef9190af3374f53c01491a71879347a4c
-usage.md: 192dfc9f6e2cafa5f26f4e49c0cebd47c007a8e9
-usage.zh.md: 386f3e1b8b84afc85867f5075d0d1bb48f08c373
+usage.md: 6e2c9974435842ade097ca15c3452e68046dc72a
+usage.zh.md: 81811a059d830e43d0b02f714ec32eafbde4c850

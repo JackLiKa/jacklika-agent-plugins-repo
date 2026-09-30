@@ -5,7 +5,7 @@ description: Use when the session needs durable cross-session memory — reading
 
 # Memory vault workflow
 
-The vault is an Obsidian-compatible Markdown store under `.dsh/memory/` of the session workspace (or the configured `vaultRoot`). Four tools operate on it: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` (plus `wiki_semantic_search` when enabled). A curator layer also provides `memory_recall` and `memory_capture`; prefer those for routine task-start/task-end memory work.
+The vault is an Obsidian-compatible Markdown store under `.plugins/memory/` of the session workspace (or the configured `vaultRoot`). Four tools operate on it: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` (plus `wiki_semantic_search` when enabled). A curator layer also provides `memory_recall` and `memory_capture`; prefer those for routine task-start/task-end memory work.
 
 ## Task-start recall
 

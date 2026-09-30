@@ -26,7 +26,7 @@ dsh --profile memory --dump-config
 dsh plugin --profile memory remove @jacklika/dsh-memory
 ```
 
-卸载只移除包代码与 Bundle 选择，不会删除 `<workspace>/.dsh/memory/` 或显式配置的 Vault。
+卸载只移除包代码与 Bundle 选择，不会删除 `<workspace>/.plugins/memory/` 或显式配置的 Vault。
 
 ## 私人安装与本地安装
 
@@ -97,7 +97,7 @@ pnpm test:profile
 
 ## 配置 Vault
 
-未配置 `vaultRoot` 时，每次调用使用 `<session workspace>/.dsh/memory/`。相对 `vaultRoot` 以该工作区为基准；绝对路径选择共享 Vault。路径由 Node path API 处理，支持空格和非 ASCII 字符。Profile 覆盖示例：
+Bundle patch 默认设置 `vaultRoot: '.plugins/memory'`，因此每次调用使用 `<session workspace>/.plugins/memory/`，除非被覆盖。相对 `vaultRoot` 以该工作区为基准；绝对路径选择共享 Vault。路径由 Node path API 处理，支持空格和非 ASCII 字符。若想改回每个插件的默认位置，需要覆盖所有会解析 `vaultRoot` 的行：
 
 ```yaml
 - id: tool-memory-filesystem
@@ -107,6 +107,19 @@ pnpm test:profile
     maxLinkDepth: 1
     maxSearchResults: 20
     indexHiddenDirs: false
+- id: tool-memory-graph
+  config:
+    vaultRoot: '.dsh/memory'
+- id: memory-queue
+  config:
+    vaultRoot: '.dsh/memory'
+    crossProcessLock: true
+    laneArgument: id
+- id: memory-git
+  config:
+    vaultRoot: '.dsh/memory'
+    prefixes: ['shared/']
+    nestedRepo: init
 ```
 
 若要在所有工作区之间共享同一个 Vault，需要在每个会解析 `vaultRoot` 的插件上设置相同的绝对路径：`tool-memory-filesystem`、`tool-memory-graph`、`tool-memory-vector`（若启用）、`memory-queue` 和 `memory-git`。否则队列锁目录、图谱索引与 git 提交仍会留在按工作区隔离的默认位置，导致共享 Vault 不一致。
@@ -134,7 +147,7 @@ pnpm test:profile
     nestedRepo: init
 ```
 
-若想把知识库放在项目工作区内部（让它跟随项目，并能在 Obsidian 中直接打开该文件夹作为 vault），可以使用相对路径如 `.plugins/memory/`。首次写入时会自动创建该目录；仓库的 `.gitignore` 已经把 `.plugins/` 忽略。
+Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，让它跟随项目并能在 Obsidian 中直接打开该文件夹作为 vault。首次写入时会自动创建该目录；仓库的 `.gitignore` 已经把 `.plugins/` 忽略。
 
 ```yaml
 - id: tool-memory-filesystem
@@ -228,12 +241,12 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 
 | 让 agent 做 | 然后核对 |
 |---|---|
-| 写一条 `shared/notes/x.md` | `<workspace>/.dsh/memory/shared/notes/x.md` 存在，且 `git -C <vault> log --oneline` 有一条作者为 `dsh-memory-git` 的 `wiki_write` 提交 |
+| 写一条 `shared/notes/x.md` | `<workspace>/.plugins/memory/shared/notes/x.md` 存在，且 `git -C <vault> log --oneline` 有一条作者为 `dsh-memory-git` 的 `wiki_write` 提交 |
 | 写一条私有笔记 `daily/x.md` | 落到 `<vault>/agents/<session id>/daily/x.md`，且**没有** Git 提交 |
 | 读取笔记并跟随 `[[链接]]` | `wiki_read` 在 `linkedNotes` 中返回被链接的笔记 |
 | 搜索 vault / 展示链接图 | `wiki_search` 返回命中；`wiki_graph` 返回节点与边 |
 
-`<vault>` 默认为 `<session workspace>/.dsh/memory/`。请单独挂载 `skills/memory-vault`（`customSkillDirs`），否则模型不会知道"先读后写"与 `baseVersion` 的约定。
+`<vault>` 默认为 `<session workspace>/.plugins/memory/`。请单独挂载 `skills/memory-vault`（`customSkillDirs`），否则模型不会知道"先读后写"与 `baseVersion` 的约定。
 
 ## 常见问题
 

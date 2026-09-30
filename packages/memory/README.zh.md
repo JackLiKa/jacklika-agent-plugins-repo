@@ -40,7 +40,7 @@ dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.5
     model: nomic-embed-text
 ```
 
-vault 默认位于 `<会话 cwd>/.dsh/memory/`；可在 profile patch 中覆盖 `tool-memory-filesystem`、`memory-queue` 或 `memory-git` 的 `vaultRoot`。
+Bundle patch 默认把 vault 设在 `<会话 cwd>/.plugins/memory/`；可在 profile patch 中覆盖 `tool-memory-filesystem`、`memory-queue`、`memory-git` 与 `tool-memory-graph` 的 `vaultRoot`。
 
 <a id="understand-the-implementation"></a>
 ## 理解实现

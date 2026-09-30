@@ -10,12 +10,12 @@ Tool calling   @jacklika/dsh-tool-memory-*  — native dsh tools
   ↓
 MCP            @jacklika/dsh-memory-mcp     — stdio server for non-dsh clients
   ↓
-Vault          <workspace>/.dsh/memory/     — Obsidian-compatible Markdown notes
+Vault          <workspace>/.plugins/memory/     — Obsidian-compatible Markdown notes
 ```
 
 ## The vault
 
-- Default location: `<session cwd>/.dsh/memory/` — per-workspace, lives next to the code.
+- Default location: `<session cwd>/.plugins/memory/` — per-workspace, lives next to the code.
 - Notes are plain Markdown with optional `---` YAML frontmatter and `[[wiki links]]`.
 - `agents/<key>/` holds per-agent namespaces (writes are rewritten there by `memory-scope`); `shared/` is the curated public zone.
 

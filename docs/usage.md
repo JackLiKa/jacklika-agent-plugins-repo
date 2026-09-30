@@ -26,7 +26,7 @@ Uninstall through the official package command:
 dsh plugin --profile memory remove @jacklika/dsh-memory
 ```
 
-Uninstall removes package code and Bundle selection, not `<workspace>/.dsh/memory/` or an explicitly configured Vault.
+Uninstall removes package code and Bundle selection, not `<workspace>/.plugins/memory/` or an explicitly configured Vault.
 
 ## Private and local installation
 
@@ -97,7 +97,7 @@ pnpm test:profile
 
 ## Configure the Vault
 
-Without `vaultRoot`, every call uses `<session workspace>/.dsh/memory/`. A relative `vaultRoot` is anchored at that workspace; an absolute path selects a shared Vault. Paths with spaces and non-ASCII characters are supported through Node's path APIs. Example Profile override:
+The Bundle patch sets `vaultRoot: '.plugins/memory'`, so every call uses `<session workspace>/.plugins/memory/` unless overridden. A relative `vaultRoot` is anchored at that workspace; an absolute path selects a shared Vault. Paths with spaces and non-ASCII characters are supported through Node's path APIs. To move the vault back to the per-plugin default, override every row that resolves `vaultRoot`:
 
 ```yaml
 - id: tool-memory-filesystem
@@ -107,6 +107,19 @@ Without `vaultRoot`, every call uses `<session workspace>/.dsh/memory/`. A relat
     maxLinkDepth: 1
     maxSearchResults: 20
     indexHiddenDirs: false
+- id: tool-memory-graph
+  config:
+    vaultRoot: '.dsh/memory'
+- id: memory-queue
+  config:
+    vaultRoot: '.dsh/memory'
+    crossProcessLock: true
+    laneArgument: id
+- id: memory-git
+  config:
+    vaultRoot: '.dsh/memory'
+    prefixes: ['shared/']
+    nestedRepo: init
 ```
 
 To share one Vault across all workspaces, set the same absolute `vaultRoot` on every plugin that resolves it: `tool-memory-filesystem`, `tool-memory-graph`, `tool-memory-vector` (if enabled), `memory-queue`, and `memory-git`. Otherwise the queue lock directory, graph index, and git commits stay in the per-workspace default and the shared Vault becomes inconsistent.
@@ -134,7 +147,7 @@ To share one Vault across all workspaces, set the same absolute `vaultRoot` on e
     nestedRepo: init
 ```
 
-To keep the vault inside a project workspace (so it travels with the project and opens cleanly in Obsidian), use a relative `vaultRoot` such as `.plugins/memory/`. The directory is created on first write and should be gitignored:
+The Bundle's default `.plugins/memory/` keeps the vault inside the project workspace so it travels with the project and opens cleanly in Obsidian. The directory is created on first write and is gitignored by default:
 
 ```yaml
 - id: tool-memory-filesystem
@@ -228,12 +241,12 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 
 | Ask the agent | Then confirm |
 |---|---|
-| Write a note `shared/notes/x.md` | `<workspace>/.dsh/memory/shared/notes/x.md` exists, and `git -C <vault> log --oneline` shows a `wiki_write` commit authored by `dsh-memory-git` |
+| Write a note `shared/notes/x.md` | `<workspace>/.plugins/memory/shared/notes/x.md` exists, and `git -C <vault> log --oneline` shows a `wiki_write` commit authored by `dsh-memory-git` |
 | Write a private note `daily/x.md` | Lands under `<vault>/agents/<session id>/daily/x.md` with **no** Git commit |
 | Read the note and follow its `[[links]]` | `wiki_read` returns the linked notes in `linkedNotes` |
 | Search the vault / show the link graph | `wiki_search` returns hits; `wiki_graph` returns nodes and edges |
 
-`<vault>` defaults to `<session workspace>/.dsh/memory/`. Mount `skills/memory-vault` separately (`customSkillDirs`) or the model will not know the read-before-write and `baseVersion` conventions.
+`<vault>` defaults to `<session workspace>/.plugins/memory/`. Mount `skills/memory-vault` separately (`customSkillDirs`) or the model will not know the read-before-write and `baseVersion` conventions.
 
 ## Troubleshooting
 

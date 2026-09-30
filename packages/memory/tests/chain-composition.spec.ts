@@ -6,7 +6,7 @@
  * filesystem it decorates. This spec instead mounts the bundle's real
  * `cordis.patch.yml`: all six rows, in patch order, with the shipped config and
  * no overrides, driving the vault the way a user gets it by default
- * (`<session cwd>/.dsh/memory/`).
+ * (`<session cwd>/.plugins/memory/`).
  *
  * That is the only place the cross-layer contracts of the assembled ladder can
  * show themselves:
@@ -150,7 +150,7 @@ function agent(id: string, cwd: string) {
 
 /** The vault every row resolves when the session workspace is `cwd`. */
 function vaultOf(cwd: string): string {
-  return join(cwd, '.dsh', 'memory')
+  return join(cwd, '.plugins', 'memory')
 }
 
 function write(
@@ -205,7 +205,7 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     // scope leaves `shared/` untouched, so the reported id is the requested one.
     expect((JSON.parse(resultText(result)) as { id: string }).id).toBe('shared/summary.md')
 
-    // All three write-ladder rows agreed on `<workspace>/.dsh/memory` by default.
+    // All three write-ladder rows agreed on `<workspace>/.plugins/memory` by default.
     const vault = vaultOf(workspace)
     expect(await readFile(join(vault, 'shared', 'summary.md'), 'utf8'))
       .toContain('content of shared/summary.md')

@@ -3,12 +3,10 @@ lib/
 artifacts/
 *.tsbuildinfo
 
-# Local dsh session state: the memory vault defaults to
-# <session workspace>/.dsh/memory/, so running the suite in this repository
-# would otherwise leave untracked notes here.
+# Local dsh session state and the Bundle's default per-project memory vault.
+# <session workspace>/.plugins/memory/ is the default when installed through
+# @jacklika/dsh-memory; <session workspace>/.dsh/memory/ is the per-plugin
+# fallback when no Bundle patch is applied.
 .dsh/
-.playwright-mcp/
-
-# Per-project memory vault when users configure a relative vaultRoot such as
-# .plugins/memory/ inside their workspace.
 .plugins/
+.playwright-mcp/

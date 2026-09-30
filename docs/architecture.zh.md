@@ -10,12 +10,12 @@ Tool calling   @jacklika/dsh-tool-memory-*  — dsh 原生工具
   ↓
 MCP            @jacklika/dsh-memory-mcp     — 面向非 dsh 客户端的 stdio server
   ↓
-Vault          <workspace>/.dsh/memory/     — Obsidian 兼容的 Markdown 笔记
+Vault          <workspace>/.plugins/memory/     — Obsidian 兼容的 Markdown 笔记
 ```
 
 ## Vault
 
-- 默认位置：`<session cwd>/.dsh/memory/`——按工作区隔离，与代码同处。
+- 默认位置：`<session cwd>/.plugins/memory/`——按工作区隔离，与代码同处。
 - 笔记是普通 Markdown，可选 `---` YAML frontmatter 和 `[[wiki 链接]]`。
 - `agents/<key>/` 是各 agent 的命名空间（写入由 `memory-scope` 自动重写）；`shared/` 是公共策展区。
 

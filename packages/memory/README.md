@@ -40,7 +40,7 @@ Keep the Bundle after `dsh-base` and include an application layer such as `dsh-h
     model: nomic-embed-text
 ```
 
-The vault defaults to `<session cwd>/.dsh/memory/`; override `vaultRoot` on `tool-memory-filesystem`, `memory-queue`, or `memory-git` from the profile patch.
+The Bundle patch sets the vault to `<session cwd>/.plugins/memory/`; override `vaultRoot` on `tool-memory-filesystem`, `memory-queue`, `memory-git`, and `tool-memory-graph` from the profile patch if you prefer a different location.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

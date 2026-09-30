@@ -12,20 +12,33 @@
     - id: memory-queue
       name: '@jacklika/dsh-memory-queue'
       config:
+        vaultRoot: '.plugins/memory'
         crossProcessLock: true
         laneArgument: id
 
     - id: memory-git
       name: '@jacklika/dsh-memory-git'
+      config:
+        vaultRoot: '.plugins/memory'
+        prefixes: ['shared/']
+        nestedRepo: init
 
     - id: tool-memory-filesystem
       name: '@jacklika/dsh-tool-memory-filesystem'
+      config:
+        vaultRoot: '.plugins/memory'
+        extensions: ['.md']
+        maxLinkDepth: 1
+        maxSearchResults: 20
+        indexHiddenDirs: false
 
     - id: memory-curator
       name: '@jacklika/dsh-memory-curator'
 
     - id: tool-memory-graph
       name: '@jacklika/dsh-tool-memory-graph'
+      config:
+        vaultRoot: '.plugins/memory'
 
     # Semantic search stays off until a deployment supplies an embeddings
     # endpoint; enable it from the profile patch layer:
