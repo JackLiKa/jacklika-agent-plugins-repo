@@ -1,4 +1,4 @@
-import { mkdir, readdir } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
@@ -6,6 +6,15 @@ import process from 'node:process'
 const root = resolve(import.meta.dirname, '..')
 const output = resolve(process.argv[2] ?? join(root, 'artifacts', 'packages'))
 const packagesRoot = join(root, 'packages')
+
+// Clean the output directory so stale tarballs from previous versions are not
+// included in local publish/smoke runs.
+try {
+  await stat(output)
+  await rm(output, { recursive: true, force: true })
+} catch {
+  // directory does not exist yet
+}
 await mkdir(output, { recursive: true })
 
 function runPnpm(args, cwd) {

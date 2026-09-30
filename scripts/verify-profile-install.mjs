@@ -14,6 +14,52 @@ const profile = 'memory-e2e'
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const dsh = join(cliRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'dsh.cmd' : 'dsh')
 const tar = process.platform === 'win32' ? 'tar.exe' : 'tar'
+const bundlePatchPath = join(root, 'packages', 'memory', 'cordis.patch.yml')
+
+/**
+ * Read the Bundle patch and return the ordered list of enabled plugin ids it
+ * inserts. Keeps verification scripts in sync with the patch so a newly-added
+ * row cannot silently disappear from the strongest end-to-end checks.
+ */
+async function expectedEnabledPluginIds(patchPath) {
+  const text = await readFile(patchPath, 'utf8')
+  const lines = text.split(/\r?\n/)
+  const ids = []
+  let inInsert = false
+  let insertIndent = -1
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ''
+    const trimmed = line.trimStart()
+    const indent = line.length - trimmed.length
+    if (trimmed.startsWith('- insert:')) {
+      inInsert = true
+      insertIndent = indent
+      continue
+    }
+    if (!inInsert) continue
+    if (indent <= insertIndent && trimmed !== '') {
+      inInsert = false
+      continue
+    }
+    const match = /^\s*- id:\s*(\S+)/.exec(line)
+    if (match) {
+      const id = match[1]
+      let disabled = false
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const next = lines[j] ?? ''
+        const nextTrimmed = next.trimStart()
+        const nextIndent = next.length - nextTrimmed.length
+        if (nextTrimmed === '' || nextIndent <= indent) break
+        if (nextTrimmed === 'disabled: true') {
+          disabled = true
+          break
+        }
+      }
+      if (!disabled) ids.push(id)
+    }
+  }
+  return ids
+}
 
 const tarIsGnu = (() => {
   const result = spawnSync(tar, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
@@ -105,10 +151,15 @@ try {
   const base = bundles.indexOf('@deepseek-ai/dsh-base')
   const memory = bundles.indexOf('@jacklika/dsh-memory')
   if (base < 0 || memory <= base) throw new Error('memory bundle must follow dsh-base')
-  const expectedIds = ['memory-scope', 'memory-queue', 'memory-git', 'tool-memory-filesystem', 'tool-memory-graph']
+  const expectedIds = await expectedEnabledPluginIds(bundlePatchPath)
   const dumped = runShell(dsh, ['--profile', profile, '--dump-config'], workspace)
   for (const id of expectedIds) {
     if (!dumped.includes(`id: ${id}`)) throw new Error(`dump-config missing ${id}`)
+  }
+  // The patch order is part of the waterfall contract; verify it is preserved.
+  const positions = expectedIds.map(id => dumped.indexOf(`id: ${id}`))
+  for (let i = 1; i < positions.length; i += 1) {
+    if (positions[i] <= positions[i - 1]) throw new Error(`dump-config order wrong for ${expectedIds[i]}`)
   }
 
   installed.dsh.profile.bundles = bundles.filter(name => name !== '@jacklika/dsh-memory')
