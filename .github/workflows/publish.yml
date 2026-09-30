@@ -72,13 +72,16 @@ jobs:
                 echo "$name@$version already published"
               else
                 echo "Publishing $name@$version"
-                if ! npm publish --access public --tag "$tag" "$tgz" 2>&1; then
+                if npm publish --access public --tag "$tag" "$tgz" 2>&1; then
+                  : # published successfully
+                else
                   publish_status=$?
-                  # npm may return E403 if the version was published but not yet
-                  # visible to npm view due to registry propagation; confirm.
+                  # npm may return E403/E409 if the version was published but
+                  # not yet visible to npm view due to registry propagation;
+                  # confirm before failing the job.
                   sleep 5
                   if npm view "$name@$version" version >/dev/null 2>&1; then
-                    echo "$name@$version already published (confirmed after E403)"
+                    echo "$name@$version already published (confirmed after E403/E409)"
                   else
                     exit "$publish_status"
                   fi
