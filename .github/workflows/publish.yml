@@ -116,3 +116,7 @@ jobs:
           publish jacklika-dsh-memory-mcp-*.tgz
           publish jacklika-dsh-memory-curator-*.tgz
           publish jacklika-dsh-memory-[0-9]*.tgz
+          publish jacklika-dsh-connector-core-*.tgz
+          publish jacklika-dsh-qoder-connect-*.tgz
+          publish jacklika-dsh-devin-connect-*.tgz
+          publish jacklika-dsh-connector-[0-9]*.tgz
