@@ -1,5 +1,7 @@
 import { CliLlmAdapter, createControlKey, createFilePatStore, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
-import type { GenerateOptions, LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, ModelModality, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
@@ -59,13 +61,64 @@ export const Config: Schema<DevinConfig> = Schema.object({
 export const name = 'llm-devin'
 export const inject = ['llm'] as const
 
+function modelCachePath(dataDir: string): string {
+  return join(dataDir, '.devin-models-cache.json')
+}
+
+function ensureProvider(models: readonly LlmModelInfo[], provider: string): LlmModelInfo[] {
+  return models.map((m) => (m.provider ? m : { ...m, provider }))
+}
+
+function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
+  try {
+    const text = readFileSync(path, 'utf8')
+    const parsed = JSON.parse(text) as unknown
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof (parsed[0] as Record<string, unknown>).id === 'string') {
+      return ensureProvider(parsed as LlmModelInfo[], 'devin')
+    }
+  } catch {
+    // ignore missing or malformed cache
+  }
+  return undefined
+}
+
 class DevinAdapter extends CliLlmAdapter {
-  constructor(variant: CliVariant, config: DevinConfig) {
+  private readonly cachePath: string
+
+  constructor(variant: CliVariant, config: DevinConfig, dataDir: string) {
     const configured = config.models
     const models = configured.length > 0
       ? configured.map((m) => ({ provider: variant.id, id: m.id, name: m.name, inputModalities: ['text' as const] }))
       : variant.defaultModels
     super({ variant: { ...variant, cliCommand: config.cliCommand, defaultModels: models }, config: config as Record<string, unknown> })
+    this.cachePath = modelCachePath(dataDir)
+  }
+
+  private async cachedModels(): Promise<readonly LlmModelInfo[]> {
+    try {
+      const text = await readFile(this.cachePath, 'utf8')
+      const parsed = JSON.parse(text) as unknown
+      if (Array.isArray(parsed) && parsed.length > 0 && typeof (parsed[0] as Record<string, unknown>).id === 'string') {
+        return ensureProvider(parsed as LlmModelInfo[], 'devin')
+      }
+    } catch {
+      // ignore missing or malformed cache
+    }
+    return this.variant.defaultModels
+  }
+
+  override async listModels(): Promise<readonly LlmModelInfo[]> {
+    return this.cachedModels()
+  }
+
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    const cached = await this.cachedModels()
+    const info = cached.find((m) => m.id === model)
+    const result: LlmResolvedModelInfo = { provider, id: model, name: info?.name ?? model }
+    if (info?.inputModalities !== undefined) {
+      result.inputModalities = info.inputModalities as readonly ModelModality[]
+    }
+    return result
   }
 
   protected buildArgs(options: GenerateOptions): string[] {
@@ -88,12 +141,13 @@ export function apply(ctx: any, config: DevinConfig) {
   if (!config.enabled) return
 
   const dataDir = devinDataDir(ctx)
-  const adapter = new DevinAdapter(DEVIN_VARIANT, config)
+  const cachePath = modelCachePath(dataDir)
+  const adapter = new DevinAdapter(DEVIN_VARIANT, config, dataDir)
   const releaseAdapter = ctx.llm.registerAdapter([DEVIN_VARIANT.id], adapter)
   const configured = config.models
-  const models = configured.length > 0
-    ? configured.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
-    : DEFAULT_MODELS.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
+  const initialModels = configured.length > 0
+    ? configured.map((m) => ({ provider: 'devin', id: m.id, name: m.name, inputModalities: ['text' as const] }))
+    : readModelCacheSync(cachePath) ?? DEFAULT_MODELS.map((m) => ({ provider: 'devin', id: m.id, name: m.name, inputModalities: ['text' as const] }))
 
   const releaseDirectory = ctx.llm.registerConfigurableProviders([
     {
@@ -101,7 +155,7 @@ export function apply(ctx: any, config: DevinConfig) {
       displayName: DEVIN_VARIANT.displayName,
       settingsNs: 'devin',
       settingsPath: [],
-      models,
+      models: initialModels,
     },
   ])
 
@@ -115,6 +169,7 @@ export function apply(ctx: any, config: DevinConfig) {
       envToken: DEVIN_VARIANT.envToken,
       statusPath: DEVIN_VARIANT.statusPath,
       authPath: DEVIN_VARIANT.authPath,
+      modelsCachePath: cachePath,
       defaultModels: DEFAULT_MODELS.map((m) => ({ id: m.id, name: m.name })),
       store: createFilePatStore({
         filePath: join(dataDir, '.devin-auth.json'),

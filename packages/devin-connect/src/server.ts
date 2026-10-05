@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   hostIsLoopback,
@@ -22,6 +23,7 @@ interface DevinRuntime {
   authPath: string
   store: PatStore
   authKey: string
+  modelsCachePath: string
   defaultModels: { id: string; name: string }[]
 }
 
@@ -46,6 +48,14 @@ async function buildStatus(runtime: DevinRuntime): Promise<unknown> {
     fetchDevinUsage(pat).catch(() => undefined),
   ])
   const models = liveModels.length > 0 ? liveModels : runtime.defaultModels
+  if (liveModels.length > 0) {
+    try {
+      const modelsWithProvider = models.map((m) => ({ ...m, provider: 'devin' }))
+      await writeFile(runtime.modelsCachePath, JSON.stringify(modelsWithProvider, null, 2), { mode: 0o600 })
+    } catch {
+      // cache write is best-effort
+    }
+  }
 
   return {
     status: 'signed-in',
