@@ -8,11 +8,16 @@ import { ProviderPane } from './ProviderPane.tsx'
 import { RootPane } from './RootPane.tsx'
 import { StatusBlock } from './StatusBlock.tsx'
 
+const MENU_MIN_WIDTH = 360
+const MENU_MAX_HEIGHT = 560
+const MENU_MARGIN = 8
+
 export function ModelSelector({ locked, available, directory, load, select, t }: ModelProviderSelectProps): JSX.Element | null {
   const state = useSyncExternalStore((fn) => directory.subscribe(fn), () => directory.getSnapshot())
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<Pane>('root')
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null)
   const lastActionRef = useRef<'load' | 'select'>('load')
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -96,6 +101,30 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
     load()
   }
 
+  const computeMenuPos = () => {
+    const trigger = triggerRef.current
+    if (trigger === null) return
+    const rect = trigger.getBoundingClientRect()
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    const width = Math.max(MENU_MIN_WIDTH, Math.min(420, rect.width))
+    let left = rect.left
+    if (left + width + MENU_MARGIN > viewportWidth) {
+      left = Math.max(MENU_MARGIN, viewportWidth - width - MENU_MARGIN)
+    }
+    const maxHeight = Math.min(MENU_MAX_HEIGHT, Math.max(240, viewportHeight * 0.75))
+    let top = rect.bottom + 6
+    if (top + maxHeight + MENU_MARGIN > viewportHeight) {
+      const topSpace = rect.top - MENU_MARGIN - maxHeight
+      if (topSpace > MENU_MARGIN) {
+        top = topSpace
+      } else {
+        top = MENU_MARGIN
+      }
+    }
+    setMenuPos({ top, left, width, maxHeight })
+  }
+
   useEffect(() => {
     if (available) {
       lastActionRef.current = 'load'
@@ -109,6 +138,19 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
     }
     paneRef.current = pane
   }, [pane, open])
+
+  useEffect(() => {
+    if (!open) return
+    computeMenuPos()
+    const onScroll = () => computeMenuPos()
+    const onResize = () => computeMenuPos()
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -193,6 +235,23 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
     />
   )
 
+  const menuStyle: React.CSSProperties | undefined = menuPos
+    ? {
+        position: 'fixed',
+        top: menuPos.top,
+        left: menuPos.left,
+        width: menuPos.width,
+        maxHeight: menuPos.maxHeight,
+        zIndex: 1000,
+        overflow: 'auto',
+        background: '#fff',
+        border: '1px solid #e0e0e0',
+        borderRadius: 8,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+        padding: '10px 0',
+      }
+    : undefined
+
   return (
     <div ref={rootRef} style={rootStyle} onKeyDown={onRootKeyDown} onBlur={onBlur}>
       <button
@@ -212,7 +271,7 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
         {visibleEffortLabel !== undefined && <span style={triggerMutedStyle}>· {visibleEffortLabel}</span>}
         <span style={chevronStyle}>{open ? '▲' : '▼'}</span>
       </button>
-      {open && (
+      {open && menuStyle !== undefined && (
         <div id={`${id}-menu`} style={menuStyle} role="menu" aria-label={t('trigger.selectAria')}>
           {pane === 'root' && (
             <RootPane
@@ -273,6 +332,7 @@ const rootStyle: React.CSSProperties = {
   position: 'relative',
   display: 'inline-flex',
   alignItems: 'center',
+  maxWidth: '100%',
 }
 
 const triggerStyle: React.CSSProperties = {
@@ -287,36 +347,28 @@ const triggerStyle: React.CSSProperties = {
   fontSize: 13,
   lineHeight: '20px',
   color: '#333',
+  maxWidth: '100%',
+  overflow: 'hidden',
 }
 
 const triggerMainStyle: React.CSSProperties = {
   fontWeight: 500,
   color: '#111',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 }
 
 const triggerMutedStyle: React.CSSProperties = {
   color: '#888',
   fontSize: 12,
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
 }
 
 const chevronStyle: React.CSSProperties = {
   marginLeft: 4,
   fontSize: 10,
   color: '#999',
-}
-
-const menuStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 6px)',
-  right: 0,
-  zIndex: 1000,
-  minWidth: 320,
-  maxWidth: 420,
-  maxHeight: 520,
-  overflow: 'auto',
-  background: '#fff',
-  border: '1px solid #e0e0e0',
-  borderRadius: 8,
-  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-  padding: '10px 0',
+  flexShrink: 0,
 }
