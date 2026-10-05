@@ -15,13 +15,14 @@ export function apply(ctx: Context): void {
   ctx.effect(() => {
     try {
       const disposeDict = ctx.locale.register('devin', DEVIN_LOCALES)
-      const disposeSlot = ctx.slots.register({
-        name: 'settings.section',
-        id: 'devin',
-        order: 210,
-        label: 'Devin',
-        locale: 'devin',
-      } as const, DevinSettingsCard)
+      const disposeSlot = ctx.slots.inject('settings.section', () =>
+        ctx.slots.register({
+          name: 'settings.section',
+          id: 'devin',
+          order: 210,
+          label: 'Devin',
+          locale: 'devin',
+        } as const, DevinSettingsCard))
       return () => {
         disposeSlot()
         disposeDict()
