@@ -10,6 +10,7 @@ export interface ConnectorProviderStatus {
   avatarUrl?: string | undefined
   modelsCount?: number | undefined
   models?: string[] | undefined
+  modelGroups?: Record<string, string[]> | undefined
   quotaText?: string | undefined
   quotaPercent?: number | undefined
   quotaUsed?: number | undefined
@@ -66,6 +67,7 @@ export function setConnectorStatus(provider: ConnectorProviderStatus): void {
     current.signedIn !== provider.signedIn ||
     current.detail !== provider.detail ||
     current.modelsCount !== provider.modelsCount ||
+    current.modelGroups !== provider.modelGroups ||
     current.name !== provider.name ||
     current.quotaText !== provider.quotaText ||
     current.quotaPercent !== provider.quotaPercent ||

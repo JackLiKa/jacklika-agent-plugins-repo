@@ -18,13 +18,23 @@ function startStatusPoller(): () => void {
         const signedIn = value.status === 'signed-in'
         const detail = signedIn ? (value.user?.email ?? value.user?.name) : undefined
         const user = signedIn ? value.user : undefined
-        const models = signedIn && Array.isArray(value.models)
-          ? value.models.map((m) => {
-            if (typeof m === 'string') return m
+        const modelGroups: Record<string, string[]> = {}
+        const modelNames: string[] = []
+        if (signedIn && Array.isArray(value.models)) {
+          for (const m of value.models) {
+            if (typeof m === 'string') {
+              modelNames.push(m)
+              continue
+            }
             const item = m as Record<string, unknown>
-            return typeof item.name === 'string' ? item.name : String(item.id ?? '')
-          }).filter(Boolean)
-          : []
+            const name = typeof item.name === 'string' ? item.name : String(item.id ?? '')
+            const family = typeof item.family === 'string' ? item.family : 'Models'
+            if (!name) continue
+            modelNames.push(name)
+            if (!modelGroups[family]) modelGroups[family] = []
+            modelGroups[family].push(name)
+          }
+        }
         const credits = signedIn ? value.credits : undefined
         const total = credits?.total
         const used = credits?.used
@@ -39,8 +49,9 @@ function startStatusPoller(): () => void {
           signedIn,
           ...(detail ? { detail } : {}),
           ...(user ? { username: user.name, email: user.email } : {}),
-          modelsCount: models.length,
-          models,
+          modelsCount: modelNames.length,
+          models: modelNames,
+          modelGroups,
           ...(credits?.error
             ? { quotaText: `Quota: ${credits.error}` }
             : credits

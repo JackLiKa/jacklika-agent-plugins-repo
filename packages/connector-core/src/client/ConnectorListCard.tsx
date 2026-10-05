@@ -101,14 +101,30 @@ function ProviderDashboard({ provider, expanded, onToggle }: ProviderCardProps):
           {provider.models && provider.models.length > 0 && (
             <div style={{ marginTop: 12 }}>
               <div style={fieldLabelStyle}>Model list</div>
-              <ul style={modelListStyle}>
-                {provider.models.slice(0, 30).map((m) => (
-                  <li key={m} style={modelItemStyle}>{m}</li>
-                ))}
-                {provider.models.length > 30 && (
-                  <li style={mutedItemStyle}>... {provider.models.length - 30} more</li>
-                )}
-              </ul>
+              {provider.modelGroups && Object.keys(provider.modelGroups).length > 0 ? (
+                Object.entries(provider.modelGroups).map(([family, variants]) => (
+                  <div key={family} style={{ marginTop: 8 }}>
+                    <div style={familyLabelStyle}>{family}</div>
+                    <ul style={modelListStyle}>
+                      {variants.slice(0, 20).map((m) => (
+                        <li key={m} style={modelItemStyle}>{m}</li>
+                      ))}
+                      {variants.length > 20 && (
+                        <li style={mutedItemStyle}>... {variants.length - 20} more</li>
+                      )}
+                    </ul>
+                  </div>
+                ))
+              ) : (
+                <ul style={modelListStyle}>
+                  {provider.models.slice(0, 30).map((m) => (
+                    <li key={m} style={modelItemStyle}>{m}</li>
+                  ))}
+                  {provider.models.length > 30 && (
+                    <li style={mutedItemStyle}>... {provider.models.length - 30} more</li>
+                  )}
+                </ul>
+              )}
             </div>
           )}
         </>
@@ -346,6 +362,13 @@ const modelListStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 4,
+}
+
+const familyLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#222',
+  padding: '4px 0',
 }
 
 const modelItemStyle: React.CSSProperties = {

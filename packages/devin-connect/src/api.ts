@@ -53,6 +53,7 @@ export async function verifyDevinPat(pat: string): Promise<{ valid: boolean; use
 export interface DevinModel {
   id: string
   name: string
+  family?: string
 }
 
 async function runDevin(args: string[], pat?: string): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }> {
@@ -86,9 +87,6 @@ interface DevinCredentials {
 function devinCredentialsPath(): string {
   if (process.platform === 'win32') {
     return join(process.env.LOCALAPPDATA ?? homedir(), 'devin', 'credentials.toml')
-  }
-  if (process.platform === 'darwin') {
-    return join(homedir(), 'Library', 'Application Support', 'devin', 'credentials.toml')
   }
   return join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'devin', 'credentials.toml')
 }
@@ -213,7 +211,12 @@ function parseDevinCliModelCatalog(parsed: unknown): DevinModel[] {
       const v = raw as Record<string, unknown>
       const id = typeof v.model_uid === 'string' ? v.model_uid : typeof v.id === 'string' ? v.id : ''
       const name = typeof v.label === 'string' ? v.label : typeof v.name === 'string' ? v.name : id
-      if (id.trim().length > 0) models.push({ id: id.trim(), name: name.trim() || id.trim() })
+      const family = typeof f.family_label === 'string' ? f.family_label : undefined
+      if (id.trim().length > 0) {
+        const model: DevinModel = { id: id.trim(), name: name.trim() || id.trim() }
+        if (family) model.family = family
+        models.push(model)
+      }
     }
   }
   return models
