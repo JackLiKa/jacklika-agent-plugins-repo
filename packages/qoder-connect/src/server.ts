@@ -85,9 +85,9 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
   const [models, user, usage, plan, accountStatus] = await Promise.all([
     listQoderModels(pat, runtime.cliConfigDir).catch(() => [] as { id: string; name: string }[]),
     fetchQoderUser(pat, runtime.cliConfigDir).catch(() => undefined),
-    fetchQoderUsage(pat, runtime.region, runtime.cliConfigDir).catch(() => undefined),
-    fetchQoderPlan(pat, runtime.region, runtime.cliConfigDir).catch(() => undefined),
-    fetchQoderStatus(pat, runtime.region, runtime.cliConfigDir).catch(() => undefined),
+    fetchQoderUsage(pat, runtime.region).catch(() => undefined),
+    fetchQoderPlan(pat, runtime.region).catch(() => undefined),
+    fetchQoderStatus(pat, runtime.region).catch(() => undefined),
   ])
 
   return {

@@ -1,9 +1,5 @@
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { createCipheriv, createHash, publicEncrypt, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 
 export interface QoderModel {
   id: string
@@ -36,17 +32,6 @@ export interface QoderUsage {
   expiresAt?: string | undefined
 }
 
-const qoderRSAPublicKey = `-----BEGIN PUBLIC KEY-----
-MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDA8iMH5c02LilrsERw9t6Pv5Nc
-4k6Pz1EaDicBMpdpxKduSZu5OANqUq8er4GM95omAGIOPOh+Nx0spthYA2BqGz+l
-6HRkPJ7S236FZz73In/KVuLnwI8JJ2CbuJap8kvheCCZpmAWpb/cPx/3Vr/J6I17
-XcW+ML9FoCI6AOvOzwIDAQAB
------END PUBLIC KEY-----`
-
-const qoderIdeVersion = '1.1.47'
-const qoderCustomAlphabet = '_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!'
-const qoderStdAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-
 const qoderRegionEndpoints = {
   global: { openApi: 'https://openapi.qoder.sh' },
   china: { openApi: 'https://openapi.qoder.com.cn' },
@@ -64,58 +49,6 @@ interface QoderAuthState {
 }
 
 const jobTokenCache = new Map<string, QoderAuthState>()
-
-function aesEncrypt(plaintext: string, key: string): string {
-  const iv = Buffer.from(key, 'utf8')
-  const cipher = createCipheriv('aes-128-cbc', Buffer.from(key, 'utf8'), iv)
-  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
-  return encrypted.toString('base64')
-}
-
-function rsaEncryptKey(aesKey: string): string {
-  const keyBuffer = Buffer.from(aesKey, 'utf8')
-  const encrypted = publicEncrypt({ key: qoderRSAPublicKey, padding: 1 /* RSA_PKCS1_PADDING */ }, keyBuffer)
-  return encrypted.toString('base64')
-}
-
-function md5(data: string): string {
-  return createHash('md5').update(data, 'utf8').digest('hex')
-}
-
-function qoderEncodeBody(plaintext: string): string {
-  const std = Buffer.from(plaintext, 'utf8').toString('base64')
-  const n = std.length
-  const a = Math.floor(n / 3)
-  const rearranged = std.slice(n - a) + std.slice(a, n - a) + std.slice(0, a)
-  const table = new Uint8Array(256)
-  for (let i = 0; i < 256; i++) table[i] = i
-  for (let i = 0; i < 64; i++) {
-    table[qoderStdAlphabet.charCodeAt(i)] = qoderCustomAlphabet.charCodeAt(i)
-  }
-  table['='.charCodeAt(0)] = '$'.charCodeAt(0)
-  const source = Buffer.from(rearranged, 'latin1')
-  const target = Buffer.allocUnsafe(n)
-  for (let i = 0; i < n; i++) {
-    target[i] = table[source[i] ?? 0] ?? 0
-  }
-  return target.toString('latin1')
-}
-
-async function readMachineId(cliConfigDir: string): Promise<string> {
-  const userPath = join(process.env.HOME ?? process.env.USERPROFILE ?? '/', '.qoder', '.auth', 'machine_id')
-  const fallbackPath = join(cliConfigDir, '.qoder-machine-id')
-  for (const p of [userPath, fallbackPath]) {
-    if (existsSync(p)) {
-      try {
-        const value = await readFile(p, 'utf8')
-        if (value.trim()) return value.trim()
-      } catch {
-        // fall through
-      }
-    }
-  }
-  return randomUUID().replace(/-/g, '')
-}
 
 async function exchangePat(pat: string, region: QoderRegion): Promise<QoderAuthState> {
   const cached = jobTokenCache.get(`${region}:${pat}`)
@@ -172,56 +105,6 @@ async function fetchQoderUserInfo(jobToken: string, region: QoderRegion): Promis
     return await response.json() as { id?: string; name?: string; email?: string }
   } catch {
     return undefined
-  }
-}
-
-function buildCosyHeaders(
-  jobToken: string,
-  userId: string,
-  machineId: string,
-  url: string,
-  encodedBody: string,
-  timestamp = Math.floor(Date.now() / 1000),
-): Record<string, string> {
-  const aesKey = randomUUID().replace(/-/g, '').slice(0, 16)
-  const userInfo = JSON.stringify({
-    uid: userId,
-    security_oauth_token: jobToken,
-    name: '',
-    aid: '',
-    email: '',
-  })
-  const infoB64 = aesEncrypt(userInfo, aesKey)
-  const cosyKey = rsaEncryptKey(aesKey)
-  const cosyPayload = JSON.stringify({
-    version: 'v1',
-    requestId: randomUUID(),
-    info: infoB64,
-    cosyVersion: qoderIdeVersion,
-    ideVersion: '',
-  })
-  const payloadB64 = Buffer.from(cosyPayload, 'utf8').toString('base64')
-  const pathname = new URL(url).pathname
-  const sigPath = pathname.startsWith('/algo') ? pathname.slice(5) : pathname
-  const bodyHash = md5(encodedBody)
-  const bodyLen = Buffer.byteLength(encodedBody, 'utf8')
-  const sig = md5(`${payloadB64}\n${cosyKey}\n${timestamp}\n${encodedBody}\n${sigPath}`)
-  return {
-    Authorization: `Bearer COSY.${payloadB64}.${sig}`,
-    'Cosy-Key': cosyKey,
-    'Cosy-User': userId,
-    'Cosy-Date': String(timestamp),
-    'Cosy-Version': qoderIdeVersion,
-    'Cosy-Machineid': machineId,
-    'Cosy-Machinetoken': machineId,
-    'Cosy-Machinetype': '5',
-    'Cosy-Machineos': process.platform === 'win32' ? 'x86_64_windows' : process.platform === 'darwin' ? 'aarch64_linux' : 'x86_64_linux',
-    'Cosy-Clienttype': '5',
-    'Cosy-Clientip': '127.0.0.1',
-    'Cosy-Bodyhash': bodyHash,
-    'Cosy-Bodylength': String(bodyLen),
-    'Cosy-Sigpath': sigPath,
-    'Cosy-Data-Policy': 'disagree',
   }
 }
 
@@ -289,17 +172,16 @@ export async function verifyQoderPat(pat: string, cliConfigDir: string): Promise
 async function openApiJsonRequest<T>(
   pat: string,
   region: QoderRegion,
-  cliConfigDir: string,
   endpoint: string,
 ): Promise<T | undefined> {
   const auth = await exchangePat(pat, region)
-  const machineId = await readMachineId(cliConfigDir)
-  const body = ''
-  const encodedBody = qoderEncodeBody(body)
-  const headers = buildCosyHeaders(auth.jobToken, auth.userId, machineId, endpoint, encodedBody)
   const response = await fetch(endpoint, {
     method: 'GET',
-    headers,
+    headers: {
+      Authorization: `Bearer ${auth.jobToken}`,
+      Accept: 'application/json',
+      'accept-encoding': 'identity',
+    },
   })
   if (!response.ok) return undefined
   return (await response.json()) as T
@@ -308,10 +190,9 @@ async function openApiJsonRequest<T>(
 export async function fetchQoderUsage(
   pat: string,
   region: QoderRegion = 'global',
-  cliConfigDir: string = '',
 ): Promise<QoderUsage | undefined> {
   const openApi = qoderRegionEndpoints[region].openApi
-  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, cliConfigDir, `${openApi}/api/v2/quota/usage`)
+  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, `${openApi}/api/v2/quota/usage`)
   if (!raw || typeof raw !== 'object') return undefined
   return {
     userQuota: normalizeQuota(raw.userQuota),
@@ -339,10 +220,9 @@ export interface QoderPlan {
 export async function fetchQoderPlan(
   pat: string,
   region: QoderRegion = 'global',
-  cliConfigDir: string = '',
 ): Promise<QoderPlan | undefined> {
   const openApi = qoderRegionEndpoints[region].openApi
-  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, cliConfigDir, `${openApi}/api/v2/user/plan`)
+  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, `${openApi}/api/v2/user/plan`)
   if (!raw || typeof raw !== 'object') return undefined
   const userType = asString(raw.user_type ?? raw.userType)
   const planTierName = asString(raw.plan_tier_name ?? raw.planTierName ?? raw.plan_name ?? raw.planName)
@@ -370,10 +250,9 @@ export interface QoderAccountStatus {
 export async function fetchQoderStatus(
   pat: string,
   region: QoderRegion = 'global',
-  cliConfigDir: string = '',
 ): Promise<QoderAccountStatus | undefined> {
   const openApi = qoderRegionEndpoints[region].openApi
-  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, cliConfigDir, `${openApi}/api/v3/user/status`)
+  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, `${openApi}/api/v3/user/status`)
   if (!raw || typeof raw !== 'object') return undefined
   const featureSwitches = (raw.featureSwitches ?? raw.feature_switches) as Record<string, unknown> | undefined
   const teamSwitches = (raw.teamSwitches ?? raw.team_switches) as Record<string, unknown> | undefined
