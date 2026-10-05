@@ -94,6 +94,15 @@ function statusHandler(runtime: DevinRuntime) {
 
 function selectHandler(runtime: DevinRuntime) {
   return async (req: IncomingMessage, res: ServerResponse) => {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      })
+      res.end()
+      return
+    }
     if (req.method !== 'POST') {
       json(res, 405, { error: 'method not allowed' })
       return
