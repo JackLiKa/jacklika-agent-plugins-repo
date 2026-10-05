@@ -39,7 +39,11 @@ export function decodeModelId(compositeId: string): { baseModelId: string; param
 }
 
 export function selectionFor(group: CatalogGroup, model: CatalogModel, params: ModelParams = {}): Selection {
-  const reasoningEffort = params.reasoningEffort ?? model.reasoning?.defaultEffort
+  const supported = model.reasoning?.efforts ?? []
+  const chosen = params.reasoningEffort ?? model.reasoning?.defaultEffort
+  const reasoningEffort = supported.some((effort) => effort.id === chosen)
+    ? chosen
+    : model.reasoning?.defaultEffort
   return {
     provider: group.id,
     model: model.id,

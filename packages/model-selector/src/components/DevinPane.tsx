@@ -59,6 +59,8 @@ export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Eleme
   }, [sections, query])
 
   const selectModel = async (group: CatalogGroup, model: CatalogModel) => {
+    // eslint-disable-next-line no-console
+    console.log('[model-selector] Devin selectModel', group.id, model.id)
     const params: ModelParams = { contextWindow, reasoningEffort }
     await persistModelParams(group.id, model.id, params)
     onSelect(selectionFor(group, model, params))

@@ -50,6 +50,8 @@ export function QoderPane({ directory, onSelect, t }: QoderPaneProps): JSX.Eleme
   }, [groups, query])
 
   const selectModel = async (group: CatalogGroup, model: CatalogModel) => {
+    // eslint-disable-next-line no-console
+    console.log('[model-selector] Qoder selectModel', group.id, model.id)
     const params: ModelParams = { contextWindow, reasoningEffort }
     await persistModelParams(group.id, model.id, params)
     onSelect(selectionFor(group, model, params))

@@ -40,9 +40,13 @@ export function apply(ctx: any): void {
                 select: async (selection: Selection) => {
                   if (!available) return false
                   try {
-                    await directory.select(selection)
-                    return true
-                  } catch {
+                    const result = await directory.select(selection)
+                    // eslint-disable-next-line no-console
+                    console.log('[model-selector] directory.select result', result, selection)
+                    return result === true || result === undefined
+                  } catch (error) {
+                    // eslint-disable-next-line no-console
+                    console.error('[model-selector] directory.select error', error, selection)
                     return false
                   }
                 },
