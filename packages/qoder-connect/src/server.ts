@@ -20,6 +20,7 @@ interface QoderVariantRuntime {
   id: string
   envToken: string
   cliConfigDir: string
+  region: 'china' | 'global'
   statusPath: string
   authPath: string
   probePath: string
@@ -65,7 +66,7 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
   const [models, user, usage] = await Promise.all([
     listQoderModels(pat, runtime.cliConfigDir).catch(() => [] as { id: string; name: string }[]),
     fetchQoderUser(pat, runtime.cliConfigDir).catch(() => undefined),
-    fetchQoderUsage(pat).catch(() => undefined),
+    fetchQoderUsage(pat, runtime.region, runtime.cliConfigDir).catch(() => undefined),
   ])
 
   return {

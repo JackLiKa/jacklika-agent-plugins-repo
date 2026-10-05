@@ -20,6 +20,7 @@ function qoderDataDir(ctx: any): string {
 
 interface QoderVariant extends CliVariant {
   cliConfigDir: string
+  region: 'china' | 'global'
   statusPath: string
   authPath: string
   probePath: string
@@ -33,6 +34,7 @@ function makeQoderVariants(dataDir: string): QoderVariant[] {
       cliCommand: 'qodercli',
       envToken: 'QODER_PERSONAL_ACCESS_TOKEN',
       cliConfigDir: join(dataDir, 'qoder', 'qoder-config'),
+      region: 'china',
       defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder' })),
       statusPath: '/plugins/dsh-qoder-connect/status',
       authPath: '/plugins/dsh-qoder-connect/auth',
@@ -44,6 +46,7 @@ function makeQoderVariants(dataDir: string): QoderVariant[] {
       cliCommand: 'qodercli',
       envToken: 'QODER_GLOBAL_PERSONAL_ACCESS_TOKEN',
       cliConfigDir: join(dataDir, 'qoder-global', 'qoder-config'),
+      region: 'global',
       defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder-global' })),
       statusPath: '/plugins/dsh-qoder-connect/global/status',
       authPath: '/plugins/dsh-qoder-connect/global/auth',
@@ -166,6 +169,7 @@ export function apply(ctx: any, config: QoderConfig) {
       id: variant.id,
       envToken: variant.envToken,
       cliConfigDir: variant.cliConfigDir,
+      region: variant.region,
       statusPath: variant.statusPath,
       authPath: variant.authPath,
       probePath: variant.probePath,

@@ -22,6 +22,7 @@ interface DevinRuntime {
   authPath: string
   store: PatStore
   authKey: string
+  defaultModels: { id: string; name: string }[]
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -40,7 +41,8 @@ async function buildStatus(runtime: DevinRuntime): Promise<unknown> {
   }
 
   const orgs = user?.organizations ?? []
-  const models = await listDevinModels(pat).catch(() => [] as { id: string; name: string }[])
+  const liveModels = await listDevinModels(pat).catch(() => [] as { id: string; name: string }[])
+  const models = liveModels.length > 0 ? liveModels : runtime.defaultModels
 
   return {
     status: 'signed-in',

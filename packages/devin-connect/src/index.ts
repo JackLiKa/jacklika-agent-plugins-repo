@@ -109,6 +109,7 @@ export function apply(ctx: any, config: DevinConfig) {
       envToken: DEVIN_VARIANT.envToken,
       statusPath: DEVIN_VARIANT.statusPath,
       authPath: DEVIN_VARIANT.authPath,
+      defaultModels: DEFAULT_MODELS.map((m) => ({ id: m.id, name: m.name })),
       store: createFilePatStore({
         filePath: join(dataDir, '.devin-auth.json'),
         envToken: DEVIN_VARIANT.envToken,
