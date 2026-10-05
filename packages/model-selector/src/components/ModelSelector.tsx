@@ -8,8 +8,8 @@ import { OriginalPane } from './OriginalPane.tsx'
 import { QoderPane } from './QoderPane.tsx'
 import { StatusBlock } from './StatusBlock.tsx'
 
-const MENU_MIN_WIDTH = 460
-const MENU_MAX_HEIGHT = 560
+const MENU_MIN_WIDTH = 480
+const MENU_MAX_HEIGHT = 620
 const MENU_MARGIN = 8
 const MODE_KEY = '@jacklika/dsh-model-selector:mode'
 

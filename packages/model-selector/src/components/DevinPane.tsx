@@ -32,14 +32,31 @@ export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Eleme
     if (params.reasoningEffort !== undefined) setReasoningEffort(params.reasoningEffort)
   }, [currentModelId])
 
-  const groups = useMemo(() => buildDevinSections(directory.groups, directory.current), [directory.groups, directory.current])
-  const filteredGroups = useMemo(() => {
+  const currentModel = useMemo(() => {
+    if (currentModelId === undefined) return undefined
+    for (const group of directory.groups) {
+      if (group.id !== providerId) continue
+      const found = group.models.find((m) => m.id === currentModelId)
+      if (found) return found
+    }
+    return undefined
+  }, [directory.groups, currentModelId])
+
+  const sections = useMemo(() => buildFamilySections(directory.groups, providerId), [directory.groups])
+  const filteredSections = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return groups
-    return groups
-      .map((section) => ({ ...section, models: section.models.filter((m) => m.model.name.toLowerCase().includes(q)) }))
+    if (!q) return sections
+    return sections
+      .map((section) => ({
+        ...section,
+        models: section.models.filter((m) =>
+          m.name.toLowerCase().includes(q) ||
+          m.id.toLowerCase().includes(q) ||
+          (m.description ?? '').toLowerCase().includes(q)
+        ),
+      }))
       .filter((section) => section.models.length > 0)
-  }, [groups, query])
+  }, [sections, query])
 
   const selectModel = async (group: CatalogGroup, model: CatalogModel) => {
     const params: ModelParams = { contextWindow, reasoningEffort }
@@ -49,6 +66,7 @@ export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Eleme
 
   return (
     <div style={containerStyle}>
+      <SelectedModelCard model={currentModel} contextWindow={contextWindow} reasoningEffort={reasoningEffort} t={t} />
       <div style={paramsPanelStyle}>
         <ParamRow label={t('devin.contextWindow')} options={CONTEXT_OPTIONS} value={contextWindow} onChange={setContextWindow} />
         <ParamRow label={t('devin.reasoningEffort')} options={EFFORT_OPTIONS.map((e) => ({ label: e, value: e }))} value={reasoningEffort} onChange={setReasoningEffort} />
@@ -64,11 +82,66 @@ export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Eleme
         />
       </div>
       <div style={listStyle}>
-        {filteredGroups.map((section) => (
-          <Section key={section.title} title={section.title} models={section.models} current={directory.current} onSelect={selectModel} />
+        {filteredSections.map((section) => (
+          <Section
+            key={section.family}
+            family={section.family}
+            models={section.models}
+            selectedModelId={currentModelId}
+            onSelect={selectModel}
+          />
         ))}
-        {filteredGroups.length === 0 && <div style={emptyStyle}>{t('devin.empty')}</div>}
+        {filteredSections.length === 0 && <div style={emptyStyle}>{t('devin.empty')}</div>}
       </div>
+    </div>
+  )
+}
+
+function SelectedModelCard({
+  model,
+  contextWindow,
+  reasoningEffort,
+  t,
+}: {
+  model: CatalogModel | undefined
+  contextWindow: number
+  reasoningEffort: string
+  t: ModelProviderSelectProps['t']
+}): JSX.Element {
+  const info = useMemo(() => (model ? parseDevinDescription(model.description) : { contextText: '', inputPrice: '', cachedPrice: '', outputPrice: '', capability: 0 }), [model])
+  return (
+    <div style={cardStyle}>
+      <div style={cardHeaderStyle}>
+        <span style={cardIconStyle}>⚙</span>
+        <div style={cardTitleStyle}>
+          <div style={cardNameStyle}>{model?.name ?? t('devin.noSelection')}</div>
+          <div style={cardContextStyle}>{info.contextText || `Context ${formatNumber(contextWindow)}`}</div>
+        </div>
+      </div>
+      <div style={cardReasoningStyle}>
+        <span style={cardReasoningLabelStyle}>{t('devin.reasoningEffort')}</span>
+        <span style={cardReasoningValueStyle}>{reasoningEffort}</span>
+      </div>
+      <div style={costRowStyle}>
+        <CostPill label={t('devin.input')} value={info.inputPrice || '—'} />
+        <CostPill label={t('devin.cached')} value={info.cachedPrice || '—'} />
+        <CostPill label={t('devin.output')} value={info.outputPrice || '—'} />
+      </div>
+      <div style={meterPanelStyle}>
+        <span style={meterLabelStyle}>{t('devin.current')}</span>
+        <div style={meterTrackStyle}>
+          <div style={{ ...meterFillStyle, width: `${Math.max(5, Math.round(info.capability * 100))}%` }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CostPill({ label, value }: { label: string; value: string }): JSX.Element {
+  return (
+    <div style={costPillStyle}>
+      <div style={costPillLabelStyle}>{label}</div>
+      <div style={costPillValueStyle}>{value}</div>
     </div>
   )
 }
@@ -107,90 +180,72 @@ function ParamRow<T extends string | number>({
 }
 
 function Section({
-  title,
+  family,
   models,
-  current,
+  selectedModelId,
   onSelect,
 }: {
-  title: string
-  models: { group: CatalogGroup; model: CatalogModel }[]
-  current: DirectorySnapshot['current']
+  family: string
+  models: CatalogModel[]
+  selectedModelId: string | undefined
   onSelect: (group: CatalogGroup, model: CatalogModel) => void
 }): JSX.Element {
   return (
     <div style={sectionStyle}>
-      <div style={sectionTitleStyle}>{title}</div>
-      {models.map(({ group, model }) => {
-        const selected = current?.provider === group.id && current.model === model.id
-        return <DevinRow key={`${group.id}-${model.id}`} group={group} model={model} selected={selected} onSelect={onSelect} />
+      <div style={sectionTitleStyle}>{family}</div>
+      {models.map((model) => {
+        const selected = selectedModelId === model.id
+        return <DevinRow key={model.id} model={model} selected={selected} onSelect={onSelect} />
       })}
     </div>
   )
 }
 
 function DevinRow({
-  group,
   model,
   selected,
   onSelect,
 }: {
-  group: CatalogGroup
   model: CatalogModel
   selected: boolean
   onSelect: (group: CatalogGroup, model: CatalogModel) => void
 }): JSX.Element {
   const hue = stringHue(model.name)
   const free = isFreeModel(model)
+  const info = useMemo(() => parseDevinDescription(model.description), [model.description])
+  const group: CatalogGroup = { id: 'devin', name: 'Devin', models: [model] }
   return (
     <button type="button" style={selected ? selectedRowStyle : rowStyle} onClick={() => onSelect(group, model)}>
       <span style={iconStyle}>⚙</span>
       <div style={infoStyle}>
         <div style={nameRowStyle}>
-          <span style={nameStyle}>{model.name}</span>
+          <span style={nameStyle}>{model.name.replace(/^.*?›\s*/, '')}</span>
           {selected && <span style={checkStyle}>✓</span>}
         </div>
-        {model.description && <div style={descStyle}>{model.description}</div>}
+        {info.contextText && <div style={descStyle}>{info.contextText}</div>}
       </div>
       <div style={tagsStyle}>
         {free && <span style={freeTagStyle}>Free</span>}
         <div style={meterStyle} aria-hidden>
-          <div style={{ ...meterFillStyle, width: `${30 + (hue % 50)}%`, background: `hsl(${hue}, 70%, 55%)` }} />
+          <div style={{ ...meterFillStyle, width: `${Math.max(10, Math.round(info.capability * 100))}%`, background: `hsl(${hue}, 70%, 55%)` }} />
         </div>
       </div>
     </button>
   )
 }
 
-function buildDevinSections(groups: CatalogGroup[], current: DirectorySnapshot['current']) {
-  const currentBaseId = current?.model ?? null
-  const recentlyUsed: { group: CatalogGroup; model: CatalogModel }[] = []
-  const recommended: { group: CatalogGroup; model: CatalogModel }[] = []
-  const others: { group: CatalogGroup; model: CatalogModel }[] = []
-
+function buildFamilySections(groups: CatalogGroup[], providerId: string): { family: string; models: CatalogModel[] }[] {
+  const map = new Map<string, CatalogModel[]>()
   for (const group of groups) {
+    if (group.id !== providerId) continue
     for (const model of group.models) {
-      const entry = { group, model }
-      if (currentBaseId && model.id === currentBaseId) {
-        recentlyUsed.push(entry)
-      } else if (isRecommended(model)) {
-        recommended.push(entry)
-      } else {
-        others.push(entry)
-      }
+      const [family = 'Models'] = model.name.split(' › ')
+      const list = map.get(family) ?? []
+      list.push(model)
+      map.set(family, list)
     }
   }
-
-  const sections: { title: string; models: { group: CatalogGroup; model: CatalogModel }[] }[] = []
-  if (recentlyUsed.length) sections.push({ title: 'Recently Used', models: recentlyUsed })
-  if (recommended.length) sections.push({ title: 'Recommended', models: recommended })
-  if (others.length) sections.push({ title: 'All Models', models: others })
-  if (sections.length === 0) sections.push({ title: 'All Models', models: [] })
-  return sections
-}
-
-function isRecommended(model: CatalogModel): boolean {
-  const name = model.name.toLowerCase()
-  return name.includes('swe-2') || name.includes('opus') || name.includes('fable') || name.includes('astra') || name.includes('kimi')
+  return Array.from(map.entries()).map(([family, models]) => ({ family, models }))
 }
 
 function isFreeModel(model: CatalogModel): boolean {
@@ -204,12 +259,163 @@ function stringHue(name: string): number {
   return Math.abs(hash) % 360
 }
 
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${n / 1_000_000}M`
+  if (n >= 1_000) return `${n / 1_000}K`
+  return String(n)
+}
+
+function parseDevinDescription(description: string | undefined): {
+  contextText: string
+  inputPrice: string
+  cachedPrice: string
+  outputPrice: string
+  capability: number
+} {
+  const result = { contextText: '', inputPrice: '', cachedPrice: '', outputPrice: '', capability: 0 }
+  if (description === undefined) return result
+
+  const contextMatch = description.match(/Context\s+([\d,]+)/i)
+  if (contextMatch?.[1]) {
+    result.contextText = `Context ${contextMatch[1]}`
+    const raw = Number(contextMatch[1].replace(/,/g, ''))
+    if (!Number.isNaN(raw)) result.capability = Math.min(1, raw / 1_000_000)
+  }
+
+  const priceMatches = description.match(/\$([\d.]+)\s*\/\s*MTok(?:\s+In)?/gi)
+  if (priceMatches) {
+    result.inputPrice = priceMatches[0] ?? ''
+    if (priceMatches.length > 1) {
+      result.outputPrice = priceMatches[priceMatches.length - 1] ?? ''
+    }
+  }
+
+  if (result.capability === 0) {
+    result.capability = Math.min(1, stringHue(description) / 360)
+  }
+
+  return result
+}
+
 const containerStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   minWidth: 360,
   maxHeight: '100%',
   color: 'var(--ms-fg)',
+}
+
+const cardStyle: React.CSSProperties = {
+  padding: 14,
+  borderBottom: '1px solid var(--ms-border)',
+  background: 'var(--ms-active)',
+}
+
+const cardHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  marginBottom: 10,
+}
+
+const cardIconStyle: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: 8,
+  background: 'var(--ms-hover)',
+  fontSize: 18,
+  flexShrink: 0,
+}
+
+const cardTitleStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+}
+
+const cardNameStyle: React.CSSProperties = {
+  fontSize: 15,
+  fontWeight: 600,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const cardContextStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--ms-fg-muted)',
+}
+
+const cardReasoningStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  marginBottom: 10,
+}
+
+const cardReasoningLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--ms-fg-muted)',
+}
+
+const cardReasoningValueStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  padding: '2px 8px',
+  borderRadius: 4,
+  background: 'var(--ms-hover)',
+}
+
+const costRowStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 8,
+  marginBottom: 10,
+}
+
+const costPillStyle: React.CSSProperties = {
+  flex: 1,
+  padding: 8,
+  borderRadius: 6,
+  background: 'var(--ms-hover)',
+}
+
+const costPillLabelStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: 'var(--ms-fg-muted)',
+  marginBottom: 2,
+}
+
+const costPillValueStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 500,
+}
+
+const meterPanelStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+}
+
+const meterLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: 'var(--ms-fg-muted)',
+  width: 50,
+}
+
+const meterTrackStyle: React.CSSProperties = {
+  flex: 1,
+  height: 6,
+  borderRadius: 3,
+  background: 'var(--ms-border)',
+  overflow: 'hidden',
+}
+
+const meterFillStyle: React.CSSProperties = {
+  height: '100%',
+  borderRadius: 3,
+  background: 'linear-gradient(90deg, #22c55e, #a855f7)',
 }
 
 const paramsPanelStyle: React.CSSProperties = {
@@ -381,11 +587,6 @@ const meterStyle: React.CSSProperties = {
   background: 'var(--ms-border)',
   overflow: 'hidden',
   flexShrink: 0,
-}
-
-const meterFillStyle: React.CSSProperties = {
-  height: '100%',
-  borderRadius: 2,
 }
 
 const emptyStyle: React.CSSProperties = {
