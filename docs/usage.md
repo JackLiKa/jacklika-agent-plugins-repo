@@ -263,6 +263,36 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 
 `<vault>` defaults to `<session workspace>/.plugins/memory/`. Mount `skills/memory-vault` separately (`customSkillDirs`) or the model will not know the read-before-write and `baseVersion` conventions.
 
+## Connector plugins
+
+The repository also ships optional LLM-provider connectors:
+
+- `@jacklika/dsh-connector` — umbrella package that depends on `@jacklika/dsh-qoder-connect` and `@jacklika/dsh-devin-connect`.
+- `@jacklika/dsh-qoder-connect` — Qoder Global/China provider with PAT → jobToken authentication.
+- `@jacklika/dsh-devin-connect` — Devin provider with PAT + CLI session model discovery.
+- `@jacklika/dsh-connector-core` — shared status store, unified dashboard, and adapter base class.
+- `@jacklika/dsh-model-selector` — optional provider-first model selector seat.
+
+Install the connector umbrella into the same Profile as the memory Bundle:
+
+```sh
+dsh plugin --profile memory add @jacklika/dsh-connector@0.1.0-alpha.8
+```
+
+Or install them from a checkout path:
+
+```sh
+dsh plugin --profile memory add /absolute/path/to/jacklika-agent-plugins-repo/packages/connector
+```
+
+Then authenticate each provider through its settings card. The unified connector dashboard appears in the sidebar once at least one provider is signed in.
+
+To replace the composer model selector with the provider-first family-grouped selector, also add:
+
+```sh
+dsh plugin --profile memory add @jacklika/dsh-model-selector@0.1.0-alpha.0
+```
+
 ## Troubleshooting
 
 | Symptom | Action |

@@ -40,3 +40,23 @@ Each layer is a separate opt-in `tools/execute` waterfall decorator; `wiki_write
 
 - Serialization is per server process; independent MCP processes and direct filesystem writers are not covered — `baseVersion` and atomic rename remain the safety net.
 - MCP-origin writes do not produce git commits; `memory-git` runs on the dsh tool-calling path only.
+
+## Connector plugins
+
+`@jacklika/dsh-qoder-connect` and `@jacklika/dsh-devin-connect` wrap external LLM services as DSH LLM adapters. Each connector:
+
+1. Registers a DSH LLM adapter for its provider route (`qoder`, `qoder-china`, `devin`).
+2. Hosts loopback-only web routes under `/plugins/<id>/*` for status, token save/verify, and (for Devin) model-cache refresh.
+3. Publishes client-side status into the shared connector status store provided by `@jacklika/dsh-connector-core`.
+4. Reuses `CliLlmAdapter` so generation calls go through the provider's official CLI, with `--model` and `--max-output-tokens` mapped from DSH options.
+
+The host half never exposes full PATs in responses; only masked tails are sent to the UI.
+
+## Unified dashboard and model selector
+
+`@jacklika/dsh-connector-core` supplies:
+
+- `ConnectorListCard` — a sidebar card that appears only when at least one connector reports `signedIn`; clicking opens a unified dashboard.
+- The unified dashboard modal — accordion provider rows, per-account quota progress bars, and expandable model lists grouped by family.
+
+`@jacklika/dsh-model-selector` is an optional client plugin that replaces the default `conversation.input.model` seat. It reads the same per-session `ModelDirectory` as the native selector and submits selections through `directory.select()`, but presents a provider-first, family-grouped UI with model metadata (context window, cost).

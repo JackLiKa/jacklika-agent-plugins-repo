@@ -22,5 +22,15 @@ Harness checks every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer before regis
 | scope | `ToolCallId` from `@deepseek-ai/dsh-llm`; `ToolDispatchExecution`, `ToolExecutionResult`, and `ctx.tools.execute` from `@deepseek-ai/dsh-tools` |
 | queue and git | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools` |
 | filesystem, graph, vector, curator | `defineTool` / `ToolRunContext` from `@deepseek-ai/dsh-tools`; filesystem, graph, and curator also use `JsonValue` from `@deepseek-ai/dsh-util-values` |
+| connector-core, devin-connect, qoder-connect | `CliLlmAdapter`, DSH LLM model registration and resolution from `@deepseek-ai/dsh-llm`; web route primitives from `@deepseek-ai/cordis` |
+| model-selector | `slots`, `modelDirectories`, `sessions`, `locale` from DSH client services; React 18 |
 
-The Bundle itself contains only a Cordis patch and runtime dependencies on the seven member packages.
+The Bundle itself contains only a Cordis patch and runtime dependencies on the member packages.
+
+## Cross-platform notes
+
+- Vault paths are resolved with Node's `path` module and validated before any read/write.
+- Connector CLI adapters spawn a login shell (`/bin/bash -lc` on macOS/Linux, `cmd.exe /c` on Windows) so the user's PATH and environment are available.
+- Devin CLI credential discovery uses `~/.local/share/devin/credentials.toml` on macOS/Linux and `%LOCALAPPDATA%/devin/credentials.toml` on Windows.
+- Qoder config directories live under `~/.dsh/profiles/<profile>/.dsh-qoder-connect` on all platforms.
+- The full Windows/macOS/Linux CI matrix runs `install`, `typecheck`, `lint`, `test`, `build`, `test:multiprocess`, `test:pack`, and `test:profile` on every push.

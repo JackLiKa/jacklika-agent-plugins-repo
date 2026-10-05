@@ -6,7 +6,13 @@ Qoder 与 Devin 连接器插件的共享基础库。
 
 - `CliLlmAdapter` 基类：将官方 CLI 包装为 DSH LLM adapter。
 - Web 路由辅助：loopback 校验、安全 JSON 响应、请求体读取、常量时间控制密钥、敏感信息脱敏。
-- 宿主/客户端契约的 TypeScript 类型定义。
+- 共享的客户端连接器状态存储（`__jacklikaConnectorStatusStore`），供所有连接器 client bundle 写入，驱动一个统一面板。
+- 宿主/客户端契约的 TypeScript 类型定义，包括结构化额度账户与模型分组。
+
+## 客户端界面
+
+- **ConnectorListCard** — 只在至少一个 provider 已连接时出现的侧栏卡片；显示已连接供应商数量；点击打开统一面板弹窗。
+- **统一面板** — 手风琴式供应商行、每条额度账户的进度条、按 family 分组的可展开模型列表。
 
 ## 安全说明
 

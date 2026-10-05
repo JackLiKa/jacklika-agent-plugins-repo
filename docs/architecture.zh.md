@@ -40,3 +40,23 @@ wiki_write("notes/x.md")
 
 - 串行化按进程生效；多个独立 MCP 进程和直接文件写不在覆盖范围——`baseVersion` 与原子 rename 仍是兜底。
 - MCP 来源的写不产生 git commit；`memory-git` 只在 dsh tool-calling 路径上运行。
+
+## 连接器插件
+
+`@jacklika/dsh-qoder-connect` 与 `@jacklika/dsh-devin-connect` 将外部 LLM 服务包装为 DSH LLM adapter。每个连接器：
+
+1. 为自己的 provider 路由（`qoder`、`qoder-china`、`devin`）注册 DSH LLM adapter。
+2. 在 `/plugins/<id>/*` 下提供仅本机访问的宿主路由，用于状态查询、token 保存/校验，以及 Devin 的模型缓存刷新。
+3. 将客户端状态写入 `@jacklika/dsh-connector-core` 提供的共享连接器状态存储。
+4. 复用 `CliLlmAdapter`，使生成调用走官方 CLI，并把 DSH 选项映射为 `--model` 与 `--max-output-tokens`。
+
+宿主半区从不在响应中暴露完整 PAT；UI 只能看到脱敏后的 token 尾部。
+
+## 统一面板与模型选择器
+
+`@jacklika/dsh-connector-core` 提供：
+
+- `ConnectorListCard` — 侧栏卡片，仅在至少一个连接器报告 `signedIn` 时出现；点击打开统一面板。
+- 统一面板弹窗 — 手风琴式供应商行、每条额度账户的进度条、按 family 分组的可展开模型列表。
+
+`@jacklika/dsh-model-selector` 是可选的客户端插件，替换默认的 `conversation.input.model` 座位。它读取与原生选择器相同的 per-session `ModelDirectory`，并通过 `directory.select()` 提交选择，但以供应商优先、family 分组的形式展示模型元数据（上下文长度、价格）。
