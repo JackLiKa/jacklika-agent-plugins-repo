@@ -10,6 +10,8 @@ export interface DevinCredits {
   remain?: number
   unit?: string
   error?: string
+  text?: string
+  percent?: number
 }
 
 export interface DevinStatusSignedIn {

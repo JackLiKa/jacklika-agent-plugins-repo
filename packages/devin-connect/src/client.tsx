@@ -28,9 +28,11 @@ function startStatusPoller(): () => void {
         const credits = signedIn ? value.credits : undefined
         const total = credits?.total
         const used = credits?.used
-        const quotaPercent = typeof total === 'number' && total > 0 && typeof used === 'number'
-          ? Math.min(100, Math.round((used / total) * 100))
-          : undefined
+        const quotaPercent = credits?.percent ?? (
+          typeof total === 'number' && total > 0 && typeof used === 'number'
+            ? Math.min(100, Math.round((used / total) * 100))
+            : undefined
+        )
         setConnectorStatus({
           id: 'devin',
           name: 'Devin',
@@ -43,9 +45,9 @@ function startStatusPoller(): () => void {
             ? { quotaText: `Quota: ${credits.error}` }
             : credits
               ? {
-                  quotaText: credits.total !== undefined
+                  quotaText: credits.text ?? (credits.total !== undefined
                     ? `${used ?? 0} / ${credits.total} ${credits.unit ?? 'ACU'}`
-                    : (used !== undefined ? `${used} ${credits.unit ?? 'ACU'} used` : undefined),
+                    : (used !== undefined ? `${used} ${credits.unit ?? 'ACU'} used` : undefined)),
                   quotaPercent,
                   quotaUsed: used,
                   quotaTotal: total,

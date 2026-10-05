@@ -18,13 +18,49 @@ function formatNumber(n: number | undefined): string {
   return String(n)
 }
 
-function ProviderDashboard({ provider }: { provider: ConnectorProviderStatus }): JSX.Element {
+interface ProviderCardProps {
+  provider: ConnectorProviderStatus
+  expanded: boolean
+  onToggle: () => void
+}
+
+function QuotaBar({ provider }: { provider: ConnectorProviderStatus }): JSX.Element {
   const hasQuota = provider.quotaTotal !== undefined && provider.quotaTotal > 0
   const percent = provider.quotaPercent ?? 0
   const used = provider.quotaUsed ?? 0
   const total = provider.quotaTotal ?? 0
   const unlimited = provider.quotaText?.toLowerCase().includes('unlimited')
 
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <span style={fieldLabelStyle}>Quota</span>
+        <span style={fieldValueStyle}>
+          {provider.quotaText ?? (unlimited ? 'Unlimited' : 'Not available')}
+        </span>
+      </div>
+      {hasQuota && (
+        <div>
+          <div style={progressTrackStyle}>
+            <div
+              style={{
+                ...progressFillStyle,
+                width: `${clamp(percent, 0, 100)}%`,
+                backgroundColor: percent >= 90 ? '#ff4d4f' : percent >= 70 ? '#faad14' : '#52c41a',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, fontSize: 11, color: '#888' }}>
+            <span>{percent}% used</span>
+            <span>{formatNumber(used)} / {formatNumber(total)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProviderDashboard({ provider, expanded, onToggle }: ProviderCardProps): JSX.Element {
   const fields: { label: string; value: string | undefined }[] = [
     { label: 'Username', value: provider.username },
     { label: 'Email', value: provider.email },
@@ -36,65 +72,46 @@ function ProviderDashboard({ provider }: { provider: ConnectorProviderStatus }):
 
   return (
     <div style={providerCardStyle}>
-      <div style={providerHeaderStyle}>
+      <button type="button" style={providerHeaderButtonStyle} onClick={onToggle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={statusDotStyle} />
           <span style={providerNameStyle}>{provider.name}</span>
+          <span style={{ fontSize: 12, color: '#888' }}>{expanded ? '▼' : '▶'}</span>
         </div>
         {typeof provider.modelsCount === 'number' && provider.modelsCount > 0 && (
           <span style={modelBadgeStyle}>{provider.modelsCount} models</span>
         )}
-      </div>
+      </button>
 
-      {visibleFields.length > 0 && (
-        <div style={fieldGridStyle}>
-          {visibleFields.map((f) => (
-            <div key={f.label} style={fieldItemStyle}>
-              <span style={fieldLabelStyle}>{f.label}</span>
-              <span style={fieldValueStyle} title={f.value}>{f.value}</span>
+      {expanded && (
+        <>
+          {visibleFields.length > 0 && (
+            <div style={fieldGridStyle}>
+              {visibleFields.map((f) => (
+                <div key={f.label} style={fieldItemStyle}>
+                  <span style={fieldLabelStyle}>{f.label}</span>
+                  <span style={fieldValueStyle} title={f.value}>{f.value}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          )}
 
-      <div style={{ marginTop: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <span style={fieldLabelStyle}>Quota</span>
-          <span style={fieldValueStyle}>
-            {provider.quotaText ?? (unlimited ? 'Unlimited' : 'Not available')}
-          </span>
-        </div>
-        {hasQuota && (
-          <div>
-            <div style={progressTrackStyle}>
-              <div
-                style={{
-                  ...progressFillStyle,
-                  width: `${clamp(percent, 0, 100)}%`,
-                  backgroundColor: percent >= 90 ? '#ff4d4f' : percent >= 70 ? '#faad14' : '#52c41a',
-                }}
-              />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11, color: '#888' }}>
-              <span>{formatNumber(used)} used</span>
-              <span>{formatNumber(total)} total</span>
-            </div>
-          </div>
-        )}
-      </div>
+          <QuotaBar provider={provider} />
 
-      {provider.models && provider.models.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <div style={fieldLabelStyle}>Model list</div>
-          <ul style={modelListStyle}>
-            {provider.models.slice(0, 20).map((m) => (
-              <li key={m} style={modelItemStyle}>{m}</li>
-            ))}
-            {provider.models.length > 20 && (
-              <li style={mutedItemStyle}>... {provider.models.length - 20} more</li>
-            )}
-          </ul>
-        </div>
+          {provider.models && provider.models.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={fieldLabelStyle}>Model list</div>
+              <ul style={modelListStyle}>
+                {provider.models.slice(0, 30).map((m) => (
+                  <li key={m} style={modelItemStyle}>{m}</li>
+                ))}
+                {provider.models.length > 30 && (
+                  <li style={mutedItemStyle}>... {provider.models.length - 30} more</li>
+                )}
+              </ul>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -102,6 +119,7 @@ function ProviderDashboard({ provider }: { provider: ConnectorProviderStatus }):
 
 export function ConnectorListCard({ wide: _wide }: ConnectorListCardProps): JSX.Element | null {
   const [open, setOpen] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | undefined>(undefined)
   const state = useSyncExternalStore(onConnectorStatusChange, connectorStatus)
 
   const providers = Object.values(state.providers).filter((p) => p.signedIn)
@@ -129,7 +147,12 @@ export function ConnectorListCard({ wide: _wide }: ConnectorListCardProps): JSX.
             </div>
             <div style={modalBodyStyle}>
               {providers.map((provider) => (
-                <ProviderDashboard key={provider.id} provider={provider} />
+                <ProviderDashboard
+                  key={provider.id}
+                  provider={provider}
+                  expanded={expandedId === provider.id}
+                  onToggle={() => setExpandedId(expandedId === provider.id ? undefined : provider.id)}
+                />
               ))}
             </div>
           </div>
@@ -242,11 +265,17 @@ const providerCardStyle: React.CSSProperties = {
   background: '#fafafa',
 }
 
-const providerHeaderStyle: React.CSSProperties = {
+const providerHeaderButtonStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
+  width: '100%',
+  padding: 0,
   marginBottom: 10,
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  textAlign: 'left',
 }
 
 const statusDotStyle: React.CSSProperties = {
