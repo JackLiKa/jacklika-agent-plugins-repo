@@ -28,6 +28,7 @@ const DEVIN_VARIANT: CliVariant & {
   displayName: 'Devin',
   cliCommand: 'devin',
   envToken: 'DEVIN_API_KEY',
+  clearEnv: ['DEVIN_API_KEY', 'DEVIN_MODEL'],
   defaultModels: DEFAULT_MODELS,
   statusPath: '/plugins/dsh-devin-connect/status',
   authPath: '/plugins/dsh-devin-connect/auth',
@@ -244,6 +245,17 @@ class DevinAdapter extends CliLlmAdapter {
       streamEnded = true
       wake()
     })
+    // The agent's MCP/tool children can inherit the stdout pipe and keep it
+    // open after the main process exits, so treat process exit as end-of-
+    // stream rather than relying on `rl 'close'` alone.
+    let exited = false
+    const exitPromise = new Promise<{ code: number | null }>((resolve) => {
+      child.once('exit', (code) => {
+        exited = true
+        wake()
+        resolve({ code })
+      })
+    })
 
     const sessionRef: { id?: string } = {}
     const abortHandler = () => {
@@ -261,7 +273,7 @@ class DevinAdapter extends CliLlmAdapter {
       new Promise<Record<string, unknown> | null>((resolve) => {
         const check = () => {
           if (notifications.length > 0) return resolve(notifications.shift()!)
-          if (streamEnded || finished) return resolve(null)
+          if (streamEnded || finished || exited) return resolve(null)
           notifyWaiter = check
         }
         check()
@@ -333,11 +345,17 @@ class DevinAdapter extends CliLlmAdapter {
 
       if (promptError) throw promptError
       if (!finished) {
-        throw new Error('devin acp terminated before the prompt completed')
-      }
-      const stderr = await stderrPromise
-      if (child.exitCode !== 0 && child.exitCode !== null) {
-        throw new Error(`devin exited with ${child.exitCode}${stderr ? `: ${stderr}` : ''}`)
+        const { code } = await Promise.race([
+          exitPromise,
+          new Promise<{ code: number | null }>((resolve) => setTimeout(() => resolve({ code: null }), 2000)),
+        ])
+        const stderr = await Promise.race([
+          stderrPromise,
+          new Promise<string>((resolve) => setTimeout(() => resolve(''), 2000)),
+        ])
+        throw new Error(
+          `devin acp terminated before the prompt completed${code !== null ? ` (exit ${code})` : ''}${stderr ? `: ${stderr}` : ''}`,
+        )
       }
       const usage = promptResult?.usage as Record<string, unknown> | undefined
       if (usage) {
