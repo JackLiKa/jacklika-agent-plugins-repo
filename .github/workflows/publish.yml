@@ -105,7 +105,12 @@ jobs:
               # dist-tag add to avoid transient 404s on brand-new scoped packages.
               # New scoped packages may inherit restricted visibility from the
               # org default; ensure every published package is publicly installable.
-              npm access public "$name" >/dev/null 2>&1 || true
+              echo "Setting public access for $name..."
+              if npm access public "$name" 2>&1; then
+                echo "Public access set for $name"
+              else
+                echo "WARN: could not set public access for $name (see above)"
+              fi
             done
           }
 
