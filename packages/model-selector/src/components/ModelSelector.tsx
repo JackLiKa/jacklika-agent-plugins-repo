@@ -21,6 +21,7 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
   const lastActionRef = useRef<'load' | 'select'>('load')
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const paneRef = useRef(pane)
   const id = useId()
@@ -110,8 +111,11 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
     const width = Math.max(MENU_MIN_WIDTH, rect.width)
     const maxHeight = Math.min(MENU_MAX_HEIGHT, Math.max(240, viewportHeight * 0.75))
 
+    // Use the menu's real rendered height so it sits flush above the trigger with no extra gap.
+    const menuHeight = menuRef.current?.getBoundingClientRect().height ?? maxHeight
+
     // Prefer above the trigger, since the selector sits at the bottom of the composer.
-    let top = rect.top - maxHeight - 6
+    let top = rect.top - menuHeight - 6
     if (top < MENU_MARGIN) {
       top = rect.bottom + 6
     }
@@ -145,12 +149,20 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
 
   useEffect(() => {
     if (!open) return
-    computeMenuPos()
+    // Run a frame loop while the menu is open so it follows the trigger if the
+    // composer layout changes (sidebar resizes, zoom, window resize, etc.).
+    let rafId = 0
+    const tick = () => {
+      computeMenuPos()
+      rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
     const onScroll = () => computeMenuPos()
     const onResize = () => computeMenuPos()
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', onResize)
     return () => {
+      cancelAnimationFrame(rafId)
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onResize)
     }
@@ -276,7 +288,7 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
         <span style={chevronStyle}>{open ? '▲' : '▼'}</span>
       </button>
       {open && menuStyle !== undefined && (
-        <div id={`${id}-menu`} style={menuStyle} role="menu" aria-label={t('trigger.selectAria')}>
+        <div ref={menuRef} id={`${id}-menu`} style={menuStyle} role="menu" aria-label={t('trigger.selectAria')}>
           {pane === 'root' && (
             <RootPane
               current={state.current}
