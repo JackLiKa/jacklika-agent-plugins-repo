@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-qoder-connect",
   "description": "Qoder CLI wrapper as a DeepSeek Harness LLM provider (CN and Global variants)",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "publishConfig": {
     "access": "public"
   },
