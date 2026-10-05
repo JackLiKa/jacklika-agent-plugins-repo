@@ -1,5 +1,5 @@
-import '@deepseek-ai/dsh-client-locale'
-import '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@deepseek-ai/dsh-client-locale'
+import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type { BuiltInLocaleId } from '@deepseek-ai/dsh-client-locale'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
