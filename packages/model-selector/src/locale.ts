@@ -36,6 +36,29 @@ export const en = {
     action: 'Failed: {{message}}',
   },
   retry: 'Retry',
+  mode: {
+    original: 'Original',
+    replica: 'Replica',
+  },
+  popup: {
+    title: 'Model selector',
+  },
+  original: {
+    search: 'Search models...',
+    empty: 'No models found.',
+  },
+  devin: {
+    search: 'Search all models',
+    empty: 'No models found.',
+  },
+  qoder: {
+    search: 'Search models...',
+    empty: 'No models found.',
+    discount: 'Off-peak discount starts in',
+  },
+  replica: {
+    empty: 'No providers available.',
+  },
 }
 
 export const zh = {
@@ -74,4 +97,27 @@ export const zh = {
     action: '失败：{{message}}',
   },
   retry: '重试',
+  mode: {
+    original: '原版',
+    replica: '复刻',
+  },
+  popup: {
+    title: '模型选择器',
+  },
+  original: {
+    search: '搜索模型...',
+    empty: '未找到模型。',
+  },
+  devin: {
+    search: '搜索所有模型',
+    empty: '未找到模型。',
+  },
+  qoder: {
+    search: '搜索模型...',
+    empty: '未找到模型。',
+    discount: '错峰折扣将于',
+  },
+  replica: {
+    empty: '没有可用的供应商。',
+  },
 }

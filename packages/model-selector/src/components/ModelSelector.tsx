@@ -1,29 +1,26 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { useKeyboardNavigation } from '../hooks/useKeyboardNavigation.ts'
-import { findCurrentChoice, selectionFor, sortGroupsForCurrent } from '../model/selection.ts'
-import type { Choice, ModelProviderSelectProps, Pane, Selection } from '../model/types.ts'
-import { EffortPane } from './EffortPane.tsx'
-import { ModelPane } from './ModelPane.tsx'
-import { ProviderPane } from './ProviderPane.tsx'
-import { RootPane } from './RootPane.tsx'
+import { findCurrentChoice, selectionFor } from '../model/selection.ts'
+import type { Choice, ModelProviderSelectProps, Selection, SelectorMode } from '../model/types.ts'
+import { DevinPane } from './DevinPane.tsx'
+import { ModeToggle } from './ModeToggle.tsx'
+import { OriginalPane } from './OriginalPane.tsx'
+import { QoderPane } from './QoderPane.tsx'
 import { StatusBlock } from './StatusBlock.tsx'
 
 const MENU_MIN_WIDTH = 360
 const MENU_MAX_HEIGHT = 560
 const MENU_MARGIN = 8
+const MODE_KEY = '@jacklika/dsh-model-selector:mode'
 
 export function ModelSelector({ locked, available, directory, load, select, t }: ModelProviderSelectProps): JSX.Element | null {
   const state = useSyncExternalStore((fn) => directory.subscribe(fn), () => directory.getSnapshot())
   const [open, setOpen] = useState(false)
-  const [pane, setPane] = useState<Pane>('root')
-  const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
+  const [mode, setMode] = useState<SelectorMode>(() => loadMode())
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null)
   const lastActionRef = useRef<'load' | 'select'>('load')
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
-  const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
-  const paneRef = useRef(pane)
   const id = useId()
 
   const choices: Choice[] = useMemo(
@@ -39,62 +36,10 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
   )
 
   const currentChoice = findCurrentChoice(choices, state.current)
-  const reasoning = currentChoice?.model.reasoning
-  const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
-  const effortIsCustom = effectiveEffort !== undefined && effectiveEffort !== reasoning?.defaultEffort
-  const effortLabel =
-    reasoning === undefined
-      ? undefined
-      : effectiveEffort === undefined
-        ? t('effort.providerDefault')
-        : reasoning.efforts.find((level) => level.id === effectiveEffort)?.name ?? effectiveEffort
-  const visibleEffortLabel = effortIsCustom ? effortLabel : undefined
-
   const modelLabel = currentChoice?.model.name ?? t('trigger.fallback')
   const providerLabel = currentChoice?.group.name
-  const triggerLabel =
-    providerLabel === undefined
-      ? visibleEffortLabel === undefined
-        ? modelLabel
-        : `${modelLabel} · ${visibleEffortLabel}`
-      : visibleEffortLabel === undefined
-        ? `${modelLabel} · ${providerLabel}`
-        : `${modelLabel} · ${providerLabel} · ${visibleEffortLabel}`
-
-  const triggerAria =
-    currentChoice === undefined
-      ? t('trigger.selectAria')
-      : effortLabel === undefined
-        ? t('trigger.aria', { model: modelLabel, provider: providerLabel })
-        : t('trigger.ariaEffort', { model: modelLabel, provider: providerLabel, effort: effortLabel })
-
-  const effortChoices: { key: string; effort?: string; label: string; description?: string }[] = useMemo(() => {
-    if (reasoning === undefined) return []
-    const result: { key: string; effort?: string; label: string; description?: string }[] = []
-    if (reasoning.defaultEffort === undefined) {
-      result.push({ key: 'provider-default', label: t('effort.providerDefault') })
-    }
-    for (const effort of reasoning.efforts) {
-      const entry: { key: string; effort: string; label: string; description?: string } = {
-        key: `effort:${effort.id}`,
-        effort: effort.id,
-        label: effort.name,
-      }
-      if (effort.description !== undefined) entry.description = effort.description
-      result.push(entry)
-    }
-    return result
-  }, [reasoning, t])
-
-  const providerGroups = useMemo(
-    () => sortGroupsForCurrent(state.groups, state.current?.provider),
-    [state.groups, state.current?.provider],
-  )
-
-  const activeProviderGroup = useMemo(
-    () => state.groups.find((group) => group.id === selectedProvider),
-    [state.groups, selectedProvider],
-  )
+  const triggerLabel = providerLabel === undefined ? modelLabel : `${modelLabel} · ${providerLabel}`
+  const triggerAria = currentChoice === undefined ? t('trigger.selectAria') : t('trigger.aria', { model: modelLabel, provider: providerLabel })
 
   const busy = state.status === 'selecting'
   const reload = () => {
@@ -110,11 +55,8 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
     const viewportHeight = window.innerHeight
     const width = Math.max(MENU_MIN_WIDTH, rect.width)
     const maxHeight = Math.min(MENU_MAX_HEIGHT, Math.max(240, viewportHeight * 0.75))
-
-    // Use the menu's real rendered height so it sits flush above the trigger with no extra gap.
     const menuHeight = menuRef.current?.getBoundingClientRect().height ?? maxHeight
 
-    // Prefer above the trigger, since the selector sits at the bottom of the composer.
     let top = rect.top - menuHeight - 6
     if (top < MENU_MARGIN) {
       top = rect.bottom + 6
@@ -123,7 +65,6 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
       top = Math.max(MENU_MARGIN, viewportHeight - maxHeight - MENU_MARGIN)
     }
 
-    // Right-align the popup to the trigger (common for a button on the right side of the composer).
     let left = rect.right - width
     if (left < MENU_MARGIN) left = MENU_MARGIN
     if (left + width + MENU_MARGIN > viewportWidth) {
@@ -141,16 +82,7 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
   }, [available, load])
 
   useEffect(() => {
-    if (open && paneRef.current !== pane) {
-      itemRefs.current.find((item): item is HTMLButtonElement => item !== null)?.focus()
-    }
-    paneRef.current = pane
-  }, [pane, open])
-
-  useEffect(() => {
     if (!open) return
-    // Run a frame loop while the menu is open so it follows the trigger if the
-    // composer layout changes (sidebar resizes, zoom, window resize, etc.).
     let rafId = 0
     const tick = () => {
       computeMenuPos()
@@ -178,19 +110,22 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
   }, [open])
 
   const show = () => {
-    setPane('root')
     setOpen(true)
     reload()
   }
   const close = (restoreFocus = false) => {
     setOpen(false)
-    setPane('root')
     if (restoreFocus) {
       queueMicrotask(() => triggerRef.current?.focus())
     }
   }
 
-  const { onRootKeyDown } = useKeyboardNavigation({ open, pane, itemRefs, setPane, onClose: close })
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (open && event.key === 'Escape') {
+      event.preventDefault()
+      close(true)
+    }
+  }
 
   if (!available) return null
 
@@ -201,7 +136,7 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
 
   const settleSelection = (accepted: boolean) => {
     if (accepted) {
-      if (rootRef.current !== null) close(true)
+      close(true)
       return
     }
     const message = directory.getSnapshot().error
@@ -220,25 +155,9 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
     select(selection).then(settleSelection)
   }
 
-  const chooseEffort = (effort: string | undefined) => {
-    if (state.current === null) return
-    if (effectiveEffort === effort) {
-      close(true)
-      return
-    }
-    const selection: Selection = {
-      provider: state.current.provider,
-      model: state.current.model,
-      ...(effort === undefined ? {} : { reasoningEffort: effort }),
-    }
-    lastActionRef.current = 'select'
-    select(selection).then(settleSelection)
-  }
-
-  itemRefs.current = []
-  let cursor = 0
-  const registerRef = (node: HTMLButtonElement | null) => {
-    itemRefs.current[cursor++] = node
+  const onModeChange = (next: SelectorMode) => {
+    setMode(next)
+    saveMode(next)
   }
 
   const statusBlock = (
@@ -260,16 +179,20 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
         maxHeight: menuPos.maxHeight,
         zIndex: 1000,
         overflow: 'auto',
-        background: '#fff',
-        border: '1px solid #e0e0e0',
+        background: '#1e1e1e',
+        border: '1px solid rgba(255,255,255,0.08)',
         borderRadius: 8,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-        padding: '10px 0',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.32)',
+        color: '#eee',
       }
     : undefined
 
+  const pane = mode === 'original'
+    ? <OriginalPane directory={state} onSelect={choose} t={t} />
+    : <ReplicaPane directory={state} onSelect={choose} t={t} />
+
   return (
-    <div ref={rootRef} style={rootStyle} onKeyDown={onRootKeyDown} onBlur={onBlur}>
+    <div ref={rootRef} style={rootStyle} onKeyDown={onKeyDown} onBlur={onBlur}>
       <button
         ref={triggerRef}
         type="button"
@@ -284,64 +207,88 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
       >
         <span style={triggerMainStyle}>{modelLabel}</span>
         {providerLabel !== undefined && <span style={triggerMutedStyle}>· {providerLabel}</span>}
-        {visibleEffortLabel !== undefined && <span style={triggerMutedStyle}>· {visibleEffortLabel}</span>}
         <span style={chevronStyle}>{open ? '▲' : '▼'}</span>
       </button>
       {open && menuStyle !== undefined && (
         <div ref={menuRef} id={`${id}-menu`} style={menuStyle} role="menu" aria-label={t('trigger.selectAria')}>
-          {pane === 'root' && (
-            <RootPane
-              current={state.current}
-              currentChoice={currentChoice}
-              choices={choices}
-              effortChoices={effortChoices}
-              registerRef={registerRef}
-              onModel={() => setPane('provider')}
-              onEffort={() => setPane('effort')}
-              t={t}
-            />
-          )}
-          {pane === 'provider' && (
-            <ProviderPane
-              groups={providerGroups}
-              failures={state.failures}
-              current={state.current}
-              registerRef={registerRef}
-              statusBlock={statusBlock}
-              onBack={() => setPane('root')}
-              onSelect={(group) => {
-                setSelectedProvider(group.id)
-                setPane('model')
-              }}
-              onRetry={reload}
-              t={t}
-            />
-          )}
-          {pane === 'model' && activeProviderGroup && (
-            <ModelPane
-              group={activeProviderGroup}
-              current={state.current}
-              registerRef={registerRef}
-              statusBlock={statusBlock}
-              onBack={() => setPane('provider')}
-              onSelect={(model) => choose(selectionFor(activeProviderGroup, model))}
-              t={t}
-            />
-          )}
-          {pane === 'effort' && currentChoice && (
-            <EffortPane
-              choices={effortChoices}
-              currentEffort={effectiveEffort}
-              registerRef={registerRef}
-              onBack={() => setPane('root')}
-              onSelect={chooseEffort}
-              t={t}
-            />
-          )}
+          <div style={headerStyle}>
+            <span style={titleStyle}>{t('popup.title')}</span>
+            <ModeToggle mode={mode} onChange={onModeChange} t={t} />
+          </div>
+          {pane}
+          {statusBlock}
         </div>
       )}
     </div>
   )
+}
+
+function ReplicaPane({ directory, onSelect, t }: { directory: import('../model/types.ts').DirectorySnapshot; onSelect: (s: Selection) => void; t: ModelProviderSelectProps['t'] }): JSX.Element {
+  const [provider, setProvider] = useState(directory.current?.provider ?? directory.groups[0]?.id)
+  const currentGroup = directory.groups.find((g) => g.id === provider) ?? directory.groups[0]
+
+  if (directory.groups.length === 0) {
+    return <div style={emptyStyle}>{t('replica.empty')}</div>
+  }
+
+  return (
+    <div style={replicaContainerStyle}>
+      <div style={tabsStyle}>
+        {directory.groups.map((group) => (
+          <button
+            key={group.id}
+            type="button"
+            style={group.id === provider ? activeTabStyle : tabStyle}
+            onClick={() => setProvider(group.id)}
+          >
+            {group.name}
+          </button>
+        ))}
+      </div>
+      {currentGroup && (
+        <ReplicaProviderPane group={currentGroup} directory={directory} onSelect={onSelect} t={t} />
+      )}
+    </div>
+  )
+}
+
+function ReplicaProviderPane({
+  group,
+  directory,
+  onSelect,
+  t,
+}: {
+  group: import('../model/types.ts').CatalogGroup
+  directory: import('../model/types.ts').DirectorySnapshot
+  onSelect: (s: Selection) => void
+  t: ModelProviderSelectProps['t']
+}): JSX.Element {
+  const provider = group.id
+  const isDevin = provider === 'devin'
+  const isQoder = provider === 'qoder' || provider === 'qoder-global'
+  const scopedDirectory = useMemo(() => ({ ...directory, groups: [group] }), [directory, group])
+
+  if (isDevin) return <DevinPane directory={scopedDirectory} onSelect={onSelect} t={t} />
+  if (isQoder) return <QoderPane directory={scopedDirectory} onSelect={onSelect} t={t} />
+  return <OriginalPane directory={scopedDirectory} onSelect={onSelect} t={t} />
+}
+
+function loadMode(): SelectorMode {
+  try {
+    const raw = localStorage.getItem(MODE_KEY)
+    if (raw === 'replica') return 'replica'
+  } catch {
+    // Ignore storage errors (private mode / disabled localStorage).
+  }
+  return 'original'
+}
+
+function saveMode(mode: SelectorMode): void {
+  try {
+    localStorage.setItem(MODE_KEY, mode)
+  } catch {
+    // Ignore storage errors.
+  }
 }
 
 const rootStyle: React.CSSProperties = {
@@ -387,4 +334,55 @@ const chevronStyle: React.CSSProperties = {
   fontSize: 10,
   color: '#999',
   flexShrink: 0,
+}
+
+const headerStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '10px 12px',
+  borderBottom: '1px solid rgba(255,255,255,0.08)',
+}
+
+const titleStyle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: '#eee',
+}
+
+const emptyStyle: React.CSSProperties = {
+  padding: '20px 12px',
+  textAlign: 'center',
+  fontSize: 13,
+  color: '#888',
+}
+
+const replicaContainerStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  minWidth: 320,
+  maxHeight: '100%',
+}
+
+const tabsStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 2,
+  padding: '8px 12px 0',
+  borderBottom: '1px solid rgba(255,255,255,0.08)',
+}
+
+const tabStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  border: 'none',
+  background: 'transparent',
+  color: '#888',
+  cursor: 'pointer',
+  fontSize: 13,
+}
+
+const activeTabStyle: React.CSSProperties = {
+  ...tabStyle,
+  color: '#eee',
+  borderBottom: '2px solid #4ade80',
 }

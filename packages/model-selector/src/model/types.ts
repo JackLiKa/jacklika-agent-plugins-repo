@@ -48,6 +48,8 @@ export interface Selection {
 
 export type Pane = 'root' | 'provider' | 'model' | 'effort'
 
+export type SelectorMode = 'original' | 'replica'
+
 export interface Choice {
   group: CatalogGroup
   model: CatalogModel
