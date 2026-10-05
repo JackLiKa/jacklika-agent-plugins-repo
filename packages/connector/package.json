@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-connector",
   "description": "Bundle combining Qoder and Devin CLI connectors for DeepSeek Harness",
-  "version": "0.1.0-alpha.12",
+  "version": "0.1.0-alpha.13",
   "publishConfig": {
     "access": "public"
   },
@@ -39,8 +39,8 @@
     "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1 <0.3.0-0"
   },
   "dependencies": {
-    "@jacklika/dsh-qoder-connect": "workspace:^",
-    "@jacklika/dsh-devin-connect": "workspace:^",
+    "@jacklika/dsh-qoder-connect": "workspace:*",
+    "@jacklika/dsh-devin-connect": "workspace:*",
     "@jacklika/dsh-model-selector": "workspace:^"
   }
 }

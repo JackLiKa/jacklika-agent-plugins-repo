@@ -1,4 +1,4 @@
-import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type PatStore, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, StreamBlockEmitter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type PatStore, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { readFileSync, watch } from 'node:fs'
 import { homedir } from 'node:os'
@@ -130,7 +130,89 @@ export const Config: Schema<QoderConfig> = Schema.object({
 export const name = 'llm-qoder'
 export const inject = ['llm', 'profileContext'] as const
 
+/**
+ * Parser for qodercli `--output-format stream-json`: one complete JSON event
+ * per stdout line in the Claude-Code envelope schema. `assistant` events carry
+ * complete `message.content[]` snapshots that may repeat as the message grows,
+ * so text/thinking are deduplicated by message id and only new suffixes are
+ * emitted. `result` is the terminal event; `system`, `user`, hook, and rate-
+ * limit events are protocol noise and never reach the transcript.
+ */
+export class QoderStreamParser {
+  private readonly emitter = new StreamBlockEmitter()
+  private readonly emittedLen = new Map<string, number>()
+
+  parseLine(line: string): StreamChunk[] | undefined {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) return undefined
+    let event: Record<string, unknown>
+    try {
+      event = JSON.parse(trimmed) as Record<string, unknown>
+    } catch {
+      return undefined
+    }
+    const out: StreamChunk[] = []
+    switch (event.type) {
+      case 'assistant': {
+        const message = (event.message ?? {}) as Record<string, unknown>
+        const id = typeof message.id === 'string' ? message.id : 'default'
+        const content = Array.isArray(message.content) ? message.content : []
+        let thinking = ''
+        let text = ''
+        for (const block of content as Record<string, unknown>[]) {
+          if (block?.type === 'thinking' && typeof block.thinking === 'string') {
+            thinking += block.thinking
+          } else if (block?.type === 'text' && typeof block.text === 'string') {
+            text += block.text
+          }
+        }
+        this.emitDelta(out, 'reasoning', `${id}:reasoning`, thinking)
+        this.emitDelta(out, 'text', `${id}:text`, text)
+        return out
+      }
+      case 'result': {
+        this.emitter.close(out)
+        const usage = event.usage as Record<string, unknown> | undefined
+        if (usage && typeof usage === 'object') {
+          const tokenUsage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number } = {
+            inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
+            outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+          }
+          if (typeof usage.cache_read_input_tokens === 'number') tokenUsage.cacheReadTokens = usage.cache_read_input_tokens
+          if (typeof usage.cache_creation_input_tokens === 'number') tokenUsage.cacheWriteTokens = usage.cache_creation_input_tokens
+          out.push({ type: 'usage', usage: tokenUsage })
+        }
+        if (event.is_error === true) {
+          throw new Error(
+            typeof event.result === 'string' && event.result.length > 0
+              ? event.result
+              : `qodercli error: ${typeof event.subtype === 'string' ? event.subtype : 'unknown'}`,
+          )
+        }
+        out.push({ type: 'finish', reason: { kind: 'stop' } })
+        return out
+      }
+      default:
+        return out
+    }
+  }
+
+  flush(): StreamChunk[] {
+    const out: StreamChunk[] = []
+    this.emitter.close(out)
+    return out
+  }
+
+  private emitDelta(out: StreamChunk[], kind: 'text' | 'reasoning', key: string, full: string): void {
+    const emitted = this.emittedLen.get(key) ?? 0
+    if (full.length <= emitted) return
+    this.emittedLen.set(key, full.length)
+    this.emitter.delta(out, kind, full.slice(emitted))
+  }
+}
+
 class QoderAdapter extends CliLlmAdapter {
+  private parser = new QoderStreamParser()
   private readonly selectedParams = new Map<string, AdapterModelParams>()
   private readonly modelCachePath: string
   private readonly paramsStore: SelectedParamsStore
@@ -167,6 +249,7 @@ class QoderAdapter extends CliLlmAdapter {
   }
 
   protected buildArgs(options: GenerateOptions): string[] {
+    this.parser = new QoderStreamParser()
     const base = this.buildBaseOptions(options)
     const stored = options.model ? this.paramsStore.readSync(options.model) : undefined
     const encoded = options.model ? this.selectedParams.get(options.model) : undefined
@@ -179,6 +262,10 @@ class QoderAdapter extends CliLlmAdapter {
       '--output-format',
       'stream-json',
       '--no-session-persistence',
+      // DSH conversations are chat-only: disable the agent toolset so the CLI
+      // never executes shell/edits on the user's machine.
+      '--tools',
+      '',
     ]
     if (base.system) args.push('--system-prompt', base.system)
     if (maxTokens) args.push('--max-output-tokens', String(maxTokens))
@@ -187,26 +274,12 @@ class QoderAdapter extends CliLlmAdapter {
     return args
   }
 
-  protected parseLine(line: string): StreamChunk | undefined {
-    const trimmed = line.trim()
-    if (trimmed.length === 0) return undefined
-    if (trimmed.startsWith('{')) {
-      try {
-        const event = JSON.parse(trimmed) as Record<string, unknown>
-        if (typeof event.content === 'string') {
-          return { type: 'text-delta', index: 0, text: event.content }
-        }
-        if (typeof event.delta === 'string') {
-          return { type: 'text-delta', index: 0, text: event.delta }
-        }
-        if (event.type === 'content' && typeof event.data === 'string') {
-          return { type: 'text-delta', index: 0, text: event.data }
-        }
-      } catch {
-        // fall through to plain-text treatment
-      }
-    }
-    return { type: 'text-delta', index: 0, text: `${trimmed}\n` }
+  protected parseLine(line: string): StreamChunk[] | undefined {
+    return this.parser.parseLine(line)
+  }
+
+  protected override flushStream(): StreamChunk[] {
+    return this.parser.flush()
   }
 }
 

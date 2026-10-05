@@ -96,13 +96,13 @@ importers:
   packages/connector:
     dependencies:
       '@jacklika/dsh-devin-connect':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../devin-connect
       '@jacklika/dsh-model-selector':
         specifier: workspace:^
         version: link:../model-selector
       '@jacklika/dsh-qoder-connect':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../qoder-connect
 
   packages/connector-core:
@@ -123,7 +123,7 @@ importers:
   packages/devin-connect:
     dependencies:
       '@jacklika/dsh-connector-core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../connector-core
     devDependencies:
       '@deepseek-ai/cordis':
@@ -266,7 +266,7 @@ importers:
   packages/qoder-connect:
     dependencies:
       '@jacklika/dsh-connector-core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../connector-core
     devDependencies:
       '@deepseek-ai/cordis':

@@ -1,7 +1,8 @@
-import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type PatStore, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
-import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, ModelModality, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { CliLlmAdapter, StreamBlockEmitter, createControlKey, createFilePatStore, type CliVariant, type PatStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import type { FinishReason, GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, ModelModality, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { readFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
+import { createInterface } from 'node:readline'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
@@ -119,7 +120,6 @@ function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
 
 class DevinAdapter extends CliLlmAdapter {
   private readonly cachePath: string
-  private readonly paramsStore: SelectedParamsStore
   private readonly patStore: PatStore
   private readonly selectedParams = new Map<string, AdapterModelParams>()
 
@@ -130,7 +130,6 @@ class DevinAdapter extends CliLlmAdapter {
       : withFamilyPrefix(variant.defaultModels)
     super({ variant: { ...variant, cliCommand: config.cliCommand, defaultModels: models }, config: config as Record<string, unknown> })
     this.cachePath = modelCachePath(dataDir)
-    this.paramsStore = createSelectedParamsStore(dataDir)
     this.patStore = patStore
   }
 
@@ -171,24 +170,215 @@ class DevinAdapter extends CliLlmAdapter {
     return result
   }
 
-  protected buildArgs(options: GenerateOptions): string[] {
+  /**
+   * `devin -p` requires a TTY and only renders its TUI banner under pipes, so
+   * the adapter speaks ACP (Agent Client Protocol, newline-delimited JSON-RPC)
+   * over stdio — `devin acp` is the CLI's supported headless surface.
+   */
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const token = await this.resolveToken()
+    if (!token || token.length === 0) {
+      throw new Error(`Missing environment token: ${this.variant.envToken}`)
+    }
     const base = this.buildBaseOptions(options)
-    const args = ['-p']
-    const stored = options.model ? this.paramsStore.readSync(options.model) : undefined
-    const encoded = options.model ? this.selectedParams.get(options.model) : undefined
-    const reasoningEffort = options.reasoningEffort ?? encoded?.reasoningEffort ?? stored?.reasoningEffort
-    const maxTokens = encoded?.maxTokens ?? encoded?.contextWindow ?? stored?.maxTokens ?? stored?.contextWindow ?? base.maxTokens
+    const prompt = base.system ? `${base.system}\n\n${base.prompt}` : base.prompt
+    const { child, cleanup } = this.spawnManaged(
+      this.buildArgs(options),
+      this.buildProcessEnv(token),
+      options,
+      false,
+    )
+    const stderrPromise = this.readStderr(child.stderr ?? null)
+
+    let nextId = 1
+    const pending = new Map<number, { resolve: (v: Record<string, unknown> | undefined) => void; reject: (e: Error) => void }>()
+    const notifications: Record<string, unknown>[] = []
+    let notifyWaiter: (() => void) | null = null
+    let streamEnded = false
+    const wake = () => {
+      const waiter = notifyWaiter
+      notifyWaiter = null
+      waiter?.()
+    }
+
+    const send = (msg: Record<string, unknown>) => {
+      child.stdin?.write(`${JSON.stringify(msg)}\n`)
+    }
+    const request = (method: string, params: Record<string, unknown>) =>
+      new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+        const id = nextId
+        nextId += 1
+        pending.set(id, { resolve, reject })
+        send({ jsonrpc: '2.0', id, method, params })
+      })
+
+    const rl = createInterface({ input: child.stdout! })
+    rl.on('line', (line) => {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('{')) return
+      let msg: Record<string, unknown>
+      try {
+        msg = JSON.parse(trimmed) as Record<string, unknown>
+      } catch {
+        return
+      }
+      if (typeof msg.id === 'number' && msg.method === undefined) {
+        const entry = pending.get(msg.id)
+        pending.delete(msg.id)
+        if (!entry) return
+        const err = msg.error as { message?: string; code?: number } | undefined
+        if (err) entry.reject(new Error(err.message ?? `devin acp error ${err.code ?? ''}`))
+        else entry.resolve(msg.result as Record<string, unknown> | undefined)
+      } else if (typeof msg.method === 'string' && typeof msg.id === 'number') {
+        if (msg.method === 'session/request_permission') {
+          send({ jsonrpc: '2.0', id: msg.id, result: { outcome: { outcome: 'cancelled' } } })
+        } else {
+          send({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: `unsupported: ${msg.method}` } })
+        }
+      } else if (typeof msg.method === 'string') {
+        notifications.push(msg)
+        wake()
+      }
+    })
+    rl.on('close', () => {
+      streamEnded = true
+      wake()
+    })
+
+    const sessionRef: { id?: string } = {}
+    const abortHandler = () => {
+      if (sessionRef.id) {
+        send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: sessionRef.id } })
+      }
+    }
+    options.signal?.addEventListener('abort', abortHandler)
+
+    let finished = false
+    let promptError: Error | undefined
+    let stopReason: string | undefined
+    let promptResult: Record<string, unknown> | undefined
+    const take = () =>
+      new Promise<Record<string, unknown> | null>((resolve) => {
+        const check = () => {
+          if (notifications.length > 0) return resolve(notifications.shift()!)
+          if (streamEnded || finished) return resolve(null)
+          notifyWaiter = check
+        }
+        check()
+      })
+
+    try {
+      const init = await request('initialize', {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+        clientInfo: { name: 'dsh-devin-connect', version: '0.1.0' },
+      })
+      const authMethods = init?.authMethods
+      if (Array.isArray(authMethods) && authMethods.length > 0) {
+        const methodId = (authMethods[0] as Record<string, unknown>).id
+        if (typeof methodId === 'string') {
+          try {
+            // The Devin ACP host accepts the PAT through `meta.api_key`
+            // regardless of the advertised browser method id.
+            await request('authenticate', { methodId, meta: { api_key: token } })
+          } catch {
+            // env token may already satisfy authentication
+          }
+        }
+      }
+      const session = await request('session/new', { cwd: process.cwd(), mcpServers: [] })
+      const sessionId = session?.sessionId
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throw new Error('devin acp did not return a sessionId')
+      }
+      sessionRef.id = sessionId
+
+      const emitter = new StreamBlockEmitter()
+      request('session/prompt', {
+        sessionId,
+        prompt: [{ type: 'text', text: prompt }],
+      })
+        .then((result) => {
+          finished = true
+          promptResult = result
+          stopReason = typeof result?.stopReason === 'string' ? result.stopReason : 'end_turn'
+          wake()
+        })
+        .catch((error: Error) => {
+          finished = true
+          promptError = error
+          wake()
+        })
+
+      while (true) {
+        const note = await take()
+        if (note === null) break
+        if (note.method !== 'session/update') continue
+        const update = (note.params as Record<string, unknown> | undefined)?.update as
+          | Record<string, unknown>
+          | undefined
+        const content = update?.content as Record<string, unknown> | undefined
+        const out: StreamChunk[] = []
+        if (update?.sessionUpdate === 'agent_message_chunk' && content?.type === 'text' && typeof content.text === 'string') {
+          emitter.delta(out, 'text', content.text)
+        } else if (update?.sessionUpdate === 'agent_thought_chunk' && content?.type === 'text' && typeof content.text === 'string') {
+          emitter.delta(out, 'reasoning', content.text)
+        }
+        for (const chunk of out) yield chunk
+      }
+
+      const tail: StreamChunk[] = []
+      emitter.close(tail)
+      for (const chunk of tail) yield chunk
+
+      if (promptError) throw promptError
+      if (!finished) {
+        throw new Error('devin acp terminated before the prompt completed')
+      }
+      const stderr = await stderrPromise
+      if (child.exitCode !== 0 && child.exitCode !== null) {
+        throw new Error(`devin exited with ${child.exitCode}${stderr ? `: ${stderr}` : ''}`)
+      }
+      const usage = promptResult?.usage as Record<string, unknown> | undefined
+      if (usage) {
+        const tokenUsage: { inputTokens: number; outputTokens: number; cacheWriteTokens?: number; cacheReadTokens?: number; totalTokens?: number } = {
+          inputTokens: typeof usage.inputTokens === 'number' ? usage.inputTokens : 0,
+          outputTokens: typeof usage.outputTokens === 'number' ? usage.outputTokens : 0,
+        }
+        if (typeof usage.cachedWriteTokens === 'number') tokenUsage.cacheWriteTokens = usage.cachedWriteTokens
+        if (typeof usage.cachedReadTokens === 'number') tokenUsage.cacheReadTokens = usage.cachedReadTokens
+        if (typeof usage.totalTokens === 'number') tokenUsage.totalTokens = usage.totalTokens
+        yield { type: 'usage', usage: tokenUsage }
+      }
+      yield { type: 'finish', reason: acpFinishReason(stopReason) }
+    } finally {
+      options.signal?.removeEventListener('abort', abortHandler)
+      rl.close()
+      cleanup()
+    }
+  }
+
+  protected buildArgs(options: GenerateOptions): string[] {
+    const args = ['acp']
     if (options.model) args.push('--model', options.model)
-    if (maxTokens) args.push('--max-output-tokens', String(maxTokens))
-    if (reasoningEffort) args.push('--reasoning-effort', reasoningEffort)
-    args.push('--', base.prompt)
     return args
   }
 
-  protected parseLine(line: string): StreamChunk | undefined {
-    const trimmed = line.trim()
-    if (trimmed.length === 0) return undefined
-    return { type: 'text-delta', index: 0, text: `${trimmed}\n` }
+  protected parseLine(): StreamChunk[] | undefined {
+    return undefined
+  }
+}
+
+function acpFinishReason(stopReason: string | undefined): FinishReason {
+  switch (stopReason) {
+    case 'max_tokens':
+      return { kind: 'max-tokens' }
+    case 'cancelled':
+      return { kind: 'aborted', failure: { message: 'request cancelled', code: 'CANCELLED' } }
+    case 'refusal':
+      return { kind: 'error', failure: { message: 'model refused the request', code: 'REFUSAL' } }
+    default:
+      return { kind: 'stop' }
   }
 }
 

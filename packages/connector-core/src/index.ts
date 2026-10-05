@@ -63,6 +63,42 @@ export interface CliAdapterOptions {
   config: Record<string, unknown>
 }
 
+/**
+ * Stateful text/reasoning block emitter for provider stream parsers. Buffers
+ * per-block text so `block-end` carries the assembled block, and enforces
+ * single-open-block ordering across interleaved deltas.
+ */
+export class StreamBlockEmitter {
+  private nextIndex = 0
+  private open: { kind: 'text' | 'reasoning'; index: number; text: string } | null = null
+
+  delta(out: StreamChunk[], kind: 'text' | 'reasoning', text: string): void {
+    if (!text) return
+    if (this.open?.kind !== kind) this.close(out)
+    if (!this.open) {
+      this.open = { kind, index: this.nextIndex, text: '' }
+      this.nextIndex += 1
+      out.push({ type: 'block-start', index: this.open.index, blockType: kind })
+    }
+    this.open.text += text
+    out.push({
+      type: kind === 'text' ? 'text-delta' : 'reasoning-delta',
+      index: this.open.index,
+      text,
+    })
+  }
+
+  close(out: StreamChunk[]): void {
+    if (!this.open) return
+    out.push({
+      type: 'block-end',
+      index: this.open.index,
+      block: { type: this.open.kind, text: this.open.text },
+    })
+    this.open = null
+  }
+}
+
 export abstract class CliLlmAdapter extends LlmAdapter {
   protected variant: CliVariant
   protected config: Record<string, unknown>
@@ -141,10 +177,57 @@ export abstract class CliLlmAdapter extends LlmAdapter {
   }
 
   protected abstract buildArgs(options: GenerateOptions): string[]
-  protected abstract parseLine(line: string): StreamChunk | undefined
+  protected abstract parseLine(line: string): StreamChunk[] | undefined
+
+  /** Chunks emitted once stdout reaches EOF, before the exit-status check. */
+  protected flushStream(): StreamChunk[] {
+    return []
+  }
 
   protected async resolveToken(): Promise<string | undefined> {
     return process.env[this.variant.envToken]
+  }
+
+  protected spawnManaged(
+    args: string[],
+    env: NodeJS.ProcessEnv,
+    options: GenerateOptions,
+    endStdin = true,
+  ): { child: ChildProcess; cleanup: () => void } {
+    const child: ChildProcess = spawn(this.variant.cliCommand, args, { env, stdio: ['pipe', 'pipe', 'pipe'] })
+    if (endStdin) child.stdin?.end()
+
+    let killTimer: NodeJS.Timeout | undefined
+    const terminate = () => {
+      if (child.killed) return
+      child.kill('SIGTERM')
+      killTimer ??= setTimeout(() => {
+        if (!child.killed) child.kill('SIGKILL')
+      }, 5000)
+      killTimer.unref?.()
+    }
+    const hardTimeout = setTimeout(terminate, 120_000)
+
+    const abort = terminate
+    options.signal?.addEventListener('abort', abort)
+
+    const cleanup = () => {
+      clearTimeout(hardTimeout)
+      if (killTimer) clearTimeout(killTimer)
+      options.signal?.removeEventListener('abort', abort)
+      terminate()
+    }
+    child.once('exit', () => {
+      clearTimeout(hardTimeout)
+      if (killTimer) clearTimeout(killTimer)
+    })
+    return { child, cleanup }
+  }
+
+  protected buildProcessEnv(token: string): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, [this.variant.envToken]: token }
+    if (this.variant.cliConfigDir) env.QODER_CONFIG_DIR = this.variant.cliConfigDir
+    return env
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -153,39 +236,26 @@ export abstract class CliLlmAdapter extends LlmAdapter {
       throw new Error(`Missing environment token: ${this.variant.envToken}`)
     }
 
-    const args = this.buildArgs(options)
-    const env: NodeJS.ProcessEnv = { ...process.env, [this.variant.envToken]: token }
-    if (this.variant.cliConfigDir) env.QODER_CONFIG_DIR = this.variant.cliConfigDir
-    const child: ChildProcess = spawn(this.variant.cliCommand, args, {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-    child.stdin?.end()
+    const { child, cleanup } = this.spawnManaged(
+      this.buildArgs(options),
+      this.buildProcessEnv(token),
+      options,
+    )
 
-    const hardTimeout = setTimeout(() => {
-      if (!child.killed) {
-        child.kill('SIGTERM')
-        setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL')
-        }, 5000)
-      }
-    }, 120_000)
-
-    const abort = () => {
-      if (!child.killed) child.kill('SIGTERM')
-    }
-    options.signal?.addEventListener('abort', abort)
-
-    let accumulated = ''
+    let sawFinish = false
     try {
-      yield { type: 'block-start', index: 0, blockType: 'text' }
-
       for await (const line of this.readLines(child.stdout ?? null)) {
-        const chunk = this.parseLine(line)
-        if (chunk) {
-          if (chunk.type === 'text-delta') accumulated += chunk.text
+        const chunks = this.parseLine(line)
+        if (!chunks) continue
+        for (const chunk of chunks) {
+          if (chunk.type === 'finish') sawFinish = true
           yield chunk
         }
+      }
+
+      for (const chunk of this.flushStream()) {
+        if (chunk.type === 'finish') sawFinish = true
+        yield chunk
       }
 
       const stderr = await this.readStderr(child.stderr ?? null)
@@ -195,12 +265,9 @@ export abstract class CliLlmAdapter extends LlmAdapter {
         )
       }
 
-      yield { type: 'block-end', index: 0, block: { type: 'text', text: accumulated } }
-      yield { type: 'finish', reason: { kind: 'stop' } }
+      if (!sawFinish) yield { type: 'finish', reason: { kind: 'stop' } }
     } finally {
-      clearTimeout(hardTimeout)
-      options.signal?.removeEventListener('abort', abort)
-      if (!child.killed) child.kill('SIGTERM')
+      cleanup()
     }
   }
 }
