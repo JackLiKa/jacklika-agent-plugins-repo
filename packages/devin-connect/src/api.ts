@@ -54,6 +54,7 @@ export interface DevinModel {
   id: string
   name: string
   family?: string
+  description?: string
 }
 
 async function runDevin(args: string[], pat?: string): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }> {
@@ -212,9 +213,16 @@ function parseDevinCliModelCatalog(parsed: unknown): DevinModel[] {
       const id = typeof v.model_uid === 'string' ? v.model_uid : typeof v.id === 'string' ? v.id : ''
       const name = typeof v.label === 'string' ? v.label : typeof v.name === 'string' ? v.name : id
       const family = typeof f.family_label === 'string' ? f.family_label : undefined
+      const costSummary = typeof v.cost_summary === 'string' ? v.cost_summary : undefined
+      const contextTokens = typeof v.max_context_tokens === 'number' ? v.max_context_tokens : undefined
+      const parts: string[] = []
+      if (contextTokens !== undefined) parts.push(`Context ${contextTokens.toLocaleString()}`)
+      if (costSummary !== undefined) parts.push(costSummary)
+      const description = parts.length > 0 ? parts.join(' · ') : undefined
       if (id.trim().length > 0) {
         const model: DevinModel = { id: id.trim(), name: name.trim() || id.trim() }
         if (family) model.family = family
+        if (description) model.description = description
         models.push(model)
       }
     }

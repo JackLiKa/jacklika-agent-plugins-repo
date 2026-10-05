@@ -17,7 +17,7 @@ export interface ConnectorProviderStatus {
   avatarUrl?: string | undefined
   modelsCount?: number | undefined
   models?: string[] | undefined
-  modelGroups?: Record<string, string[]> | undefined
+  modelGroups?: Record<string, Array<{ name: string; description?: string }>> | undefined
   quotaText?: string | undefined
   quotaPercent?: number | undefined
   quotaUsed?: number | undefined

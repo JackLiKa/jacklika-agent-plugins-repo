@@ -123,7 +123,10 @@ function ProviderDashboard({ provider, expanded, onToggle }: ProviderCardProps):
                     <div style={familyLabelStyle}>{family}</div>
                     <ul style={modelListStyle}>
                       {variants.slice(0, 20).map((m) => (
-                        <li key={m} style={modelItemStyle}>{m}</li>
+                        <li key={m.name} style={modelItemStyle}>
+                          <div>{m.name}</div>
+                          {m.description && <div style={modelDescStyle}>{m.description}</div>}
+                        </li>
                       ))}
                       {variants.length > 20 && (
                         <li style={mutedItemStyle}>... {variants.length - 20} more</li>
@@ -385,6 +388,12 @@ const familyLabelStyle: React.CSSProperties = {
   fontWeight: 600,
   color: '#222',
   padding: '4px 0',
+}
+
+const modelDescStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: '#888',
+  marginTop: 1,
 }
 
 const modelItemStyle: React.CSSProperties = {

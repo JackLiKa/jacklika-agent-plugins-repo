@@ -18,7 +18,7 @@ function startStatusPoller(): () => void {
         const signedIn = value.status === 'signed-in'
         const detail = signedIn ? (value.user?.email ?? value.user?.name) : undefined
         const user = signedIn ? value.user : undefined
-        const modelGroups: Record<string, string[]> = {}
+        const modelGroups: Record<string, Array<{ name: string; description?: string }>> = {}
         const modelNames: string[] = []
         if (signedIn && Array.isArray(value.models)) {
           for (const m of value.models) {
@@ -29,11 +29,14 @@ function startStatusPoller(): () => void {
             const item = m as Record<string, unknown>
             const name = typeof item.name === 'string' ? item.name : String(item.id ?? '')
             const family = typeof item.family === 'string' ? item.family : 'Models'
+            const description = typeof item.description === 'string' ? item.description : undefined
             if (!name) continue
             const displayName = family && family !== 'Models' ? `${family} › ${name}` : name
             modelNames.push(displayName)
             if (!modelGroups[family]) modelGroups[family] = []
-            modelGroups[family].push(name)
+            const groupEntry: { name: string; description?: string } = { name }
+            if (description) groupEntry.description = description
+            modelGroups[family].push(groupEntry)
           }
         }
         const credits = signedIn ? value.credits : undefined
