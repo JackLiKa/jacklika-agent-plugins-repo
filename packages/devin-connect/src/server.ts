@@ -8,10 +8,10 @@ import {
   safeMessage,
   type WebRouteContext,
 } from '@jacklika/dsh-connector-core'
-import { verifyDevinPat } from './api.js'
+import { listDevinModels, verifyDevinPat } from './api.js'
 
 export interface PatStore {
-  get(): string | undefined
+  get(): string | undefined | Promise<string | undefined>
   set(value: string): Promise<{ ok: true; tail: string } | { ok: false; error: string }>
   clear(): Promise<{ ok: true }>
 }
@@ -29,7 +29,7 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 }
 
 async function buildStatus(runtime: DevinRuntime): Promise<unknown> {
-  const pat = runtime.store.get()
+  const pat = await runtime.store.get()
   if (!pat) {
     return { status: 'signed-out', reason: 'missing-pat', authKey: runtime.authKey }
   }
@@ -40,14 +40,15 @@ async function buildStatus(runtime: DevinRuntime): Promise<unknown> {
   }
 
   const orgs = user?.organizations ?? []
+  const models = await listDevinModels(pat).catch(() => [] as { id: string; name: string }[])
 
   return {
     status: 'signed-in',
     authKey: runtime.authKey,
-    pat: { source: 'env', tail: `***${pat.slice(-4)}` },
+    pat: { source: 'saved', tail: `***${pat.slice(-4)}` },
     catalog: { source: 'live', fetchedAt: Date.now() },
     user: { email: user?.email, name: user?.name, organizations: orgs.map((o) => o.name) },
-    models: [],
+    models,
     credits: undefined,
     probe: { candidates: [], results: [] },
   }

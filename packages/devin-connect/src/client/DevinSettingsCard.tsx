@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { isDevinWebStatus, type DevinWebStatus } from './status-document.ts'
+import { noteDevinStatus } from './status-store.ts'
 
 export interface DevinSettingsCardProps {
   close: () => void
@@ -57,6 +58,14 @@ async function postClear(authKey: string): Promise<{ ok: boolean; error?: string
   }
 }
 
+function syncStatus(next: DevinWebStatus | undefined): void {
+  if (next?.status === 'signed-in') {
+    noteDevinStatus(true, next.user?.email ?? next.user?.name, Array.isArray(next.models) ? next.models.length : 0)
+  } else {
+    noteDevinStatus(false)
+  }
+}
+
 export function DevinSettingsCard({ close, t }: DevinSettingsCardProps): JSX.Element {
   const [pat, setPat] = useState('')
   const [status, setStatus] = useState<DevinWebStatus | undefined>(undefined)
@@ -64,7 +73,9 @@ export function DevinSettingsCard({ close, t }: DevinSettingsCardProps): JSX.Ele
   const [message, setMessage] = useState<string | undefined>()
 
   const refresh = async () => {
-    setStatus(await fetchStatus())
+    const next = await fetchStatus()
+    setStatus(next)
+    syncStatus(next)
   }
 
   useEffect(() => {

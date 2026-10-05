@@ -1,25 +1,15 @@
-interface QoderVariantEndpoints {
-  apiBase: string
-  openapiBase: string
-}
-
-export const QODER_ENDPOINTS: Record<string, QoderVariantEndpoints> = {
-  qoder: {
-    apiBase: 'https://api.qoder.com.cn/api/v1/cloud',
-    openapiBase: 'https://openapi.qoder.com.cn',
-  },
-  'qoder-global': {
-    apiBase: 'https://api.qoder.com/api/v1/cloud',
-    openapiBase: 'https://openapi.qoder.sh',
-  },
-}
+import { spawn } from 'node:child_process'
+import { createInterface } from 'node:readline'
 
 export interface QoderModel {
   id: string
   name: string
-  contextWindow?: number
-  defaultContextWindow?: number
-  supportedContextWindows?: number[]
+}
+
+export interface QoderUser {
+  username?: string
+  email?: string
+  user_type?: string
 }
 
 export interface QoderUsage {
@@ -30,90 +20,82 @@ export interface QoderUsage {
     percentage: number
     unit: string
   }
-  addOnQuota?: {
-    total: number
-    used: number
-    remaining: number
-    unit: string
-  }
-  orgResourcePackage?: {
-    cap: number
-    used: number
-    remaining: number
-    percentage: number
-    unit: string
-  }
-  totalUsagePercentage?: number
   expiresAt?: number
-  isQuotaExceeded?: boolean
-  credits?: {
-    accounts: Array<{
-      packageName: string
-      remain: number
-      size: number
-      packageEndTime?: string
-      unlimited?: boolean
-    }>
-    unlimited?: boolean
-    total?: number
-    totalSize?: number
-    cycleResetTime?: string
-  }
-  creditsError?: string
 }
 
-async function qoderFetch<T>(pat: string, url: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${pat}`,
-      Accept: 'application/json',
-    },
-  })
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`)
-  }
-  return (await response.json()) as T
+interface QoderCliResult {
+  ok: boolean
+  stdout: string
+  stderr: string
+  exitCode: number | null
 }
 
-function getEndpoints(variantId: string): QoderVariantEndpoints {
-  const endpoints = QODER_ENDPOINTS[variantId] ?? QODER_ENDPOINTS.qoder
-  if (endpoints === undefined) throw new Error('unknown qoder variant')
-  return endpoints
-}
-
-export async function listQoderModels(pat: string, variantId: string): Promise<QoderModel[]> {
-  const { apiBase } = getEndpoints(variantId)
-  const { data } = await qoderFetch<{ data?: Array<Record<string, unknown>> }>(pat, `${apiBase}/models`)
-  return (data ?? []).map((m) => {
-    const model: QoderModel = {
-      id: String(m.id ?? ''),
-      name: String(m.display_name ?? m.id ?? ''),
+async function runQoderCli(
+  args: string[],
+  options: { pat?: string; cliConfigDir: string },
+): Promise<QoderCliResult> {
+  const env: NodeJS.ProcessEnv = { ...process.env, QODER_CONFIG_DIR: options.cliConfigDir }
+  if (options.pat) env.QODER_PERSONAL_ACCESS_TOKEN = options.pat
+  return new Promise((resolve) => {
+    const child = spawn('qodercli', args, { env })
+    const stdout: string[] = []
+    const stderr: string[] = []
+    if (child.stdout) {
+      createInterface(child.stdout).on('line', (line) => stdout.push(line))
     }
-    if (typeof m.max_input_tokens === 'number') model.contextWindow = m.max_input_tokens
-    if (typeof m.default_context_window === 'number') model.defaultContextWindow = m.default_context_window
-    if (Array.isArray(m.available_context_windows)) {
-      model.supportedContextWindows = m.available_context_windows.filter(
-        (v): v is number => typeof v === 'number',
-      )
+    if (child.stderr) {
+      createInterface(child.stderr).on('line', (line) => stderr.push(line))
     }
-    return model
+    child.on('close', (exitCode) => {
+      resolve({ ok: exitCode === 0, stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode })
+    })
   })
 }
 
-export async function fetchQoderUsage(pat: string, variantId: string): Promise<QoderUsage> {
-  const { openapiBase } = getEndpoints(variantId)
-  return qoderFetch<QoderUsage>(pat, `${openapiBase}/api/v2/quota/usage`)
+export async function listQoderModels(pat: string, cliConfigDir: string): Promise<QoderModel[]> {
+  const result = await runQoderCli(['--list-models'], { pat, cliConfigDir })
+  if (!result.ok) {
+    throw new Error(result.stderr || `qodercli exited with ${result.exitCode}`)
+  }
+  const lines = result.stdout.split('\n')
+  const modelLines = lines.slice(lines.findIndex((l) => l.trim() === 'MODEL') + 1)
+  return modelLines
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((id) => ({ id, name: id }))
 }
 
-export async function verifyQoderPat(pat: string, variantId: string): Promise<{ valid: boolean; userType?: string }> {
+export async function fetchQoderUser(pat: string, cliConfigDir: string): Promise<QoderUser | undefined> {
+  const result = await runQoderCli(['status', '-o', 'json'], { pat, cliConfigDir })
+  if (!result.ok) return undefined
   try {
-    const { apiBase } = getEndpoints(variantId)
-    const result = await qoderFetch<{ data?: unknown[]; object?: string }>(pat, `${apiBase}/agents?limit=1`)
-    const info: { valid: true; userType?: string } = { valid: true }
-    if (typeof result.object === 'string') info.userType = result.object
-    return info
+    return JSON.parse(result.stdout) as QoderUser
+  } catch {
+    return undefined
+  }
+}
+
+export async function verifyQoderPat(pat: string, cliConfigDir: string): Promise<{ valid: boolean }> {
+  try {
+    await listQoderModels(pat, cliConfigDir)
+    return { valid: true }
   } catch {
     return { valid: false }
+  }
+}
+
+export async function fetchQoderUsage(pat: string): Promise<QoderUsage | undefined> {
+  const endpoint = 'https://openapi.qoder.sh/api/v2/quota/usage'
+  try {
+    const response = await fetch(endpoint, {
+      headers: {
+        Authorization: `Bearer ${pat}`,
+        Accept: 'application/json',
+      },
+    })
+    if (!response.ok) return undefined
+    return (await response.json()) as QoderUsage
+  } catch {
+    return undefined
   }
 }

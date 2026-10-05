@@ -20,6 +20,7 @@ export type DevinLocaleKey =
   | 'signedInAs'
   | 'invalidPat'
   | 'organizations'
+  | 'connected'
 
 export const DEVIN_LOCALES: Record<BuiltInLocaleId, Record<DevinLocaleKey, string>> = {
   en: {
@@ -34,6 +35,7 @@ export const DEVIN_LOCALES: Record<BuiltInLocaleId, Record<DevinLocaleKey, strin
     signedInAs: 'Signed in as {tail}',
     invalidPat: 'Invalid or expired PAT',
     organizations: 'Organizations',
+    connected: 'Connected',
   },
   zh: {
     title: 'Devin',
@@ -47,5 +49,6 @@ export const DEVIN_LOCALES: Record<BuiltInLocaleId, Record<DevinLocaleKey, strin
     signedInAs: '已登录为 {tail}',
     invalidPat: '令牌无效或已过期',
     organizations: '组织',
+    connected: '已连接',
   },
 }

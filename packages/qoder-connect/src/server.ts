@@ -8,10 +8,10 @@ import {
   safeMessage,
   type WebRouteContext,
 } from '@jacklika/dsh-connector-core'
-import { fetchQoderUsage, listQoderModels, verifyQoderPat, type QoderUsage } from './api.js'
+import { fetchQoderUsage, fetchQoderUser, listQoderModels, verifyQoderPat, type QoderUsage } from './api.js'
 
 export interface PatStore {
-  get(): string | undefined
+  get(): string | undefined | Promise<string | undefined>
   set(value: string): Promise<{ ok: true; tail: string } | { ok: false; error: string }>
   clear(): Promise<{ ok: true }>
 }
@@ -19,6 +19,7 @@ export interface PatStore {
 interface QoderVariantRuntime {
   id: string
   envToken: string
+  cliConfigDir: string
   statusPath: string
   authPath: string
   probePath: string
@@ -33,79 +34,47 @@ function patTail(pat: string): string {
 }
 
 function normalizeUsage(usage: QoderUsage | undefined) {
-  if (!usage) return undefined
-  const accounts: Array<{
-    packageName: string
-    remain: number
-    size: number
-    packageEndTime?: string
-    unlimited?: boolean
-  }> = []
-
-  if (usage.userQuota) {
-    const account: {
-      packageName: string
-      remain: number
-      size: number
-      packageEndTime?: string
-      unlimited?: boolean
-    } = {
-      packageName: 'Plan',
-      remain: usage.userQuota.remaining,
-      size: usage.userQuota.total,
-      unlimited: false,
-    }
-    if (usage.expiresAt) account.packageEndTime = new Date(usage.expiresAt).toISOString()
-    accounts.push(account)
-  }
-  if (usage.addOnQuota) {
-    accounts.push({
-      packageName: 'Add-on',
-      remain: usage.addOnQuota.remaining,
-      size: usage.addOnQuota.total,
-      unlimited: false,
-    })
-  }
-  if (usage.orgResourcePackage && usage.orgResourcePackage.cap > 0) {
-    accounts.push({
-      packageName: 'Org',
-      remain: usage.orgResourcePackage.remaining,
-      size: usage.orgResourcePackage.cap,
-      unlimited: false,
-    })
-  }
-
+  if (!usage?.userQuota) return undefined
   return {
-    accounts,
-    unlimited: usage.userQuota ? usage.userQuota.total === 0 && usage.userQuota.used === 0 : false,
-    total: usage.userQuota?.used,
-    totalSize: usage.userQuota?.total,
+    accounts: [
+      {
+        packageName: 'Plan',
+        remain: usage.userQuota.remaining,
+        size: usage.userQuota.total,
+        unlimited: false,
+      },
+    ],
+    unlimited: false,
+    total: usage.userQuota.used,
+    totalSize: usage.userQuota.total,
     cycleResetTime: usage.expiresAt ? new Date(usage.expiresAt).toISOString() : undefined,
   }
 }
 
 async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
-  const pat = runtime.store.get()
+  const pat = await runtime.store.get()
   if (!pat) {
     return { status: 'signed-out', reason: 'missing-pat', authKey: runtime.authKey }
   }
 
-  const { valid } = await verifyQoderPat(pat, runtime.id)
+  const { valid } = await verifyQoderPat(pat, runtime.cliConfigDir)
   if (!valid) {
     return { status: 'error', message: 'invalid or expired PAT', authKey: runtime.authKey }
   }
 
-  const [models, usage] = await Promise.all([
-    listQoderModels(pat, runtime.id).catch(() => []),
-    fetchQoderUsage(pat, runtime.id).catch(() => undefined),
+  const [models, user, usage] = await Promise.all([
+    listQoderModels(pat, runtime.cliConfigDir).catch(() => [] as { id: string; name: string }[]),
+    fetchQoderUser(pat, runtime.cliConfigDir).catch(() => undefined),
+    fetchQoderUsage(pat).catch(() => undefined),
   ])
 
   return {
     status: 'signed-in',
     authKey: runtime.authKey,
     probeKey: runtime.probeKey,
-    pat: { source: 'env', tail: patTail(pat) },
+    pat: { source: 'saved', tail: patTail(pat) },
     catalog: { source: 'live', fetchedAt: Date.now() },
+    user: user ? { username: user.username, email: user.email, userType: user.user_type } : undefined,
     models,
     credits: normalizeUsage(usage),
     probe: { candidates: [], results: [] },
@@ -179,7 +148,7 @@ function authHandler(runtime: QoderVariantRuntime) {
         json(res, 200, { ok: false, error: 'qoder_missing_pat' })
         return
       }
-      const { valid } = await verifyQoderPat(request.pat, runtime.id)
+      const { valid } = await verifyQoderPat(request.pat, runtime.cliConfigDir)
       if (!valid) {
         json(res, 200, { ok: false, error: 'qoder_invalid_pat' })
         return
@@ -225,7 +194,7 @@ function probeHandler(runtime: QoderVariantRuntime) {
       return
     }
 
-    const pat = runtime.store.get()
+    const pat = await runtime.store.get()
     if (!pat) {
       json(res, 200, { state: 'failed', reason: 'missing-pat' })
       return
@@ -233,12 +202,12 @@ function probeHandler(runtime: QoderVariantRuntime) {
 
     try {
       if (request.action === 'refresh') {
-        await listQoderModels(pat, runtime.id)
+        await listQoderModels(pat, runtime.cliConfigDir)
         json(res, 200, { state: 'ok' })
         return
       }
       if (request.action === 'probe' && typeof request.model === 'string') {
-        const models = await listQoderModels(pat, runtime.id)
+        const models = await listQoderModels(pat, runtime.cliConfigDir)
         const target = models.find((m) => m.id === request.model)
         if (!target) {
           json(res, 200, { state: 'failed', reason: 'model-not-found' })
@@ -247,7 +216,7 @@ function probeHandler(runtime: QoderVariantRuntime) {
         json(res, 200, {
           state: 'ok',
           validation: 'validating',
-          efforts: target.supportedContextWindows ? ['low', 'medium', 'high'] : ['none'],
+          efforts: ['low', 'medium', 'high'],
         })
         return
       }

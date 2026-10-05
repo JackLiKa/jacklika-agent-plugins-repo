@@ -13,6 +13,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 
 export * from './web.js'
+export * from './store.js'
 
 export interface CliVariant {
   id: string
@@ -20,6 +21,7 @@ export interface CliVariant {
   cliCommand: string
   envToken: string
   defaultModels: LlmModelInfo[]
+  cliConfigDir?: string
 }
 
 function extractText(content: unknown): string {
@@ -147,8 +149,10 @@ export abstract class CliLlmAdapter extends LlmAdapter {
     }
 
     const args = this.buildArgs(options)
+    const env: NodeJS.ProcessEnv = { ...process.env, [this.variant.envToken]: token }
+    if (this.variant.cliConfigDir) env.QODER_CONFIG_DIR = this.variant.cliConfigDir
     const child: ChildProcess = spawn(this.variant.cliCommand, args, {
-      env: { ...process.env, [this.variant.envToken]: token },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 

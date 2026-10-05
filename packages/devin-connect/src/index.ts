@@ -1,7 +1,9 @@
-import { CliLlmAdapter, createControlKey, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, createControlKey, createFilePatStore, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
-import { registerDevinWebRoutes, type PatStore } from './server.js'
+import { registerDevinWebRoutes } from './server.js'
 
 const DEFAULT_MODELS: LlmModelInfo[] = [
   { provider: 'devin', id: 'claude-sonnet-4', name: 'Claude Sonnet 4', inputModalities: ['text'] },
@@ -9,6 +11,11 @@ const DEFAULT_MODELS: LlmModelInfo[] = [
   { provider: 'devin', id: 'opus', name: 'Opus', inputModalities: ['text'] },
   { provider: 'devin', id: 'codex', name: 'Codex', inputModalities: ['text'] },
 ]
+
+function devinDataDir(ctx: any): string {
+  const profile = ctx.get?.('profileContext')?.name ?? 'default'
+  return join(process.env.DSH_HOME ?? homedir(), '.dsh', 'profiles', profile, '.dsh-devin-connect')
+}
 
 const DEVIN_VARIANT: CliVariant & {
   statusPath: string
@@ -77,26 +84,10 @@ class DevinAdapter extends CliLlmAdapter {
   }
 }
 
-function createPatStore(envToken: string): PatStore {
-  let saved: string | undefined
-  return {
-    get() {
-      return saved ?? process.env[envToken]
-    },
-    async set(value: string) {
-      saved = value
-      return { ok: true as const, tail: `***${value.slice(-4)}` }
-    },
-    async clear() {
-      saved = undefined
-      return { ok: true as const }
-    },
-  }
-}
-
 export function apply(ctx: any, config: DevinConfig) {
   if (!config.enabled) return
 
+  const dataDir = devinDataDir(ctx)
   const adapter = new DevinAdapter(DEVIN_VARIANT, config)
   const releaseAdapter = ctx.llm.registerAdapter([DEVIN_VARIANT.id], adapter)
   const releaseDirectory = ctx.llm.registerConfigurableProviders([
@@ -118,7 +109,10 @@ export function apply(ctx: any, config: DevinConfig) {
       envToken: DEVIN_VARIANT.envToken,
       statusPath: DEVIN_VARIANT.statusPath,
       authPath: DEVIN_VARIANT.authPath,
-      store: createPatStore(DEVIN_VARIANT.envToken),
+      store: createFilePatStore({
+        filePath: join(dataDir, '.devin-auth.json'),
+        envToken: DEVIN_VARIANT.envToken,
+      }),
       authKey: createControlKey(),
     })
   })

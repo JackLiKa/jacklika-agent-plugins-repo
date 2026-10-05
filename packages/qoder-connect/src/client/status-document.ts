@@ -13,6 +13,7 @@ export interface QoderStatusSignedIn {
   probeKey: string
   pat: { source: string; tail: string }
   catalog: { source: string; fetchedAt: number }
+  user?: { username?: string; email?: string; userType?: string }
   models: unknown[]
   credits?: QoderCredits
   probe?: QoderProbe
