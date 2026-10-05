@@ -34,7 +34,7 @@ function makeQoderVariants(dataDir: string): QoderVariant[] {
       cliCommand: 'qodercli',
       envToken: 'QODER_PERSONAL_ACCESS_TOKEN',
       cliConfigDir: join(dataDir, 'qoder', 'qoder-config'),
-      region: 'china',
+      region: 'global',
       defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder' })),
       statusPath: '/plugins/dsh-qoder-connect/status',
       authPath: '/plugins/dsh-qoder-connect/auth',
@@ -46,7 +46,7 @@ function makeQoderVariants(dataDir: string): QoderVariant[] {
       cliCommand: 'qodercli',
       envToken: 'QODER_GLOBAL_PERSONAL_ACCESS_TOKEN',
       cliConfigDir: join(dataDir, 'qoder-global', 'qoder-config'),
-      region: 'global',
+      region: 'china',
       defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder-global' })),
       statusPath: '/plugins/dsh-qoder-connect/global/status',
       authPath: '/plugins/dsh-qoder-connect/global/auth',
@@ -174,7 +174,14 @@ export function apply(ctx: any, config: QoderConfig) {
       authPath: variant.authPath,
       probePath: variant.probePath,
       store: createFilePatStore({
-        filePath: join(dataDir, variant.id === 'qoder' ? '.qoder-auth.json' : '.qoder-global-auth.json'),
+        filePath: join(
+          dataDir,
+          variant.id === 'qoder'
+            ? '.qoder-auth.json'
+            : variant.id === 'qoder-china'
+              ? '.qoder-china-auth.json'
+              : '.qoder-global-auth.json',
+        ),
         envToken: variant.envToken,
       }),
       authKey: createControlKey(),
