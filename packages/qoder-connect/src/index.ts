@@ -97,12 +97,17 @@ function qoderModelCachePath(dataDir: string, variantId: string): string {
   return join(dataDir, `.qoder-${variantId}-models-cache.json`)
 }
 
-function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
+function readModelCacheSync(path: string, providerId?: string): LlmModelInfo[] | undefined {
   try {
     const text = readFileSync(path, 'utf8')
     const parsed = JSON.parse(text) as unknown
     if (Array.isArray(parsed) && parsed.length > 0 && typeof (parsed[0] as Record<string, unknown>).id === 'string') {
-      return parsed as LlmModelInfo[]
+      return parsed.map((m) => ({
+        provider: providerId ?? ((m as Record<string, unknown>).provider as string) ?? 'qoder',
+        id: (m as Record<string, unknown>).id as string,
+        name: ((m as Record<string, unknown>).name as string) ?? (m as Record<string, unknown>).id as string,
+        inputModalities: ((m as Record<string, unknown>).inputModalities as string[]) ?? ['text'],
+      })) as LlmModelInfo[]
     }
   } catch {
     // ignore missing or malformed cache
@@ -140,7 +145,7 @@ class QoderAdapter extends CliLlmAdapter {
   }
 
   override async listModels(): Promise<readonly LlmModelInfo[]> {
-    return readModelCacheSync(this.modelCachePath) ?? this.variant.defaultModels
+    return readModelCacheSync(this.modelCachePath, this.variant.id) ?? this.variant.defaultModels
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
@@ -207,7 +212,7 @@ export function apply(ctx: any, config: QoderConfig) {
     const adapter = new QoderAdapter(variantWithCache, config)
     adapters.push(adapter)
     const configured = config.models
-    const cached = readModelCacheSync(variantWithCache.modelCachePath)
+    const cached = readModelCacheSync(variantWithCache.modelCachePath, variant.id)
     const models = configured.length > 0
       ? configured.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
       : cached ?? variant.defaultModels

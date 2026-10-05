@@ -86,7 +86,7 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
     return { status: 'error', message: 'invalid or expired PAT', authKey: runtime.authKey }
   }
 
-  const [models, cliUser, profile, usage, plan, accountStatus] = await Promise.all([
+  const [rawModels, cliUser, profile, usage, plan, accountStatus] = await Promise.all([
     listQoderModels(pat, runtime.cliConfigDir).catch(() => [] as { id: string; name: string }[]),
     fetchQoderUser(pat, runtime.cliConfigDir).catch(() => undefined),
     fetchQoderUserProfile(pat, runtime.region).catch(() => undefined),
@@ -95,6 +95,7 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
     fetchQoderStatus(pat, runtime.region).catch(() => undefined),
   ])
 
+  const models = rawModels.map((m) => ({ ...m, provider: runtime.id, inputModalities: ['text' as const] }))
   if (models.length > 0) {
     await writeFile(runtime.modelCachePath, JSON.stringify(models), 'utf8').catch(() => {})
   }
