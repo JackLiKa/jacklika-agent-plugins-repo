@@ -126,15 +126,25 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
 
   function syncConnectorStatus(value: QoderWebStatus): void {
     const signedIn = value.status === 'signed-in'
-    const detail = signedIn && value.user
+    const user = signedIn ? value.user : undefined
+    const detail = value.status === 'signed-in' && value.user
       ? (value.user.email ?? value.user.username ?? value.pat?.tail)
       : (value.status === 'error' ? value.message : undefined)
+    const models = signedIn && Array.isArray(value.models)
+      ? value.models.map((m) => (typeof m === 'string' ? m : String((m as Record<string, unknown>).id ?? ''))).filter(Boolean)
+      : []
     setConnectorStatus({
       id: currentVariant.id,
       name: currentVariant.id === 'qoder' ? 'Qoder' : 'Qoder Global',
       signedIn,
       ...(detail ? { detail } : {}),
-      modelsCount: signedIn && Array.isArray(value.models) ? value.models.length : 0,
+      username: user?.username,
+      email: user?.email,
+      userType: user?.userType,
+      orgId: user?.orgId,
+      avatarUrl: user?.avatarUrl,
+      modelsCount: models.length,
+      models,
     })
   }
 

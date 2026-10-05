@@ -17,12 +17,22 @@ function startStatusPoller(): () => void {
       if (isDevinWebStatus(value)) {
         const signedIn = value.status === 'signed-in'
         const detail = signedIn ? (value.user?.email ?? value.user?.name) : undefined
+        const user = signedIn ? value.user : undefined
+        const models = signedIn && Array.isArray(value.models)
+          ? value.models.map((m) => {
+            if (typeof m === 'string') return m
+            const item = m as Record<string, unknown>
+            return typeof item.name === 'string' ? item.name : String(item.id ?? '')
+          }).filter(Boolean)
+          : []
         setConnectorStatus({
           id: 'devin',
           name: 'Devin',
           signedIn,
           ...(detail ? { detail } : {}),
-          modelsCount: signedIn && Array.isArray(value.models) ? value.models.length : 0,
+          ...(user ? { username: user.name, email: user.email } : {}),
+          modelsCount: models.length,
+          models,
         })
       }
     } catch {

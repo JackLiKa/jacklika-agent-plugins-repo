@@ -2,8 +2,16 @@ export interface ConnectorProviderStatus {
   id: string
   name: string
   signedIn: boolean
-  detail?: string
-  modelsCount?: number
+  detail?: string | undefined
+  username?: string | undefined
+  email?: string | undefined
+  userType?: string | undefined
+  orgId?: string | undefined
+  avatarUrl?: string | undefined
+  modelsCount?: number | undefined
+  models?: string[] | undefined
+  quotaText?: string | undefined
+  extra?: Record<string, string> | undefined
 }
 
 interface ConnectorStatusState {

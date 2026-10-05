@@ -62,14 +62,23 @@ async function postClear(authKey: string): Promise<{ ok: boolean; error?: string
 function syncStatus(next: DevinWebStatus | undefined): void {
   const signedIn = next?.status === 'signed-in'
   const detail = signedIn ? (next.user?.email ?? next.user?.name) : undefined
-  const modelsCount = signedIn && Array.isArray(next.models) ? next.models.length : 0
-  noteDevinStatus(signedIn, detail, modelsCount)
+  const models = signedIn && Array.isArray(next.models)
+    ? next.models.map((m) => {
+      if (typeof m === 'string') return m
+      const item = m as Record<string, unknown>
+      return typeof item.name === 'string' ? item.name : String(item.id ?? '')
+    }).filter(Boolean)
+    : []
+  noteDevinStatus(signedIn, detail, models.length)
+  const user = signedIn ? next?.user : undefined
   setConnectorStatus({
     id: 'devin',
     name: 'Devin',
     signedIn,
     ...(detail ? { detail } : {}),
-    modelsCount,
+    ...(user ? { username: user.name, email: user.email } : {}),
+    modelsCount: models.length,
+    models,
   })
 }
 

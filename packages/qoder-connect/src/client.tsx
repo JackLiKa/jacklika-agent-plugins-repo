@@ -18,15 +18,21 @@ function startStatusPoller(statusPath: string, id: string, name: string): () => 
       const value = await response.json().catch(() => undefined)
       if (isQoderWebStatus(value)) {
         const signedIn = value.status === 'signed-in'
-        const detail = signedIn && value.user
+        const detail = value.status === 'signed-in' && value.user
           ? (value.user.email ?? value.user.username ?? value.pat?.tail)
           : (value.status === 'error' ? value.message : undefined)
+        const user = signedIn ? value.user : undefined
+        const models = signedIn && Array.isArray(value.models)
+          ? value.models.map((m) => (typeof m === 'string' ? m : String((m as Record<string, unknown>).id ?? ''))).filter(Boolean)
+          : []
         setConnectorStatus({
           id,
           name,
           signedIn,
           ...(detail ? { detail } : {}),
-          modelsCount: signedIn && Array.isArray(value.models) ? value.models.length : 0,
+          ...(user ? { username: user.username, email: user.email, userType: user.userType, orgId: user.orgId, avatarUrl: user.avatarUrl } : {}),
+          modelsCount: models.length,
+          models,
         })
       }
     } catch {
