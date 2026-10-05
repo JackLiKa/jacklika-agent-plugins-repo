@@ -1,0 +1,3 @@
+- insert:
+    - id: model-selector
+      name: '@jacklika/dsh-model-selector'
