@@ -1,6 +1,6 @@
 import { CliLlmAdapter, createControlKey, createFilePatStore, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { readFileSync } from 'node:fs'
+import { readFileSync, watch } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
@@ -205,38 +205,53 @@ export function apply(ctx: any, config: QoderConfig) {
   const dataDir = qoderDataDir(ctx)
   const variants = makeQoderVariants(dataDir)
   const adapters: QoderAdapter[] = []
-  const providers: any[] = []
+  const releaseAdapters: Array<() => void> = []
+  const releaseDirectories: Array<() => void> = []
+  const watchers: Array<() => void> = []
 
-  for (const variant of variants) {
-    const variantWithCache = { ...variant, modelCachePath: qoderModelCachePath(dataDir, variant.id) }
-    const adapter = new QoderAdapter(variantWithCache, config)
-    adapters.push(adapter)
-    const configured = config.models
-    const cached = readModelCacheSync(variantWithCache.modelCachePath, variant.id)
-    const models = configured.length > 0
-      ? configured.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
-      : cached ?? variant.defaultModels
-    providers.push({
+  function buildProviderEntry(variant: QoderVariant, models: LlmModelInfo[]) {
+    return {
       provider: variant.id,
       displayName: variant.displayName,
       settingsNs: 'qoder',
       settingsPath: [],
       models,
-    })
+    }
   }
 
-  const releaseAdapters: Array<() => void> = []
-  for (let i = 0; i < variants.length; i += 1) {
-    const variant = variants[i]!
-    const adapter = adapters[i]!
+  for (const variant of variants) {
+    const variantWithCache = { ...variant, modelCachePath: qoderModelCachePath(dataDir, variant.id) }
+    const adapter = new QoderAdapter(variantWithCache, config)
+    adapters.push(adapter)
     releaseAdapters.push(ctx.llm.registerAdapter([variant.id], adapter))
-  }
 
-  const releaseDirectory = ctx.llm.registerConfigurableProviders(providers)
+    const configured = config.models
+    const cached = readModelCacheSync(variantWithCache.modelCachePath, variant.id)
+    const models = configured.length > 0
+      ? configured.map((m) => ({ provider: variant.id, id: m.id, name: m.name, inputModalities: ['text' as const] as const }))
+      : cached ?? variant.defaultModels
+    const entry = buildProviderEntry(variant, models)
+    const releaseDirectory = ctx.llm.registerConfigurableProviders([entry])
+    releaseDirectories.push(releaseDirectory)
+
+    try {
+      const watcher = watch(variantWithCache.modelCachePath, () => {
+        const refreshed = readModelCacheSync(variantWithCache.modelCachePath, variant.id)
+        const refreshedModels = configured.length > 0
+          ? configured.map((m) => ({ provider: variant.id, id: m.id, name: m.name, inputModalities: ['text' as const] as const }))
+          : refreshed ?? variant.defaultModels
+        releaseDirectory.replace([buildProviderEntry(variant, refreshedModels)])
+      })
+      watchers.push(() => watcher.close())
+    } catch {
+      // ignore watch errors on platforms where fs.watch is unavailable
+    }
+  }
 
   ctx.effect(() => () => {
     releaseAdapters.forEach((release) => release())
-    releaseDirectory?.()
+    releaseDirectories.forEach((release) => release())
+    watchers.forEach((stop) => stop())
   })
 
   ctx.inject(['webServer'], (webCtx: WebRouteContext) => {
