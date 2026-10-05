@@ -13,6 +13,7 @@ import {
   fetchQoderStatus,
   fetchQoderUsage,
   fetchQoderUser,
+  fetchQoderUserProfile,
   listQoderModels,
   verifyQoderPat,
   type QoderUsage,
@@ -82,9 +83,10 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
     return { status: 'error', message: 'invalid or expired PAT', authKey: runtime.authKey }
   }
 
-  const [models, user, usage, plan, accountStatus] = await Promise.all([
+  const [models, cliUser, profile, usage, plan, accountStatus] = await Promise.all([
     listQoderModels(pat, runtime.cliConfigDir).catch(() => [] as { id: string; name: string }[]),
     fetchQoderUser(pat, runtime.cliConfigDir).catch(() => undefined),
+    fetchQoderUserProfile(pat, runtime.region).catch(() => undefined),
     fetchQoderUsage(pat, runtime.region).catch(() => undefined),
     fetchQoderPlan(pat, runtime.region).catch(() => undefined),
     fetchQoderStatus(pat, runtime.region).catch(() => undefined),
@@ -96,14 +98,14 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
     probeKey: runtime.probeKey,
     pat: { source: 'saved', tail: patTail(pat) },
     catalog: { source: 'live', fetchedAt: Date.now() },
-    user: user
+    user: cliUser || profile
       ? {
-          username: user.username,
-          email: user.email,
-          userType: user.user_type,
-          orgId: user.org_id,
-          avatarUrl: user.avatar_url,
-          allowByok: user.allow_byok === 1,
+          username: cliUser?.username ?? profile?.username,
+          email: cliUser?.email ?? profile?.email,
+          userType: plan?.userType ?? cliUser?.user_type,
+          orgId: cliUser?.org_id ?? plan?.organization?.orgId,
+          avatarUrl: cliUser?.avatar_url,
+          allowByok: cliUser?.allow_byok === 1 || accountStatus?.allowByok === 1,
         }
       : undefined,
     plan,

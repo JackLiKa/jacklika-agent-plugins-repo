@@ -50,6 +50,8 @@ interface QoderAuthState {
 
 const jobTokenCache = new Map<string, QoderAuthState>()
 
+const qoderUserAgent = 'qoder/1.1.47'
+
 async function exchangePat(pat: string, region: QoderRegion): Promise<QoderAuthState> {
   const cached = jobTokenCache.get(`${region}:${pat}`)
   if (cached && cached.expiresAt > Date.now() + 60_000) {
@@ -58,7 +60,13 @@ async function exchangePat(pat: string, region: QoderRegion): Promise<QoderAuthS
   const openApi = qoderRegionEndpoints[region].openApi
   const response = await fetch(`${openApi}/api/v1/jobToken/exchange`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': qoderUserAgent,
+      'cosy-version': '1.0.1',
+      'cosy-clienttype': '5',
+    },
     body: JSON.stringify({ personal_token: pat }),
   })
   if (!response.ok) {
@@ -99,7 +107,11 @@ async function fetchQoderUserInfo(jobToken: string, region: QoderRegion): Promis
   const openApi = qoderRegionEndpoints[region].openApi
   try {
     const response = await fetch(`${openApi}/api/v1/userinfo`, {
-      headers: { Authorization: `Bearer ${jobToken}` },
+      headers: {
+        Authorization: `Bearer ${jobToken}`,
+        Accept: 'application/json',
+        'User-Agent': qoderUserAgent,
+      },
     })
     if (!response.ok) return undefined
     return await response.json() as { id?: string; name?: string; email?: string }
@@ -181,10 +193,25 @@ async function openApiJsonRequest<T>(
       Authorization: `Bearer ${auth.jobToken}`,
       Accept: 'application/json',
       'accept-encoding': 'identity',
+      'User-Agent': qoderUserAgent,
+      'cosy-version': '1.0.1',
+      'cosy-clienttype': '5',
     },
   })
   if (!response.ok) return undefined
   return (await response.json()) as T
+}
+
+export async function fetchQoderUserProfile(
+  pat: string,
+  region: QoderRegion = 'global',
+): Promise<{ username?: string | undefined; email?: string | undefined; userType?: string | undefined; orgId?: string | undefined; avatarUrl?: string | undefined } | undefined> {
+  const auth = await exchangePat(pat, region)
+  if (!auth.userId && !auth.email && !auth.name) return undefined
+  return {
+    username: auth.name || undefined,
+    email: auth.email || undefined,
+  }
 }
 
 export async function fetchQoderUsage(
