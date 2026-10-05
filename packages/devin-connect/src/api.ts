@@ -1,7 +1,17 @@
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import {
+  decodeGetCliModelConfigsResponse,
+  encodeGetCliModelConfigsRequest,
+  maybeGunzip,
+} from './devin-proto.js'
 
 const DEVIN_BASE_URL = 'https://api.devin.ai'
+
+function normalizeDevinSessionToken(token: string): string {
+  const prefix = 'devin-session-token$'
+  return token.startsWith(prefix) ? token : `${prefix}${token}`
+}
 
 export interface DevinSelf {
   user_id?: string
@@ -58,6 +68,32 @@ async function runDevin(args: string[], pat?: string): Promise<{ ok: boolean; st
 }
 
 export async function listDevinModels(pat: string): Promise<DevinModel[]> {
+  // First try the Devin connect-protocol protobuf endpoint, which returns the
+  // same model catalog used by the Windsurf/CLI client.
+  try {
+    const body = encodeGetCliModelConfigsRequest({ apiKey: normalizeDevinSessionToken(pat) })
+    const response = await fetch(`${DEVIN_BASE_URL}/exa.api_server_pb.ApiServerService/GetCliModelConfigs`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/proto',
+        'connect-protocol-version': '1',
+        accept: '*/*',
+      },
+      body: body as unknown as BodyInit,
+    })
+    if (!response.ok) {
+      throw new Error(`Devin model discovery failed: ${response.status}`)
+    }
+    const raw = Buffer.from(await response.arrayBuffer())
+    const decoded = decodeGetCliModelConfigsResponse(maybeGunzip(raw))
+    const models = decoded
+      .filter((c) => !c.disabled && c.modelUid.trim().length > 0)
+      .map((c) => ({ id: c.modelUid.trim(), name: c.label.trim() || c.modelUid.trim() }))
+    if (models.length > 0) return models
+  } catch {
+    // fall back to CLI
+  }
+
   const result = await runDevin(['models', 'list', '--format', 'json'], pat)
   if (!result.ok) {
     throw new Error(result.stderr || `devin exited with ${result.exitCode}`)
