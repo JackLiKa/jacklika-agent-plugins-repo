@@ -55,8 +55,11 @@ export interface DevinModel {
 async function runDevin(args: string[], pat?: string): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }> {
   const env: NodeJS.ProcessEnv = { ...process.env }
   if (pat) env.DEVIN_API_KEY = pat
+  const command = `devin ${args.map((a) => shellEscape(a)).join(' ')}`
+  const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash'
+  const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-lc', command]
   return new Promise((resolve) => {
-    const child = spawn('devin', args, { env })
+    const child = spawn(shell, shellArgs, { env })
     const stdout: string[] = []
     const stderr: string[] = []
     if (child.stdout) createInterface(child.stdout).on('line', (line) => stdout.push(line))
@@ -67,9 +70,51 @@ async function runDevin(args: string[], pat?: string): Promise<{ ok: boolean; st
   })
 }
 
+function shellEscape(arg: string): string {
+  if (/^[A-Za-z0-9_./:=@-]+$/.test(arg)) return arg
+  return `"${arg.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+function parseDevinCliModelCatalog(parsed: unknown): DevinModel[] {
+  const families: unknown[] = []
+  if (Array.isArray(parsed)) {
+    families.push(...parsed)
+  } else if (parsed && typeof parsed === 'object') {
+    const obj = parsed as Record<string, unknown>
+    if (Array.isArray(obj.models)) families.push(...obj.models)
+    if (Array.isArray(obj.families)) families.push(...obj.families)
+  }
+  const models: DevinModel[] = []
+  for (const family of families) {
+    if (!family || typeof family !== 'object') continue
+    const f = family as Record<string, unknown>
+    const variants = Array.isArray(f.variants) ? f.variants : [family]
+    for (const raw of variants) {
+      if (!raw || typeof raw !== 'object') continue
+      const v = raw as Record<string, unknown>
+      const id = typeof v.model_uid === 'string' ? v.model_uid : typeof v.id === 'string' ? v.id : ''
+      const name = typeof v.label === 'string' ? v.label : typeof v.name === 'string' ? v.name : id
+      if (id.trim().length > 0) models.push({ id: id.trim(), name: name.trim() || id.trim() })
+    }
+  }
+  return models
+}
+
 export async function listDevinModels(pat: string): Promise<DevinModel[]> {
-  // First try the Devin connect-protocol protobuf endpoint, which returns the
-  // same model catalog used by the Windsurf/CLI client.
+  // Prefer the Devin CLI because it uses the user's existing CLI session and
+  // returns the same rich catalog shown in Windsurf.
+  const result = await runDevin(['models', 'list', '--format', 'json'], pat)
+  if (result.ok) {
+    try {
+      const parsed = JSON.parse(result.stdout) as unknown
+      const models = parseDevinCliModelCatalog(parsed)
+      if (models.length > 0) return models
+    } catch {
+      // fall through to protobuf
+    }
+  }
+
+  // Fall back to the connect-protocol protobuf endpoint.
   try {
     const body = encodeGetCliModelConfigsRequest({ apiKey: normalizeDevinSessionToken(pat) })
     const response = await fetch(`${DEVIN_BASE_URL}/exa.api_server_pb.ApiServerService/GetCliModelConfigs`, {
@@ -91,31 +136,11 @@ export async function listDevinModels(pat: string): Promise<DevinModel[]> {
       .map((c) => ({ id: c.modelUid.trim(), name: c.label.trim() || c.modelUid.trim() }))
     if (models.length > 0) return models
   } catch {
-    // fall back to CLI
+    // ignore
   }
 
-  const result = await runDevin(['models', 'list', '--format', 'json'], pat)
   if (!result.ok) {
     throw new Error(result.stderr || `devin exited with ${result.exitCode}`)
   }
-  try {
-    const parsed = JSON.parse(result.stdout) as unknown
-    if (Array.isArray(parsed)) {
-      return parsed.map((m) => {
-        const item = typeof m === 'object' && m !== null ? (m as Record<string, unknown>) : {}
-        const id = typeof item.id === 'string' ? item.id : String(item.name ?? '')
-        return { id, name: typeof item.name === 'string' ? item.name : id }
-      })
-    }
-    if (parsed && typeof parsed === 'object' && 'models' in parsed && Array.isArray((parsed as Record<string, unknown>).models)) {
-      return ((parsed as Record<string, unknown>).models as unknown[]).map((m) => {
-        const item = typeof m === 'object' && m !== null ? (m as Record<string, unknown>) : {}
-        const id = typeof item.id === 'string' ? item.id : String(item.name ?? '')
-        return { id, name: typeof item.name === 'string' ? item.name : id }
-      })
-    }
-    return []
-  } catch {
-    return []
-  }
+  return []
 }
