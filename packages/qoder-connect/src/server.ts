@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { writeFile } from 'node:fs/promises'
 import {
   hostIsLoopback,
   json,
@@ -28,6 +29,7 @@ export interface PatStore {
 interface QoderVariantRuntime {
   id: string
   envToken: string
+  dataDir: string
   cliConfigDir: string
   region: 'china' | 'global'
   statusPath: string
@@ -36,6 +38,7 @@ interface QoderVariantRuntime {
   store: PatStore
   authKey: string
   probeKey: string
+  modelCachePath: string
 }
 
 function patTail(pat: string): string {
@@ -91,6 +94,10 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
     fetchQoderPlan(pat, runtime.region).catch(() => undefined),
     fetchQoderStatus(pat, runtime.region).catch(() => undefined),
   ])
+
+  if (models.length > 0) {
+    await writeFile(runtime.modelCachePath, JSON.stringify(models), 'utf8').catch(() => {})
+  }
 
   return {
     status: 'signed-in',

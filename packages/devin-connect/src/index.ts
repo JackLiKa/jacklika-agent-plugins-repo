@@ -15,7 +15,7 @@ const DEFAULT_MODELS: LlmModelInfo[] = [
 ]
 
 function devinDataDir(ctx: any): string {
-  const profile = ctx.get?.('profileContext')?.name ?? 'default'
+  const profile = ctx.profileContext?.name ?? ctx.get?.('profileContext')?.name ?? 'default'
   return join(process.env.DSH_HOME ?? homedir(), '.dsh', 'profiles', profile, '.dsh-devin-connect')
 }
 
@@ -84,7 +84,7 @@ export const Config: Schema<DevinConfig> = Schema.object({
 })
 
 export const name = 'llm-devin'
-export const inject = ['llm'] as const
+export const inject = ['llm', 'profileContext'] as const
 
 function modelCachePath(dataDir: string): string {
   return join(dataDir, '.devin-models-cache.json')

@@ -1,5 +1,6 @@
 import { CliLlmAdapter, createControlKey, createFilePatStore, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
@@ -14,7 +15,7 @@ const DEFAULT_MODELS: LlmModelInfo[] = [
 ]
 
 function qoderDataDir(ctx: any): string {
-  const profile = ctx.get?.('profileContext')?.name ?? 'default'
+  const profile = ctx.profileContext?.name ?? ctx.get?.('profileContext')?.name ?? 'default'
   return join(process.env.DSH_HOME ?? homedir(), '.dsh', 'profiles', profile, '.dsh-qoder-connect')
 }
 
@@ -92,6 +93,23 @@ function parseCompositeModelId(compositeId: string): { baseId: string; params: A
   return { baseId, params }
 }
 
+function qoderModelCachePath(dataDir: string, variantId: string): string {
+  return join(dataDir, `.qoder-${variantId}-models-cache.json`)
+}
+
+function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
+  try {
+    const text = readFileSync(path, 'utf8')
+    const parsed = JSON.parse(text) as unknown
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof (parsed[0] as Record<string, unknown>).id === 'string') {
+      return parsed as LlmModelInfo[]
+    }
+  } catch {
+    // ignore missing or malformed cache
+  }
+  return undefined
+}
+
 interface QoderConfig extends Record<string, unknown> {
   enabled: boolean
   models: ConfiguredModel[]
@@ -105,17 +123,24 @@ export const Config: Schema<QoderConfig> = Schema.object({
 })
 
 export const name = 'llm-qoder'
-export const inject = ['llm'] as const
+export const inject = ['llm', 'profileContext'] as const
 
 class QoderAdapter extends CliLlmAdapter {
   private readonly selectedParams = new Map<string, AdapterModelParams>()
+  private readonly modelCachePath: string
 
-  constructor(variant: CliVariant, config: QoderConfig) {
+  constructor(variant: CliVariant & { modelCachePath: string }, config: QoderConfig) {
     const configured = config.models
+    const cached = readModelCacheSync(variant.modelCachePath)
     const models = configured.length > 0
       ? configured.map((m) => ({ provider: variant.id, id: m.id, name: m.name, inputModalities: ['text' as const] }))
-      : variant.defaultModels
+      : cached ?? variant.defaultModels
     super({ variant: { ...variant, defaultModels: models }, config: config as Record<string, unknown> })
+    this.modelCachePath = variant.modelCachePath
+  }
+
+  override async listModels(): Promise<readonly LlmModelInfo[]> {
+    return readModelCacheSync(this.modelCachePath) ?? this.variant.defaultModels
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
@@ -178,12 +203,14 @@ export function apply(ctx: any, config: QoderConfig) {
   const providers: any[] = []
 
   for (const variant of variants) {
-    const adapter = new QoderAdapter(variant, config)
+    const variantWithCache = { ...variant, modelCachePath: qoderModelCachePath(dataDir, variant.id) }
+    const adapter = new QoderAdapter(variantWithCache, config)
     adapters.push(adapter)
     const configured = config.models
+    const cached = readModelCacheSync(variantWithCache.modelCachePath)
     const models = configured.length > 0
       ? configured.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
-      : variant.defaultModels
+      : cached ?? variant.defaultModels
     providers.push({
       provider: variant.id,
       displayName: variant.displayName,
@@ -211,11 +238,13 @@ export function apply(ctx: any, config: QoderConfig) {
     const runtimes = variants.map((variant) => ({
       id: variant.id,
       envToken: variant.envToken,
+      dataDir,
       cliConfigDir: variant.cliConfigDir,
       region: variant.region,
       statusPath: variant.statusPath,
       authPath: variant.authPath,
       probePath: variant.probePath,
+      modelCachePath: qoderModelCachePath(dataDir, variant.id),
       store: createFilePatStore({
         filePath: join(
           dataDir,
