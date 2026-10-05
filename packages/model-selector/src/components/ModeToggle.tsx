@@ -35,7 +35,7 @@ const containerStyle: React.CSSProperties = {
   gap: 2,
   padding: 2,
   borderRadius: 6,
-  background: 'rgba(255,255,255,0.06)',
+  background: 'var(--ms-active)',
 }
 
 const baseStyle: React.CSSProperties = {
@@ -45,14 +45,14 @@ const baseStyle: React.CSSProperties = {
   fontSize: 12,
   lineHeight: '16px',
   cursor: 'pointer',
-  color: '#aaa',
+  color: 'var(--ms-fg-muted)',
   background: 'transparent',
 }
 
 const activeStyle: React.CSSProperties = {
   ...baseStyle,
-  color: '#111',
-  background: '#fff',
+  color: 'var(--ms-bg)',
+  background: 'var(--ms-fg)',
   fontWeight: 500,
 }
 

@@ -50,6 +50,12 @@ export type Pane = 'root' | 'provider' | 'model' | 'effort'
 
 export type SelectorMode = 'original' | 'replica'
 
+export interface ModelParams {
+  contextWindow?: number
+  reasoningEffort?: string
+  maxTokens?: number
+}
+
 export interface Choice {
   group: CatalogGroup
   model: CatalogModel

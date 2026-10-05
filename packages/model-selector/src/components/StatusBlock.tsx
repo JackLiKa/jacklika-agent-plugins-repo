@@ -25,7 +25,7 @@ export function StatusBlock({ loading, loadingText, errorText, onRetry, retryTex
 
 const loadingStyle: React.CSSProperties = {
   fontSize: 12,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
 }
 
 const errorRowStyle: React.CSSProperties = {
@@ -42,7 +42,7 @@ const errorTextStyle: React.CSSProperties = {
 const retryStyle: React.CSSProperties = {
   border: 'none',
   background: 'transparent',
-  color: '#1677ff',
+  color: 'var(--ms-accent)',
   cursor: 'pointer',
   fontSize: 12,
   padding: 0,

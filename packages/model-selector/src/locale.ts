@@ -50,11 +50,15 @@ export const en = {
   devin: {
     search: 'Search all models',
     empty: 'No models found.',
+    contextWindow: 'Context',
+    reasoningEffort: 'Effort',
   },
   qoder: {
     search: 'Search models...',
     empty: 'No models found.',
     discount: 'Off-peak discount starts in',
+    contextWindow: 'Context',
+    reasoningEffort: 'Thinking',
   },
   replica: {
     empty: 'No providers available.',
@@ -111,11 +115,15 @@ export const zh = {
   devin: {
     search: '搜索所有模型',
     empty: '未找到模型。',
+    contextWindow: '上下文窗口',
+    reasoningEffort: '推理等级',
   },
   qoder: {
     search: '搜索模型...',
     empty: '未找到模型。',
     discount: '错峰折扣将于',
+    contextWindow: '上下文窗口',
+    reasoningEffort: '思考模式',
   },
   replica: {
     empty: '没有可用的供应商。',

@@ -1,14 +1,54 @@
-import type { CatalogFailure, CatalogGroup, CatalogModel, Choice, Pane, Selection } from './types.ts'
+import type { CatalogFailure, CatalogGroup, CatalogModel, Choice, ModelParams, Pane, Selection } from './types.ts'
+
+const PARAMS_SEP = '@@'
 
 export function compositeKey(providerId: string, modelId: string): string {
   return `${providerId}:${modelId}`
 }
 
-export function selectionFor(group: CatalogGroup, model: CatalogModel): Selection {
+export function encodeModelId(baseModelId: string, params: ModelParams = {}): string {
+  const parts: string[] = []
+  if (params.contextWindow !== undefined && !Number.isNaN(params.contextWindow)) {
+    parts.push(`ctx=${params.contextWindow}`)
+  }
+  if (params.reasoningEffort !== undefined && params.reasoningEffort !== '') {
+    parts.push(`effort=${encodeURIComponent(params.reasoningEffort)}`)
+  }
+  if (params.maxTokens !== undefined && !Number.isNaN(params.maxTokens)) {
+    parts.push(`max=${params.maxTokens}`)
+  }
+  if (parts.length === 0) return baseModelId
+  return `${baseModelId}${PARAMS_SEP}${parts.join('&')}`
+}
+
+export function decodeModelId(compositeId: string): { baseModelId: string; params: ModelParams } {
+  const idx = compositeId.indexOf(PARAMS_SEP)
+  if (idx < 0) return { baseModelId: compositeId, params: {} }
+  const baseModelId = compositeId.slice(0, idx)
+  const params: ModelParams = {}
+  const query = compositeId.slice(idx + PARAMS_SEP.length)
+  for (const part of query.split('&')) {
+    const [key, value] = part.split('=')
+    if (value === undefined) continue
+    const decoded = decodeURIComponent(value)
+    if (key === 'ctx') params.contextWindow = Number(decoded)
+    if (key === 'effort') params.reasoningEffort = decoded
+    if (key === 'max') params.maxTokens = Number(decoded)
+  }
+  return { baseModelId, params }
+}
+
+export function selectionFor(group: CatalogGroup, model: CatalogModel, params: ModelParams = {}): Selection {
+  const baseId = model.id
+  const encoded = encodeModelId(baseId, params)
   return {
     provider: group.id,
-    model: model.id,
-    ...(model.reasoning?.defaultEffort === undefined ? {} : { reasoningEffort: model.reasoning.defaultEffort }),
+    model: encoded,
+    ...(params.reasoningEffort === undefined && model.reasoning?.defaultEffort !== undefined
+      ? { reasoningEffort: model.reasoning.defaultEffort }
+      : params.reasoningEffort !== undefined
+        ? { reasoningEffort: params.reasoningEffort }
+        : {}),
   }
 }
 
@@ -23,9 +63,13 @@ export function sortGroupsForCurrent(groups: CatalogGroup[], currentId: string |
 
 export function findCurrentChoice(choices: Choice[], current: { provider: string; model: string } | null): Choice | undefined {
   if (current === null) return undefined
-  return choices.find(
-    (choice) => choice.selection.provider === current.provider && choice.selection.model === current.model,
-  )
+  const decoded = decodeModelId(current.model)
+  return choices.find((choice) => {
+    const choiceBase = decodeModelId(choice.selection.model).baseModelId
+    return (
+      choice.selection.provider === current.provider && choiceBase === decoded.baseModelId
+    )
+  })
 }
 
 export function isCurrentSelected(
@@ -33,7 +77,9 @@ export function isCurrentSelected(
   providerId: string,
   modelId: string,
 ): boolean {
-  return current !== null && current.provider === providerId && current.model === modelId
+  if (current === null) return false
+  const decoded = decodeModelId(current.model)
+  return current.provider === providerId && decoded.baseModelId === modelId
 }
 
 export function matchesQuery(text: string | undefined, query: string): boolean {

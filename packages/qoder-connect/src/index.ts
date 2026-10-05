@@ -1,5 +1,5 @@
 import { CliLlmAdapter, createControlKey, createFilePatStore, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
-import type { GenerateOptions, LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
@@ -67,6 +67,31 @@ const ModelSchema = Schema.object({
   contextWindow: Schema.number(),
 })
 
+interface AdapterModelParams {
+  contextWindow?: number
+  reasoningEffort?: string
+  maxTokens?: number
+}
+
+const PARAMS_SEP = '@@'
+
+function parseCompositeModelId(compositeId: string): { baseId: string; params: AdapterModelParams } {
+  const idx = compositeId.indexOf(PARAMS_SEP)
+  if (idx < 0) return { baseId: compositeId, params: {} }
+  const baseId = compositeId.slice(0, idx)
+  const params: AdapterModelParams = {}
+  const query = compositeId.slice(idx + PARAMS_SEP.length)
+  for (const part of query.split('&')) {
+    const [key, value] = part.split('=')
+    if (value === undefined) continue
+    const decoded = decodeURIComponent(value)
+    if (key === 'ctx') params.contextWindow = Number(decoded)
+    if (key === 'effort') params.reasoningEffort = decoded
+    if (key === 'max') params.maxTokens = Number(decoded)
+  }
+  return { baseId, params }
+}
+
 interface QoderConfig extends Record<string, unknown> {
   enabled: boolean
   models: ConfiguredModel[]
@@ -83,6 +108,8 @@ export const name = 'llm-qoder'
 export const inject = ['llm'] as const
 
 class QoderAdapter extends CliLlmAdapter {
+  private readonly selectedParams = new Map<string, AdapterModelParams>()
+
   constructor(variant: CliVariant, config: QoderConfig) {
     const configured = config.models
     const models = configured.length > 0
@@ -91,8 +118,19 @@ class QoderAdapter extends CliLlmAdapter {
     super({ variant: { ...variant, defaultModels: models }, config: config as Record<string, unknown> })
   }
 
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    const parsed = parseCompositeModelId(model)
+    if (Object.keys(parsed.params).length > 0) {
+      this.selectedParams.set(parsed.baseId, parsed.params)
+    }
+    return { provider, id: parsed.baseId, name: parsed.baseId }
+  }
+
   protected buildArgs(options: GenerateOptions): string[] {
     const base = this.buildBaseOptions(options)
+    const params = options.model ? this.selectedParams.get(options.model) : undefined
+    const reasoningEffort = params?.reasoningEffort ?? options.reasoningEffort
+    const maxTokens = params?.maxTokens ?? params?.contextWindow ?? base.maxTokens
     const args = [
       '-p',
       '--model',
@@ -102,8 +140,8 @@ class QoderAdapter extends CliLlmAdapter {
       '--no-session-persistence',
     ]
     if (base.system) args.push('--system-prompt', base.system)
-    if (base.maxTokens) args.push('--max-output-tokens', String(base.maxTokens))
-    if (options.reasoningEffort) args.push('--reasoning-effort', String(options.reasoningEffort))
+    if (maxTokens) args.push('--max-output-tokens', String(maxTokens))
+    if (reasoningEffort) args.push('--reasoning-effort', String(reasoningEffort))
     args.push('--', base.prompt)
     return args
   }

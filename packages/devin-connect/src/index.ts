@@ -38,6 +38,31 @@ interface ConfiguredModel {
   contextWindow?: number
 }
 
+interface AdapterModelParams {
+  contextWindow?: number
+  reasoningEffort?: string
+  maxTokens?: number
+}
+
+const PARAMS_SEP = '@@'
+
+function parseCompositeModelId(compositeId: string): { baseId: string; params: AdapterModelParams } {
+  const idx = compositeId.indexOf(PARAMS_SEP)
+  if (idx < 0) return { baseId: compositeId, params: {} }
+  const baseId = compositeId.slice(0, idx)
+  const params: AdapterModelParams = {}
+  const query = compositeId.slice(idx + PARAMS_SEP.length)
+  for (const part of query.split('&')) {
+    const [key, value] = part.split('=')
+    if (value === undefined) continue
+    const decoded = decodeURIComponent(value)
+    if (key === 'ctx') params.contextWindow = Number(decoded)
+    if (key === 'effort') params.reasoningEffort = decoded
+    if (key === 'max') params.maxTokens = Number(decoded)
+  }
+  return { baseId, params }
+}
+
 const ModelSchema = Schema.object({
   id: Schema.string().required(),
   name: Schema.string().required(),
@@ -94,6 +119,7 @@ function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
 
 class DevinAdapter extends CliLlmAdapter {
   private readonly cachePath: string
+  private readonly selectedParams = new Map<string, AdapterModelParams>()
 
   constructor(variant: CliVariant, config: DevinConfig, dataDir: string) {
     const configured = config.models
@@ -122,9 +148,13 @@ class DevinAdapter extends CliLlmAdapter {
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    const parsed = parseCompositeModelId(model)
+    if (Object.keys(parsed.params).length > 0) {
+      this.selectedParams.set(parsed.baseId, parsed.params)
+    }
     const cached = await this.cachedModels()
-    const info = cached.find((m) => m.id === model)
-    const result: LlmResolvedModelInfo = { provider, id: model, name: info?.name ?? model }
+    const info = cached.find((m) => m.id === parsed.baseId)
+    const result: LlmResolvedModelInfo = { provider, id: parsed.baseId, name: info?.name ?? parsed.baseId }
     if (info?.inputModalities !== undefined) {
       result.inputModalities = info.inputModalities as readonly ModelModality[]
     }
@@ -134,8 +164,12 @@ class DevinAdapter extends CliLlmAdapter {
   protected buildArgs(options: GenerateOptions): string[] {
     const base = this.buildBaseOptions(options)
     const args = ['-p']
+    const params = options.model ? this.selectedParams.get(options.model) : undefined
+    const reasoningEffort = params?.reasoningEffort ?? options.reasoningEffort
+    const maxTokens = params?.maxTokens ?? params?.contextWindow ?? base.maxTokens
     if (options.model) args.push('--model', options.model)
-    if (base.maxTokens) args.push('--max-output-tokens', String(base.maxTokens))
+    if (maxTokens) args.push('--max-output-tokens', String(maxTokens))
+    if (reasoningEffort) args.push('--reasoning-effort', reasoningEffort)
     args.push('--', base.prompt)
     return args
   }

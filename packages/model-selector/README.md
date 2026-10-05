@@ -1,12 +1,13 @@
 # @jacklika/dsh-model-selector
 
-Provider-first model selector for the DeepSeek Harness composer seat.
+Custom model selector for the DeepSeek Harness composer seat.
 
-Replaces the default `conversation.input.model` slot with a three-level selector that keeps large catalogs readable:
+Replaces the default `conversation.input.model` slot with a popup that offers two modes:
 
-1. **Root** – choose Model or Effort.
-2. **Provider** – pick a provider, search providers, retry failed providers.
-3. **Model** – see only that provider's models, grouped by family.
+- **Original** – a compact, provider-grouped list that mirrors the native selector style.
+- **Replica** – a provider-specific replica of the Devin or Qoder native model picker, including parameter controls for context window and reasoning effort.
+
+The last mode is remembered with `localStorage`; the default mode is **Original**.
 
 ## How it works
 
@@ -15,18 +16,25 @@ The selector registers on the official slot `conversation.input.model` with `pri
 It reuses the harness's per-session `modelDirectories` service:
 
 - Provider list, model groups, and reasoning efforts come from `directory.store`.
-- Selections are submitted through `directory.select()` so routing, effort handling, and adapter defaults stay identical to the native selector.
+- Selections are submitted through `directory.select()` so routing stays identical to the native selector.
 
-## Model metadata
+## Parameters
 
-Models advertise their context window and cost in the `description` field (supplied by adapters such as `@jacklika/dsh-devin-connect`). The selector renders this metadata under each model name.
+In **Replica** mode, Devin and Qoder panes expose two parameter rows:
 
-## Family grouping
+- **Context window** – 200K, 400K, or 1M tokens.
+- **Reasoning effort / Thinking mode** – low, medium, high, xhigh, max.
 
-Devin exposes many variants per model family (`SWE-2 High/Medium/Max`, `Claude Fable 5.1 Medium/Low/...`). The selector splits model names on the ` › ` separator and renders one header per family, so related variants stay together.
+Selected parameters are encoded into the model id as `model-id@@ctx=<tokens>&effort=<level>`. The Devin and Qoder adapters decode this id and pass the values to their respective CLIs:
+
+- `--max-output-tokens <tokens>`
+- `--reasoning-effort <level>`
+
+## UI theming
+
+The popup follows the OS color scheme (`prefers-color-scheme`) via CSS variables, so it renders correctly in both light and dark DeepSeek Harness themes.
 
 ## Keyboard navigation
 
-- `↑` / `↓` move focus through the current pane's rows.
-- `Esc` walks back one level: model → provider → root → close.
-- Clicking a provider/model also works with the mouse.
+- `Esc` closes the popup.
+- Mouse/touch selection is fully supported.

@@ -1,12 +1,13 @@
 # @jacklika/dsh-model-selector
 
-DeepSeek Harness 聊天输入框的供应商优先模型选择器。
+DeepSeek Harness 聊天输入框的自定义模型选择器。
 
-替换默认的 `conversation.input.model` 插槽，提供可读性更好的三级选择器：
+替换默认的 `conversation.input.model` 插槽，提供两种模式：
 
-1. **根菜单** – 选择模型或推理等级。
-2. **供应商** – 选择供应商，支持搜索与重试加载失败的供应商。
-3. **模型** – 只看所选供应商的模型，并按 family 分组。
+- **原版** – 紧凑的供应商分组列表，风格与原生选择器一致。
+- **复刻** – 按当前供应商还原 Devin 或 Qoder 原生选择器，并支持上下文窗口、推理等级等参数调节。
+
+上次选择的模式通过 `localStorage` 记忆；默认模式为 **原版**。
 
 ## 工作原理
 
@@ -15,18 +16,25 @@ DeepSeek Harness 聊天输入框的供应商优先模型选择器。
 它复用 DSH 的 per-session `modelDirectories` 服务：
 
 - 供应商列表、模型分组、推理等级都来自 `directory.store`。
-- 选中模型通过 `directory.select()` 提交，因此路由、推理等级处理与 adapter 默认行为与原生选择器完全一致。
+- 选中模型通过 `directory.select()` 提交，因此路由与原生选择器完全一致。
 
-## 模型元数据
+## 参数调节
 
-模型在 `description` 字段中提供上下文长度与价格信息（由 `@jacklika/dsh-devin-connect` 等 adapter 提供）。选择器会在模型名下方渲染这些元数据。
+在 **复刻** 模式下，Devin 和 Qoder 面板会显示两行参数：
 
-## Family 分组
+- **上下文窗口** – 200K、400K、1M。
+- **推理等级 / 思考模式** – low、medium、high、xhigh、max。
 
-Devin 每个模型 family 下有多个变体（如 `SWE-2 High/Medium/Max`、`Claude Fable 5.1 Medium/Low/...`）。选择器按 ` › ` 分隔符拆分模型名，并为每个 family 渲染一个分组标题，使相关变体排在一起。
+选中的参数会编码进模型 id：`model-id@@ctx=<tokens>&effort=<level>`。Devin 和 Qoder 的 adapter 会解码该 id，并把参数传给各自 CLI：
+
+- `--max-output-tokens <tokens>`
+- `--reasoning-effort <level>`
+
+## UI 主题
+
+弹窗通过 CSS 变量跟随操作系统主题（`prefers-color-scheme`），在浅色与深色 DeepSeek Harness 主题下都能正确显示。
 
 ## 键盘导航
 
-- `↑` / `↓` 在当前面板中移动焦点。
-- `Esc` 一级一级返回：模型 → 供应商 → 根菜单 → 关闭。
-- 也可使用鼠标点击供应商/模型。
+- `Esc` 关闭弹窗。
+- 支持鼠标/触摸选择。

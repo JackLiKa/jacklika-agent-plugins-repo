@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { decodeModelId, selectionFor } from '../model/selection.ts'
 import type { CatalogGroup, CatalogModel, DirectorySnapshot, ModelProviderSelectProps, Selection } from '../model/types.ts'
-import { selectionFor } from '../model/selection.ts'
 
 interface DevinPaneProps {
   directory: DirectorySnapshot
@@ -8,8 +8,24 @@ interface DevinPaneProps {
   t: ModelProviderSelectProps['t']
 }
 
+const CONTEXT_OPTIONS = [
+  { label: '200K 默认', value: 200_000 },
+  { label: '400K', value: 400_000 },
+  { label: '1M', value: 1_000_000 },
+]
+
+const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max']
+
 export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Element {
   const [query, setQuery] = useState('')
+  const decoded = useMemo(() => (directory.current ? decodeModelId(directory.current.model) : null), [directory.current])
+  const [contextWindow, setContextWindow] = useState<number>(decoded?.params.contextWindow ?? 200_000)
+  const [reasoningEffort, setReasoningEffort] = useState<string>(decoded?.params.reasoningEffort ?? 'medium')
+
+  useEffect(() => {
+    if (decoded?.params.contextWindow !== undefined) setContextWindow(decoded.params.contextWindow)
+    if (decoded?.params.reasoningEffort !== undefined) setReasoningEffort(decoded.params.reasoningEffort)
+  }, [decoded?.params.contextWindow, decoded?.params.reasoningEffort])
 
   const groups = useMemo(() => buildDevinSections(directory.groups, directory.current), [directory.groups, directory.current])
   const filteredGroups = useMemo(() => {
@@ -20,8 +36,21 @@ export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Eleme
       .filter((section) => section.models.length > 0)
   }, [groups, query])
 
+  const selectModel = (group: CatalogGroup, model: CatalogModel) => {
+    onSelect(
+      selectionFor(group, model, {
+        contextWindow,
+        reasoningEffort,
+      }),
+    )
+  }
+
   return (
     <div style={containerStyle}>
+      <div style={paramsPanelStyle}>
+        <ParamRow label={t('devin.contextWindow')} options={CONTEXT_OPTIONS} value={contextWindow} onChange={setContextWindow} />
+        <ParamRow label={t('devin.reasoningEffort')} options={EFFORT_OPTIONS.map((e) => ({ label: e, value: e }))} value={reasoningEffort} onChange={setReasoningEffort} />
+      </div>
       <div style={searchRowStyle}>
         <span style={searchIconStyle}>🔎</span>
         <input
@@ -34,9 +63,42 @@ export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Eleme
       </div>
       <div style={listStyle}>
         {filteredGroups.map((section) => (
-          <Section key={section.title} title={section.title} models={section.models} current={directory.current} onSelect={onSelect} />
+          <Section key={section.title} title={section.title} models={section.models} current={directory.current} onSelect={selectModel} />
         ))}
         {filteredGroups.length === 0 && <div style={emptyStyle}>{t('devin.empty')}</div>}
+      </div>
+    </div>
+  )
+}
+
+function ParamRow<T extends string | number>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  options: { label: string; value: T }[]
+  value: T
+  onChange: (value: T) => void
+}): JSX.Element {
+  return (
+    <div style={paramRowStyle}>
+      <span style={paramLabelStyle}>{label}</span>
+      <div style={chipsStyle}>
+        {options.map((opt) => {
+          const active = opt.value === value
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              style={active ? activeChipStyle : chipStyle}
+              onClick={() => onChange(opt.value)}
+            >
+              {opt.label}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -51,13 +113,13 @@ function Section({
   title: string
   models: { group: CatalogGroup; model: CatalogModel }[]
   current: DirectorySnapshot['current']
-  onSelect: (selection: Selection) => void
+  onSelect: (group: CatalogGroup, model: CatalogModel) => void
 }): JSX.Element {
   return (
     <div style={sectionStyle}>
       <div style={sectionTitleStyle}>{title}</div>
       {models.map(({ group, model }) => {
-        const selected = current?.provider === group.id && current?.model === model.id
+        const selected = current?.provider === group.id && decodeModelId(current.model).baseModelId === model.id
         return <DevinRow key={`${group.id}-${model.id}`} group={group} model={model} selected={selected} onSelect={onSelect} />
       })}
     </div>
@@ -73,11 +135,12 @@ function DevinRow({
   group: CatalogGroup
   model: CatalogModel
   selected: boolean
-  onSelect: (selection: Selection) => void
+  onSelect: (group: CatalogGroup, model: CatalogModel) => void
 }): JSX.Element {
   const hue = stringHue(model.name)
+  const free = isFreeModel(model)
   return (
-    <button type="button" style={selected ? selectedRowStyle : rowStyle} onClick={() => onSelect(selectionFor(group, model))}>
+    <button type="button" style={selected ? selectedRowStyle : rowStyle} onClick={() => onSelect(group, model)}>
       <span style={iconStyle}>⚙</span>
       <div style={infoStyle}>
         <div style={nameRowStyle}>
@@ -86,15 +149,18 @@ function DevinRow({
         </div>
         {model.description && <div style={descStyle}>{model.description}</div>}
       </div>
-      <div style={meterStyle} aria-hidden>
-        <div style={{ ...meterFillStyle, width: `${30 + (hue % 50)}%`, background: `hsl(${hue}, 70%, 55%)` }} />
+      <div style={tagsStyle}>
+        {free && <span style={freeTagStyle}>Free</span>}
+        <div style={meterStyle} aria-hidden>
+          <div style={{ ...meterFillStyle, width: `${30 + (hue % 50)}%`, background: `hsl(${hue}, 70%, 55%)` }} />
+        </div>
       </div>
     </button>
   )
 }
 
 function buildDevinSections(groups: CatalogGroup[], current: DirectorySnapshot['current']) {
-  const currentId = current ? `${current.provider}/${current.model}` : null
+  const currentBaseId = current ? decodeModelId(current.model).baseModelId : null
   const recentlyUsed: { group: CatalogGroup; model: CatalogModel }[] = []
   const recommended: { group: CatalogGroup; model: CatalogModel }[] = []
   const others: { group: CatalogGroup; model: CatalogModel }[] = []
@@ -102,8 +168,7 @@ function buildDevinSections(groups: CatalogGroup[], current: DirectorySnapshot['
   for (const group of groups) {
     for (const model of group.models) {
       const entry = { group, model }
-      const id = `${group.id}/${model.id}`
-      if (currentId && id === currentId) {
+      if (currentBaseId && model.id === currentBaseId) {
         recentlyUsed.push(entry)
       } else if (isRecommended(model)) {
         recommended.push(entry)
@@ -126,6 +191,11 @@ function isRecommended(model: CatalogModel): boolean {
   return name.includes('swe-2') || name.includes('opus') || name.includes('fable') || name.includes('astra') || name.includes('kimi')
 }
 
+function isFreeModel(model: CatalogModel): boolean {
+  const name = model.name.toLowerCase()
+  return name.includes('adaptive') || name.includes('fusion')
+}
+
 function stringHue(name: string): number {
   let hash = 0
   for (const ch of name) hash = (hash << 5) - hash + ch.charCodeAt(0)
@@ -137,7 +207,49 @@ const containerStyle: React.CSSProperties = {
   flexDirection: 'column',
   minWidth: 360,
   maxHeight: '100%',
-  color: '#eee',
+  color: 'var(--ms-fg)',
+}
+
+const paramsPanelStyle: React.CSSProperties = {
+  padding: '10px 12px',
+  borderBottom: '1px solid var(--ms-border)',
+}
+
+const paramRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  marginBottom: 8,
+}
+
+const paramLabelStyle: React.CSSProperties = {
+  width: 70,
+  fontSize: 12,
+  color: 'var(--ms-fg-muted)',
+  flexShrink: 0,
+}
+
+const chipsStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+  flex: 1,
+}
+
+const chipStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  border: '1px solid var(--ms-border)',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--ms-fg)',
+  cursor: 'pointer',
+  fontSize: 12,
+}
+
+const activeChipStyle: React.CSSProperties = {
+  ...chipStyle,
+  background: 'var(--ms-active)',
+  borderColor: 'var(--ms-accent)',
 }
 
 const searchRowStyle: React.CSSProperties = {
@@ -145,12 +257,12 @@ const searchRowStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '10px 12px',
-  borderBottom: '1px solid rgba(255,255,255,0.08)',
+  borderBottom: '1px solid var(--ms-border)',
 }
 
 const searchIconStyle: React.CSSProperties = {
   fontSize: 12,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
 }
 
 const searchInputStyle: React.CSSProperties = {
@@ -158,7 +270,7 @@ const searchInputStyle: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   outline: 'none',
-  color: '#eee',
+  color: 'var(--ms-fg)',
   fontSize: 13,
   lineHeight: '20px',
 }
@@ -176,7 +288,7 @@ const sectionTitleStyle: React.CSSProperties = {
   padding: '6px 12px',
   fontSize: 11,
   fontWeight: 600,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
   textTransform: 'uppercase',
   letterSpacing: 0.5,
 }
@@ -189,14 +301,14 @@ const rowStyle: React.CSSProperties = {
   padding: '10px 12px',
   border: 'none',
   background: 'transparent',
-  color: '#eee',
+  color: 'var(--ms-fg)',
   cursor: 'pointer',
   textAlign: 'left',
 }
 
 const selectedRowStyle: React.CSSProperties = {
   ...rowStyle,
-  background: 'rgba(255,255,255,0.08)',
+  background: 'var(--ms-active)',
 }
 
 const iconStyle: React.CSSProperties = {
@@ -206,7 +318,7 @@ const iconStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   borderRadius: 6,
-  background: 'rgba(255,255,255,0.08)',
+  background: 'var(--ms-active)',
   fontSize: 14,
   flexShrink: 0,
 }
@@ -230,22 +342,38 @@ const nameStyle: React.CSSProperties = {
 const descStyle: React.CSSProperties = {
   marginTop: 2,
   fontSize: 11,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 }
 
 const checkStyle: React.CSSProperties = {
-  color: '#4ade80',
+  color: 'var(--ms-accent)',
   fontSize: 12,
+}
+
+const tagsStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexShrink: 0,
+}
+
+const freeTagStyle: React.CSSProperties = {
+  padding: '2px 6px',
+  borderRadius: 4,
+  background: 'var(--ms-accent)',
+  color: 'var(--ms-bg)',
+  fontSize: 10,
+  fontWeight: 600,
 }
 
 const meterStyle: React.CSSProperties = {
   width: 40,
   height: 4,
   borderRadius: 2,
-  background: 'rgba(255,255,255,0.1)',
+  background: 'var(--ms-border)',
   overflow: 'hidden',
   flexShrink: 0,
 }
@@ -259,5 +387,5 @@ const emptyStyle: React.CSSProperties = {
   padding: '20px 12px',
   textAlign: 'center',
   fontSize: 13,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
 }

@@ -98,12 +98,12 @@ const searchRowStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '10px 12px',
-  borderBottom: '1px solid rgba(255,255,255,0.08)',
+  borderBottom: '1px solid var(--ms-border)',
 }
 
 const searchIconStyle: React.CSSProperties = {
   fontSize: 12,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
 }
 
 const searchInputStyle: React.CSSProperties = {
@@ -111,7 +111,7 @@ const searchInputStyle: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   outline: 'none',
-  color: '#eee',
+  color: 'var(--ms-fg)',
   fontSize: 13,
   lineHeight: '20px',
 }
@@ -129,7 +129,7 @@ const groupNameStyle: React.CSSProperties = {
   padding: '6px 12px',
   fontSize: 11,
   fontWeight: 600,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
   textTransform: 'uppercase',
   letterSpacing: 0.5,
 }
@@ -142,14 +142,14 @@ const rowStyle: React.CSSProperties = {
   padding: '8px 12px',
   border: 'none',
   background: 'transparent',
-  color: '#eee',
+  color: 'var(--ms-fg)',
   cursor: 'pointer',
   textAlign: 'left',
 }
 
 const selectedRowStyle: React.CSSProperties = {
   ...rowStyle,
-  background: 'rgba(255,255,255,0.08)',
+  background: 'var(--ms-active)',
 }
 
 const modelNameStyle: React.CSSProperties = {
@@ -160,7 +160,7 @@ const modelNameStyle: React.CSSProperties = {
 
 const descStyle: React.CSSProperties = {
   fontSize: 11,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
   maxWidth: 160,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -168,7 +168,7 @@ const descStyle: React.CSSProperties = {
 }
 
 const checkStyle: React.CSSProperties = {
-  color: '#4ade80',
+  color: 'var(--ms-accent)',
   fontSize: 12,
 }
 
@@ -176,5 +176,5 @@ const emptyStyle: React.CSSProperties = {
   padding: '20px 12px',
   textAlign: 'center',
   fontSize: 13,
-  color: '#888',
+  color: 'var(--ms-fg-muted)',
 }
