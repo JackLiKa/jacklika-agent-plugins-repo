@@ -8,7 +8,15 @@ import {
   safeMessage,
   type WebRouteContext,
 } from '@jacklika/dsh-connector-core'
-import { fetchQoderUsage, fetchQoderUser, listQoderModels, verifyQoderPat, type QoderUsage } from './api.js'
+import {
+  fetchQoderPlan,
+  fetchQoderStatus,
+  fetchQoderUsage,
+  fetchQoderUser,
+  listQoderModels,
+  verifyQoderPat,
+  type QoderUsage,
+} from './api.js'
 
 export interface PatStore {
   get(): string | undefined | Promise<string | undefined>
@@ -35,20 +43,31 @@ function patTail(pat: string): string {
 }
 
 function normalizeUsage(usage: QoderUsage | undefined) {
-  if (!usage?.userQuota) return undefined
+  if (!usage) return undefined
+  const accounts: { packageName: string; remain: number; size: number; unlimited: boolean }[] = []
+  const pushQuota = (name: string, quota: { total: number; used: number; remaining: number; unit: string } | undefined) => {
+    if (!quota || quota.total <= 0) return
+    accounts.push({
+      packageName: name,
+      remain: quota.remaining,
+      size: quota.total,
+      unlimited: false,
+    })
+  }
+  pushQuota('Plan', usage.userQuota)
+  pushQuota('Org Package', usage.orgResourcePackage)
+  pushQuota('Add-on', usage.addOnQuota)
+  if (accounts.length === 0) return undefined
+  const totalUsed = accounts.reduce((sum, a) => sum + (a.size - a.remain), 0)
+  const totalSize = accounts.reduce((sum, a) => sum + a.size, 0)
   return {
-    accounts: [
-      {
-        packageName: 'Plan',
-        remain: usage.userQuota.remaining,
-        size: usage.userQuota.total,
-        unlimited: false,
-      },
-    ],
+    accounts,
     unlimited: false,
-    total: usage.userQuota.used,
-    totalSize: usage.userQuota.total,
-    cycleResetTime: usage.expiresAt ? new Date(usage.expiresAt).toISOString() : undefined,
+    total: totalUsed,
+    totalSize,
+    cycleResetTime: usage.expiresAt,
+    percentage: usage.totalUsagePercentage,
+    isQuotaExceeded: usage.isQuotaExceeded,
   }
 }
 
@@ -63,10 +82,12 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
     return { status: 'error', message: 'invalid or expired PAT', authKey: runtime.authKey }
   }
 
-  const [models, user, usage] = await Promise.all([
+  const [models, user, usage, plan, accountStatus] = await Promise.all([
     listQoderModels(pat, runtime.cliConfigDir).catch(() => [] as { id: string; name: string }[]),
     fetchQoderUser(pat, runtime.cliConfigDir).catch(() => undefined),
     fetchQoderUsage(pat, runtime.region, runtime.cliConfigDir).catch(() => undefined),
+    fetchQoderPlan(pat, runtime.region, runtime.cliConfigDir).catch(() => undefined),
+    fetchQoderStatus(pat, runtime.region, runtime.cliConfigDir).catch(() => undefined),
   ])
 
   return {
@@ -85,6 +106,8 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
           allowByok: user.allow_byok === 1,
         }
       : undefined,
+    plan,
+    accountStatus,
     models,
     credits: normalizeUsage(usage),
     probe: { candidates: [], results: [] },

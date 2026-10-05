@@ -6,21 +6,22 @@ import { ConnectorListCard, setConnectorStatus } from '@jacklika/dsh-connector-c
 import { QoderPluginCard } from './client/QoderPluginCard.tsx'
 import { injectQuotaCss } from './client/quota-styles.ts'
 import { QODER_LOCALES } from './client/locales.ts'
-import { isQoderWebStatus, type QoderCredits } from './client/status-document.ts'
+import { isQoderWebStatus, type QoderCredits, type QoderPlan } from './client/status-document.ts'
 import { QODER_GLOBAL_STATUS_PATH, QODER_STATUS_PATH } from './client/status-paths.ts'
 
 const POLL_INTERVAL_MS = 30_000
 
-function formatQoderQuota(credits: QoderCredits | undefined): string | undefined {
+function formatQoderQuota(credits: QoderCredits | undefined, plan: QoderPlan | undefined): string | undefined {
   if (!credits) return undefined
   if (credits.error) return `Quota error: ${credits.error}`
   const accounts = credits.accounts.filter((a) => !a.unlimited)
-  if (accounts.length === 0) {
-    return credits.accounts.some((a) => a.unlimited) ? 'Unlimited' : undefined
-  }
-  const remain = accounts.reduce((sum, a) => sum + (a.remain ?? 0), 0)
-  const size = accounts.reduce((sum, a) => sum + (a.size ?? 0), 0)
-  return `${remain} / ${size > 0 ? size : '?'}`
+  const quotaSummary = accounts.length === 0
+    ? (credits.accounts.some((a) => a.unlimited) ? 'Unlimited' : undefined)
+    : `${accounts.reduce((sum, a) => sum + (a.remain ?? 0), 0)} / ${accounts.reduce((sum, a) => sum + (a.size ?? 0), 0)} credits`
+  const parts: string[] = []
+  if (plan?.planTierName) parts.push(plan.planTierName)
+  if (quotaSummary) parts.push(quotaSummary)
+  return parts.length > 0 ? parts.join(' | ') : undefined
 }
 
 function startStatusPoller(statusPath: string, id: string, name: string): () => void {
@@ -45,7 +46,7 @@ function startStatusPoller(statusPath: string, id: string, name: string): () => 
           ...(user ? { username: user.username, email: user.email, userType: user.userType, orgId: user.orgId, avatarUrl: user.avatarUrl } : {}),
           modelsCount: models.length,
           models,
-          quotaText: signedIn ? formatQoderQuota(value.credits) : undefined,
+          quotaText: signedIn ? formatQoderQuota(value.credits, value.plan) : undefined,
         })
       }
     } catch {

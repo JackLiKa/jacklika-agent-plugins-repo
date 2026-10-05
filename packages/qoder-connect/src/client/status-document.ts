@@ -7,6 +7,25 @@ export interface QoderStatusSignedOut {
   authKey: string
 }
 
+export interface QoderPlan {
+  userType?: string
+  planTierName?: string
+  planTier?: string
+  isPersonalVersion?: boolean
+  isHighestTier?: boolean
+  isRenewed?: boolean
+  startDate?: string
+  endDate?: string
+  organization?: { orgId: string; orgName: string; roleName?: string }
+  featureAllowed?: { quest: boolean; wiki: boolean; codeReview: boolean }
+}
+
+export interface QoderAccountStatus {
+  allowByok: number
+  teamAllowByok?: number
+  isPrivacyPolicyModifiable?: boolean
+}
+
 export interface QoderStatusSignedIn {
   status: 'signed-in'
   authKey: string
@@ -14,6 +33,8 @@ export interface QoderStatusSignedIn {
   pat: { source: string; tail: string }
   catalog: { source: string; fetchedAt: number }
   user?: { username?: string; email?: string; userType?: string; orgId?: string; avatarUrl?: string; allowByok?: boolean }
+  plan?: QoderPlan
+  accountStatus?: QoderAccountStatus
   models: unknown[]
   credits?: QoderCredits
   probe?: QoderProbe
@@ -33,6 +54,8 @@ export interface QoderCredits {
   total?: number
   totalSize?: number
   cycleResetTime?: string
+  percentage?: number
+  isQuotaExceeded?: boolean
   error?: string
 }
 

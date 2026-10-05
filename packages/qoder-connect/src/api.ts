@@ -19,15 +19,21 @@ export interface QoderUser {
   allow_byok?: number
 }
 
+export interface QoderUsageQuota {
+  total: number
+  used: number
+  remaining: number
+  percentage: number
+  unit: string
+}
+
 export interface QoderUsage {
-  userQuota?: {
-    total: number
-    used: number
-    remaining: number
-    percentage: number
-    unit: string
-  }
-  expiresAt?: number
+  userQuota?: QoderUsageQuota | undefined
+  orgResourcePackage?: QoderUsageQuota | undefined
+  addOnQuota?: QoderUsageQuota | undefined
+  totalUsagePercentage?: number | undefined
+  isQuotaExceeded?: boolean | undefined
+  expiresAt?: string | undefined
 }
 
 const qoderRSAPublicKey = `-----BEGIN PUBLIC KEY-----
@@ -280,26 +286,169 @@ export async function verifyQoderPat(pat: string, cliConfigDir: string): Promise
   }
 }
 
+async function openApiJsonRequest<T>(
+  pat: string,
+  region: QoderRegion,
+  cliConfigDir: string,
+  endpoint: string,
+): Promise<T | undefined> {
+  const auth = await exchangePat(pat, region)
+  const machineId = await readMachineId(cliConfigDir)
+  const body = ''
+  const encodedBody = qoderEncodeBody(body)
+  const headers = buildCosyHeaders(auth.jobToken, auth.userId, machineId, endpoint, encodedBody)
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers,
+  })
+  if (!response.ok) return undefined
+  return (await response.json()) as T
+}
+
 export async function fetchQoderUsage(
   pat: string,
   region: QoderRegion = 'global',
   cliConfigDir: string = '',
 ): Promise<QoderUsage | undefined> {
   const openApi = qoderRegionEndpoints[region].openApi
-  const endpoint = `${openApi}/api/v2/quota/usage`
-  try {
-    const auth = await exchangePat(pat, region)
-    const machineId = await readMachineId(cliConfigDir)
-    const body = ''
-    const encodedBody = qoderEncodeBody(body)
-    const headers = buildCosyHeaders(auth.jobToken, auth.userId, machineId, endpoint, encodedBody)
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers,
-    })
-    if (!response.ok) return undefined
-    return (await response.json()) as QoderUsage
-  } catch {
-    return undefined
+  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, cliConfigDir, `${openApi}/api/v2/quota/usage`)
+  if (!raw || typeof raw !== 'object') return undefined
+  return {
+    userQuota: normalizeQuota(raw.userQuota),
+    orgResourcePackage: normalizeQuota(raw.orgResourcePackage),
+    addOnQuota: normalizeQuota(raw.addOnQuota),
+    totalUsagePercentage: asNumber(raw.totalUsagePercentage),
+    isQuotaExceeded: typeof raw.isQuotaExceeded === 'boolean' ? raw.isQuotaExceeded : false,
+    expiresAt: normalizeDate(raw.expiresAt),
+  }
+}
+
+export interface QoderPlan {
+  userType?: string | undefined
+  planTierName?: string | undefined
+  planTier?: string | undefined
+  isPersonalVersion?: boolean | undefined
+  isHighestTier?: boolean | undefined
+  isRenewed?: boolean | undefined
+  startDate?: string | undefined
+  endDate?: string | undefined
+  organization?: { orgId: string; orgName: string; roleName?: string | undefined } | undefined
+  featureAllowed?: { quest: boolean; wiki: boolean; codeReview: boolean } | undefined
+}
+
+export async function fetchQoderPlan(
+  pat: string,
+  region: QoderRegion = 'global',
+  cliConfigDir: string = '',
+): Promise<QoderPlan | undefined> {
+  const openApi = qoderRegionEndpoints[region].openApi
+  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, cliConfigDir, `${openApi}/api/v2/user/plan`)
+  if (!raw || typeof raw !== 'object') return undefined
+  const userType = asString(raw.user_type ?? raw.userType)
+  const planTierName = asString(raw.plan_tier_name ?? raw.planTierName ?? raw.plan_name ?? raw.planName)
+  if (!userType || !planTierName) return undefined
+  return {
+    userType,
+    planTierName,
+    planTier: asString(raw.plan_tier ?? raw.planTier),
+    isPersonalVersion: asBoolean(raw.is_personal_version ?? raw.isPersonalVersion),
+    isHighestTier: asBoolean(raw.is_highest_tier ?? raw.isHighestTier),
+    isRenewed: asBoolean(raw.is_renewed ?? raw.isRenewed),
+    startDate: normalizeDate(raw.start_date ?? raw.startDate),
+    endDate: normalizeDate(raw.end_date ?? raw.endDate),
+    organization: normalizeOrganization(raw.organization),
+    featureAllowed: normalizeFeatureAllowed(raw.feature_allowed ?? raw.featureAllowed),
+  }
+}
+
+export interface QoderAccountStatus {
+  allowByok: number
+  teamAllowByok?: number
+  isPrivacyPolicyModifiable?: boolean
+}
+
+export async function fetchQoderStatus(
+  pat: string,
+  region: QoderRegion = 'global',
+  cliConfigDir: string = '',
+): Promise<QoderAccountStatus | undefined> {
+  const openApi = qoderRegionEndpoints[region].openApi
+  const raw = await openApiJsonRequest<Record<string, unknown>>(pat, region, cliConfigDir, `${openApi}/api/v3/user/status`)
+  if (!raw || typeof raw !== 'object') return undefined
+  const featureSwitches = (raw.featureSwitches ?? raw.feature_switches) as Record<string, unknown> | undefined
+  const teamSwitches = (raw.teamSwitches ?? raw.team_switches) as Record<string, unknown> | undefined
+  const allowByok = asNumber(featureSwitches?.allow_byok ?? featureSwitches?.allowByok) ?? 0
+  const teamAllowByok = asNumber(teamSwitches?.allow_byok ?? teamSwitches?.allowByok)
+  const isPrivacyPolicyModifiable = asBoolean(raw.isPrivacyPolicyModifiable ?? raw.is_data_policy_modifiable)
+  const result: QoderAccountStatus = { allowByok }
+  if (teamAllowByok !== undefined) result.teamAllowByok = teamAllowByok
+  if (isPrivacyPolicyModifiable !== undefined) result.isPrivacyPolicyModifiable = isPrivacyPolicyModifiable
+  return result
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const num = Number(value)
+    if (Number.isFinite(num)) return num
+  }
+  return undefined
+}
+
+function normalizeQuota(raw: unknown): QoderUsageQuota | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  const total = asNumber(obj.total) ?? asNumber(obj.cap) ?? (asNumber(obj.remaining) !== undefined && asNumber(obj.used) !== undefined ? (asNumber(obj.remaining)! + asNumber(obj.used)!) : undefined) ?? 0
+  const used = asNumber(obj.used) ?? 0
+  const remaining = asNumber(obj.remaining) ?? Math.max(0, total - used)
+  let percentage: number
+  if (asNumber(obj.percentage) !== undefined) {
+    const p = asNumber(obj.percentage)!
+    percentage = p <= 1 && total > 1 ? p * 100 : p
+  } else {
+    percentage = total > 0 ? (used / total) * 100 : 0
+  }
+  const unit = asString(obj.unit) ?? 'credits'
+  return { total, used, remaining, percentage, unit }
+}
+
+function normalizeDate(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw === 'number' && raw > 0) return new Date(raw).toISOString()
+  if (typeof raw === 'string' && raw.length > 0) {
+    const parsed = Date.parse(raw)
+    if (!Number.isNaN(parsed) && parsed > 0) return new Date(parsed).toISOString()
+  }
+  return undefined
+}
+
+function normalizeOrganization(raw: unknown): QoderPlan['organization'] {
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  const orgId = asString(obj.org_id ?? obj.orgId ?? obj.id)
+  const orgName = asString(obj.org_name ?? obj.orgName ?? obj.name)
+  if (!orgId || !orgName) return undefined
+  return {
+    orgId,
+    orgName,
+    roleName: asString(obj.role_name ?? obj.roleName),
+  }
+}
+
+function normalizeFeatureAllowed(raw: unknown): QoderPlan['featureAllowed'] {
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  return {
+    quest: asBoolean(obj.quest) ?? false,
+    wiki: asBoolean(obj.wiki) ?? false,
+    codeReview: asBoolean(obj.code_review ?? obj.codeReview) ?? false,
   }
 }
