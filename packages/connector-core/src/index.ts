@@ -160,6 +160,16 @@ export abstract class CliLlmAdapter extends LlmAdapter {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+    child.stdin?.end()
+
+    const hardTimeout = setTimeout(() => {
+      if (!child.killed) {
+        child.kill('SIGTERM')
+        setTimeout(() => {
+          if (!child.killed) child.kill('SIGKILL')
+        }, 5000)
+      }
+    }, 120_000)
 
     const abort = () => {
       if (!child.killed) child.kill('SIGTERM')
@@ -188,6 +198,7 @@ export abstract class CliLlmAdapter extends LlmAdapter {
       yield { type: 'block-end', index: 0, block: { type: 'text', text: accumulated } }
       yield { type: 'finish', reason: { kind: 'stop' } }
     } finally {
+      clearTimeout(hardTimeout)
       options.signal?.removeEventListener('abort', abort)
       if (!child.killed) child.kill('SIGTERM')
     }

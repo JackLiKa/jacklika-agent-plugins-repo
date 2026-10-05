@@ -170,7 +170,7 @@ class QoderAdapter extends CliLlmAdapter {
     const base = this.buildBaseOptions(options)
     const stored = options.model ? this.paramsStore.readSync(options.model) : undefined
     const encoded = options.model ? this.selectedParams.get(options.model) : undefined
-    const reasoningEffort = encoded?.reasoningEffort ?? stored?.reasoningEffort ?? options.reasoningEffort
+    const reasoningEffort = options.reasoningEffort ?? encoded?.reasoningEffort ?? stored?.reasoningEffort
     const maxTokens = encoded?.maxTokens ?? encoded?.contextWindow ?? stored?.maxTokens ?? stored?.contextWindow ?? base.maxTokens
     const args = [
       '-p',

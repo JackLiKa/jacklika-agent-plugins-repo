@@ -176,7 +176,7 @@ class DevinAdapter extends CliLlmAdapter {
     const args = ['-p']
     const stored = options.model ? this.paramsStore.readSync(options.model) : undefined
     const encoded = options.model ? this.selectedParams.get(options.model) : undefined
-    const reasoningEffort = encoded?.reasoningEffort ?? stored?.reasoningEffort ?? options.reasoningEffort
+    const reasoningEffort = options.reasoningEffort ?? encoded?.reasoningEffort ?? stored?.reasoningEffort
     const maxTokens = encoded?.maxTokens ?? encoded?.contextWindow ?? stored?.maxTokens ?? stored?.contextWindow ?? base.maxTokens
     if (options.model) args.push('--model', options.model)
     if (maxTokens) args.push('--max-output-tokens', String(maxTokens))
