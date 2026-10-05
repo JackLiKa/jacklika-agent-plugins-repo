@@ -12,16 +12,16 @@ export const inject = [
 ]
 
 export function apply(ctx: any): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), '@jacklika/dsh-model-selector: dictionaries')
+  ctx.effect(() => {
+    const disposeDict = ctx.locale.register(NS, { zh, en })
 
-  ctx.inject(['slots', 'modelDirectories', 'sessions'], (scope: any) => {
-    const models: any = scope.modelDirectories
-    const sessions: any = scope.sessions
+    const models: any = ctx.modelDirectories
+    const sessions: any = ctx.sessions
 
-    scope.slots.inject(
+    const disposeSlot = ctx.slots.inject(
       'conversation.input.model',
       () =>
-        scope.slots.register(
+        ctx.slots.register(
           {
             name: 'conversation.input.model',
             locale: NS,
@@ -51,5 +51,10 @@ export function apply(ctx: any): void {
           ModelSelector,
         ),
     )
+
+    return () => {
+      disposeSlot()
+      disposeDict()
+    }
   })
 }
