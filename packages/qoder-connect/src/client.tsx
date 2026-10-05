@@ -11,9 +11,7 @@ export const name = 'jacklika/qoder-connect-client'
 
 export const inject = [
   'locale',
-  'ui-renderer',
-  'ui-sidebar',
-  'ui-settings',
+  'slots',
 ]
 
 export function apply(ctx: Context): void {

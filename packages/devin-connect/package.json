@@ -38,9 +38,7 @@
     "client": {
       "inject": [
         "locale",
-        "ui-renderer",
-        "ui-sidebar",
-        "ui-settings"
+        "slots"
       ],
       "platform": "web"
     }
