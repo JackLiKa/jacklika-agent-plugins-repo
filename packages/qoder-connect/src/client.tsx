@@ -2,10 +2,41 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { ConnectorListCard } from '@jacklika/dsh-connector-core/client'
+import { ConnectorListCard, setConnectorStatus } from '@jacklika/dsh-connector-core/client'
 import { QoderPluginCard } from './client/QoderPluginCard.tsx'
 import { injectQuotaCss } from './client/quota-styles.ts'
 import { QODER_LOCALES } from './client/locales.ts'
+import { isQoderWebStatus } from './client/status-document.ts'
+import { QODER_GLOBAL_STATUS_PATH, QODER_STATUS_PATH } from './client/status-paths.ts'
+
+const POLL_INTERVAL_MS = 30_000
+
+function startStatusPoller(statusPath: string, id: string, name: string): () => void {
+  async function tick(): Promise<void> {
+    try {
+      const response = await fetch(statusPath, { method: 'GET', credentials: 'same-origin' })
+      const value = await response.json().catch(() => undefined)
+      if (isQoderWebStatus(value)) {
+        const signedIn = value.status === 'signed-in'
+        const detail = signedIn && value.user
+          ? (value.user.email ?? value.user.username ?? value.pat?.tail)
+          : (value.status === 'error' ? value.message : undefined)
+        setConnectorStatus({
+          id,
+          name,
+          signedIn,
+          ...(detail ? { detail } : {}),
+          modelsCount: signedIn && Array.isArray(value.models) ? value.models.length : 0,
+        })
+      }
+    } catch {
+      // ignore transient fetch errors
+    }
+  }
+  void tick()
+  const timer = window.setInterval(tick, POLL_INTERVAL_MS)
+  return () => window.clearInterval(timer)
+}
 
 export const name = 'jacklika/qoder-connect-client'
 
@@ -35,9 +66,13 @@ export function apply(ctx: Context): void {
           label: 'Connectors',
           locale: 'qoder',
         } as const, ConnectorListCard))
+      const disposeQoderPoller = startStatusPoller(QODER_STATUS_PATH, 'qoder', 'Qoder')
+      const disposeGlobalPoller = startStatusPoller(QODER_GLOBAL_STATUS_PATH, 'qoder-global', 'Qoder Global')
       return () => {
         disposeSection()
         disposeFooter()
+        disposeQoderPoller()
+        disposeGlobalPoller()
         disposeCss()
         disposeDict()
       }
