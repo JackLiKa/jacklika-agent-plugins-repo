@@ -23,6 +23,10 @@ export interface CliVariant {
   envToken: string
   defaultModels: LlmModelInfo[]
   cliConfigDir?: string
+  /** Env var the CLI actually reads, when it differs from `envToken`. */
+  cliTokenEnv?: string
+  /** Env vars removed from the child environment before injection. */
+  clearEnv?: readonly string[]
 }
 
 function extractText(content: unknown): string {
@@ -225,7 +229,9 @@ export abstract class CliLlmAdapter extends LlmAdapter {
   }
 
   protected buildProcessEnv(token: string): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env, [this.variant.envToken]: token }
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    for (const key of this.variant.clearEnv ?? []) delete env[key]
+    env[this.variant.cliTokenEnv ?? this.variant.envToken] = token
     if (this.variant.cliConfigDir) env.QODER_CONFIG_DIR = this.variant.cliConfigDir
     return env
   }
@@ -243,9 +249,21 @@ export abstract class CliLlmAdapter extends LlmAdapter {
     )
 
     let sawFinish = false
+    // Read stdout to a terminal `finish` chunk or process exit — never EOF.
+    // CLIs like qodercli spawn MCP/daemon children that inherit the stdout
+    // pipe, which would keep readline open forever after the main process
+    // finished and leave the harness permanently "thinking".
+    const exitPromise = new Promise<{ code: number | null }>((resolve) => {
+      child.once('exit', (code) => resolve({ code }))
+    })
+    const stderrPromise = this.readStderr(child.stderr ?? null).catch(() => '')
     try {
-      for await (const line of this.readLines(child.stdout ?? null)) {
-        const chunks = this.parseLine(line)
+      const lines = child.stdout ? createInterface(child.stdout) : null
+      const iterator = lines?.[Symbol.asyncIterator]()
+      while (iterator && !sawFinish) {
+        const next = await Promise.race([iterator.next(), exitPromise.then(() => null)])
+        if (next === null || next.done) break
+        const chunks = this.parseLine(next.value)
         if (!chunks) continue
         for (const chunk of chunks) {
           if (chunk.type === 'finish') sawFinish = true
@@ -258,14 +276,20 @@ export abstract class CliLlmAdapter extends LlmAdapter {
         yield chunk
       }
 
-      const stderr = await this.readStderr(child.stderr ?? null)
-      if (child.exitCode !== 0 && child.exitCode !== null) {
-        throw new Error(
-          `${this.variant.cliCommand} exited with ${child.exitCode}${stderr ? `: ${stderr}` : ''}`,
-        )
+      if (!sawFinish) {
+        cleanup()
+        const { code } = await exitPromise
+        const stderr = await Promise.race([
+          stderrPromise,
+          new Promise<string>((resolve) => setTimeout(() => resolve(''), 2000)),
+        ])
+        if (code !== 0 && code !== null) {
+          throw new Error(
+            `${this.variant.cliCommand} exited with ${code}${stderr ? `: ${stderr}` : ''}`,
+          )
+        }
+        yield { type: 'finish', reason: { kind: 'stop' } }
       }
-
-      if (!sawFinish) yield { type: 'finish', reason: { kind: 'stop' } }
     } finally {
       cleanup()
     }

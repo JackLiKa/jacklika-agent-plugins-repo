@@ -34,6 +34,7 @@ function makeQoderVariants(dataDir: string): QoderVariant[] {
       displayName: 'Qoder',
       cliCommand: 'qodercli',
       envToken: 'QODER_PERSONAL_ACCESS_TOKEN',
+      clearEnv: ['QODER_PERSONAL_ACCESS_TOKEN', 'QODER_CHINA_PERSONAL_ACCESS_TOKEN'],
       cliConfigDir: join(dataDir, 'qoder', 'qoder-config'),
       region: 'global',
       defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder' })),
@@ -46,6 +47,10 @@ function makeQoderVariants(dataDir: string): QoderVariant[] {
       displayName: 'Qoder China',
       cliCommand: 'qodercli',
       envToken: 'QODER_CHINA_PERSONAL_ACCESS_TOKEN',
+      // qodercli only reads QODER_PERSONAL_ACCESS_TOKEN regardless of region;
+      // the region comes from the per-variant config dir, not the env name.
+      cliTokenEnv: 'QODER_PERSONAL_ACCESS_TOKEN',
+      clearEnv: ['QODER_PERSONAL_ACCESS_TOKEN', 'QODER_CHINA_PERSONAL_ACCESS_TOKEN'],
       cliConfigDir: join(dataDir, 'qoder-global', 'qoder-config'),
       region: 'china',
       defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder-global' })),
@@ -262,10 +267,14 @@ class QoderAdapter extends CliLlmAdapter {
       '--output-format',
       'stream-json',
       '--no-session-persistence',
-      // DSH conversations are chat-only: disable the agent toolset so the CLI
-      // never executes shell/edits on the user's machine.
+      // DSH conversations are chat-only: disable the agent toolset and any
+      // user-level MCP servers so the CLI never executes tools on the user's
+      // machine or spawns stdio children that keep the output pipe open.
       '--tools',
       '',
+      '--strict-mcp-config',
+      '--mcp-config',
+      '{"mcpServers":{}}',
     ]
     if (base.system) args.push('--system-prompt', base.system)
     if (maxTokens) args.push('--max-output-tokens', String(maxTokens))
