@@ -119,8 +119,8 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
       top = Math.max(MENU_MARGIN, viewportHeight - maxHeight - MENU_MARGIN)
     }
 
-    // Center horizontally over the trigger, then clamp to viewport edges.
-    let left = rect.left + rect.width / 2 - width / 2
+    // Right-align the popup to the trigger (common for a button on the right side of the composer).
+    let left = rect.right - width
     if (left < MENU_MARGIN) left = MENU_MARGIN
     if (left + width + MENU_MARGIN > viewportWidth) {
       left = Math.max(MENU_MARGIN, viewportWidth - width - MENU_MARGIN)
