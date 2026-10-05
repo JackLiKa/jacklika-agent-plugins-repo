@@ -9,6 +9,7 @@ export const inject = [
   'sessions',
   'slots',
   'modelDirectories',
+  'remote.session',
 ]
 
 export function apply(ctx: any): void {
