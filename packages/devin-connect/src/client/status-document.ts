@@ -4,12 +4,21 @@ export interface DevinStatusSignedOut {
   authKey: string
 }
 
+export interface DevinCredits {
+  total?: number
+  used?: number
+  remain?: number
+  unit?: string
+  error?: string
+}
+
 export interface DevinStatusSignedIn {
   status: 'signed-in'
   authKey: string
   pat: { source: string; tail: string }
   catalog: { source: string; fetchedAt: number }
   user: { email?: string; name?: string; organizations: string[] }
+  credits?: DevinCredits
   models: unknown[]
 }
 

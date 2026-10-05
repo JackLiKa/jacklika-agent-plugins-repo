@@ -25,6 +25,12 @@ function startStatusPoller(): () => void {
             return typeof item.name === 'string' ? item.name : String(item.id ?? '')
           }).filter(Boolean)
           : []
+        const credits = signedIn ? value.credits : undefined
+        const total = credits?.total
+        const used = credits?.used
+        const quotaPercent = typeof total === 'number' && total > 0 && typeof used === 'number'
+          ? Math.min(100, Math.round((used / total) * 100))
+          : undefined
         setConnectorStatus({
           id: 'devin',
           name: 'Devin',
@@ -33,6 +39,18 @@ function startStatusPoller(): () => void {
           ...(user ? { username: user.name, email: user.email } : {}),
           modelsCount: models.length,
           models,
+          ...(credits?.error
+            ? { quotaText: `Quota: ${credits.error}` }
+            : credits
+              ? {
+                  quotaText: credits.total !== undefined
+                    ? `${used ?? 0} / ${credits.total} ${credits.unit ?? 'ACU'}`
+                    : (used !== undefined ? `${used} ${credits.unit ?? 'ACU'} used` : undefined),
+                  quotaPercent,
+                  quotaUsed: used,
+                  quotaTotal: total,
+                }
+              : {}),
         })
       }
     } catch {

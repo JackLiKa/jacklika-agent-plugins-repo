@@ -8,7 +8,7 @@ import {
   safeMessage,
   type WebRouteContext,
 } from '@jacklika/dsh-connector-core'
-import { listDevinModels, verifyDevinPat } from './api.js'
+import { fetchDevinUsage, listDevinModels, verifyDevinPat } from './api.js'
 
 export interface PatStore {
   get(): string | undefined | Promise<string | undefined>
@@ -41,7 +41,10 @@ async function buildStatus(runtime: DevinRuntime): Promise<unknown> {
   }
 
   const orgs = user?.organizations ?? []
-  const liveModels = await listDevinModels(pat).catch(() => [] as { id: string; name: string }[])
+  const [liveModels, credits] = await Promise.all([
+    listDevinModels(pat).catch(() => [] as { id: string; name: string }[]),
+    fetchDevinUsage(pat).catch(() => undefined),
+  ])
   const models = liveModels.length > 0 ? liveModels : runtime.defaultModels
 
   return {
@@ -51,7 +54,7 @@ async function buildStatus(runtime: DevinRuntime): Promise<unknown> {
     catalog: { source: 'live', fetchedAt: Date.now() },
     user: { email: user?.email, name: user?.name, organizations: orgs.map((o) => o.name) },
     models,
-    credits: undefined,
+    credits,
     probe: { candidates: [], results: [] },
   }
 }

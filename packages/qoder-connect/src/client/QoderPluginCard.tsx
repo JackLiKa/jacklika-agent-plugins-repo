@@ -124,17 +124,23 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
     return () => { window.clearInterval(id) }
   }, [open, currentVariant.statusPath])
 
-  function formatQoderQuota(credits: QoderCredits | undefined, plan: QoderPlan | undefined): string | undefined {
-    if (!credits) return undefined
-    if (credits.error) return `Quota error: ${credits.error}`
+  function formatQoderQuota(credits: QoderCredits | undefined, plan: QoderPlan | undefined):
+    { text: string | undefined; percent: number | undefined; used: number | undefined; total: number | undefined } {
+    if (!credits) return { text: undefined, percent: undefined, used: undefined, total: undefined }
+    if (credits.error) return { text: `Quota error: ${credits.error}`, percent: undefined, used: undefined, total: undefined }
     const accounts = credits.accounts.filter((a) => !a.unlimited)
-    const quotaSummary = accounts.length === 0
-      ? (credits.accounts.some((a) => a.unlimited) ? 'Unlimited' : undefined)
-      : `${accounts.reduce((sum, a) => sum + (a.remain ?? 0), 0)} / ${accounts.reduce((sum, a) => sum + (a.size ?? 0), 0)} credits`
+    if (accounts.length === 0) {
+      const unlimited = credits.accounts.some((a) => a.unlimited)
+      return { text: unlimited ? 'Unlimited' : undefined, percent: 0, used: 0, total: 0 }
+    }
+    const used = accounts.reduce((sum, a) => sum + ((a.size ?? 0) - (a.remain ?? 0)), 0)
+    const total = accounts.reduce((sum, a) => sum + (a.size ?? 0), 0)
+    const percent = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0
+    const quotaSummary = `${used} / ${total} credits`
     const parts: string[] = []
     if (plan?.planTierName) parts.push(plan.planTierName)
-    if (quotaSummary) parts.push(quotaSummary)
-    return parts.length > 0 ? parts.join(' | ') : undefined
+    parts.push(quotaSummary)
+    return { text: parts.join(' | '), percent, used, total }
   }
 
   function syncConnectorStatus(value: QoderWebStatus): void {
@@ -146,6 +152,7 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
     const models = signedIn && Array.isArray(value.models)
       ? value.models.map((m) => (typeof m === 'string' ? m : String((m as Record<string, unknown>).id ?? ''))).filter(Boolean)
       : []
+    const quota = signedIn ? formatQoderQuota(value.credits, value.plan) : undefined
     setConnectorStatus({
       id: currentVariant.id,
       name: currentVariant.id === 'qoder' ? 'Qoder' : 'Qoder China',
@@ -158,7 +165,10 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
       avatarUrl: user?.avatarUrl,
       modelsCount: models.length,
       models,
-      quotaText: signedIn ? formatQoderQuota(value.credits, value.plan) : undefined,
+      quotaText: quota?.text,
+      quotaPercent: quota?.percent,
+      quotaUsed: quota?.used,
+      quotaTotal: quota?.total,
     })
   }
 

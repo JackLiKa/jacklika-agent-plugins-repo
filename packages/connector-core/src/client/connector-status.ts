@@ -11,6 +11,9 @@ export interface ConnectorProviderStatus {
   modelsCount?: number | undefined
   models?: string[] | undefined
   quotaText?: string | undefined
+  quotaPercent?: number | undefined
+  quotaUsed?: number | undefined
+  quotaTotal?: number | undefined
   extra?: Record<string, string> | undefined
 }
 
@@ -65,6 +68,9 @@ export function setConnectorStatus(provider: ConnectorProviderStatus): void {
     current.modelsCount !== provider.modelsCount ||
     current.name !== provider.name ||
     current.quotaText !== provider.quotaText ||
+    current.quotaPercent !== provider.quotaPercent ||
+    current.quotaUsed !== provider.quotaUsed ||
+    current.quotaTotal !== provider.quotaTotal ||
     current.username !== provider.username ||
     current.email !== provider.email
   ) {

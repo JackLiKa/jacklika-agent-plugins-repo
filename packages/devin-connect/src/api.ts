@@ -144,3 +144,59 @@ export async function listDevinModels(pat: string): Promise<DevinModel[]> {
   }
   return []
 }
+
+export interface DevinCredits {
+  total?: number
+  used?: number
+  remain?: number
+  unit?: string
+  error?: string
+}
+
+export async function fetchDevinUsage(pat: string): Promise<DevinCredits | undefined> {
+  // Devin v3 exposes consumption/ACU endpoints only at enterprise scope and
+  // requires the service user to have billing permissions. If the PAT is not an
+  // enterprise service user, these calls will 403/404 and we simply leave the
+  // quota section empty.
+  try {
+    const orgs = await devinFetch<Array<{ id: string }>>(pat, '/v3/enterprise/organizations')
+    if (!orgs || orgs.length === 0) {
+      return { error: 'No enterprise organizations available for this PAT.' }
+    }
+
+    // Try ACU limits first (gives a hard cap).
+    try {
+      const limits = await devinFetch<{ items?: Array<{ limit?: number; usage?: number }> }>(
+        pat,
+        '/v3/enterprise/consumption/acu-limits/devin?first=100',
+      )
+      let total = 0
+      let used = 0
+      for (const item of limits.items ?? []) {
+        total += typeof item.limit === 'number' ? item.limit : 0
+        used += typeof item.usage === 'number' ? item.usage : 0
+      }
+      if (total > 0) {
+        return { total, used, remain: Math.max(0, total - used), unit: 'ACU' }
+      }
+    } catch {
+      // fall through to daily consumption
+    }
+
+    // Fallback: sum daily consumption for the last 30 days.
+    const now = Math.floor(Date.now() / 1000)
+    const thirtyDaysAgo = now - 30 * 24 * 60 * 60
+    const consumption = await devinFetch<{ items?: Array<{ total_acus?: number; acus?: number }> }>(
+      pat,
+      `/v3/enterprise/consumption/daily?time_after=${thirtyDaysAgo}&time_before=${now}&first=100`,
+    )
+    let used = 0
+    for (const item of consumption.items ?? []) {
+      used += typeof item.total_acus === 'number' ? item.total_acus : typeof item.acus === 'number' ? item.acus : 0
+    }
+    return used > 0 ? { used, unit: 'ACU (30d)' } : undefined
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { error: message.includes('HTTP 403') ? 'Quota data requires enterprise billing permission.' : message }
+  }
+}
