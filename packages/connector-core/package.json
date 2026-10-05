@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-connector-core",
   "description": "Shared CLI-wrapped LLM adapter base for DeepSeek Harness connector plugins",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "publishConfig": {
     "access": "public"
   },
