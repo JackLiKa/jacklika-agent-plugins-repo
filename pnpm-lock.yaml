@@ -98,6 +98,9 @@ importers:
       '@jacklika/dsh-devin-connect':
         specifier: workspace:^
         version: link:../devin-connect
+      '@jacklika/dsh-model-selector':
+        specifier: workspace:^
+        version: link:../model-selector
       '@jacklika/dsh-qoder-connect':
         specifier: workspace:^
         version: link:../qoder-connect
