@@ -14,6 +14,7 @@ function ProviderRow({ provider, wide }: { provider: ConnectorProviderStatus; wi
     { label: 'User type', value: provider.userType },
     { label: 'Org', value: provider.orgId },
     { label: 'Models', value: typeof provider.modelsCount === 'number' ? String(provider.modelsCount) : undefined },
+    { label: 'Quota', value: provider.quotaText },
   ]
   const visibleExtras = extras.filter((e) => e.value)
 

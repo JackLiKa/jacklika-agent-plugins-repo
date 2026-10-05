@@ -4,7 +4,7 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { setConnectorStatus } from '@jacklika/dsh-connector-core/client'
 import { mergeCreditAccounts, sortPackageRows, visibleQuotaGroups, clampPercent } from './quota-merge.ts'
 import { noteQuotaSignIn, noteQuotaStatus } from './quota-settings-store.ts'
-import { isQoderWebStatus, type QoderWebStatus } from './status-document.ts'
+import { isQoderWebStatus, type QoderCredits, type QoderWebStatus } from './status-document.ts'
 import {
   QODER_AUTH_PATH,
   QODER_GLOBAL_AUTH_PATH,
@@ -124,6 +124,18 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
     return () => { window.clearInterval(id) }
   }, [open, currentVariant.statusPath])
 
+  function formatQoderQuota(credits: QoderCredits | undefined): string | undefined {
+    if (!credits) return undefined
+    if (credits.error) return `Quota error: ${credits.error}`
+    const accounts = credits.accounts.filter((a) => !a.unlimited)
+    if (accounts.length === 0) {
+      return credits.accounts.some((a) => a.unlimited) ? 'Unlimited' : undefined
+    }
+    const remain = accounts.reduce((sum, a) => sum + (a.remain ?? 0), 0)
+    const size = accounts.reduce((sum, a) => sum + (a.size ?? 0), 0)
+    return `${remain} / ${size > 0 ? size : '?'}`
+  }
+
   function syncConnectorStatus(value: QoderWebStatus): void {
     const signedIn = value.status === 'signed-in'
     const user = signedIn ? value.user : undefined
@@ -145,6 +157,7 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
       avatarUrl: user?.avatarUrl,
       modelsCount: models.length,
       models,
+      quotaText: signedIn ? formatQoderQuota(value.credits) : undefined,
     })
   }
 
