@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-devin-connect",
   "description": "Devin CLI / API wrapper as a DeepSeek Harness LLM provider",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "publishConfig": {
     "access": "public"
   },
