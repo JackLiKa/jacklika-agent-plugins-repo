@@ -1,4 +1,4 @@
-import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type PatStore, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, ModelModality, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { readFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
@@ -120,9 +120,10 @@ function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
 class DevinAdapter extends CliLlmAdapter {
   private readonly cachePath: string
   private readonly paramsStore: SelectedParamsStore
+  private readonly patStore: PatStore
   private readonly selectedParams = new Map<string, AdapterModelParams>()
 
-  constructor(variant: CliVariant, config: DevinConfig, dataDir: string) {
+  constructor(variant: CliVariant, config: DevinConfig, dataDir: string, patStore: PatStore) {
     const configured = config.models
     const models = configured.length > 0
       ? configured.map((m) => ({ provider: variant.id, id: m.id, name: m.name, inputModalities: ['text' as const] }))
@@ -130,6 +131,13 @@ class DevinAdapter extends CliLlmAdapter {
     super({ variant: { ...variant, cliCommand: config.cliCommand, defaultModels: models }, config: config as Record<string, unknown> })
     this.cachePath = modelCachePath(dataDir)
     this.paramsStore = createSelectedParamsStore(dataDir)
+    this.patStore = patStore
+  }
+
+  protected override async resolveToken(): Promise<string | undefined> {
+    const env = process.env[this.variant.envToken]
+    if (env) return env
+    return this.patStore.get()
   }
 
   private async cachedModels(): Promise<readonly LlmModelInfo[]> {
@@ -189,7 +197,11 @@ export function apply(ctx: any, config: DevinConfig) {
 
   const dataDir = devinDataDir(ctx)
   const cachePath = modelCachePath(dataDir)
-  const adapter = new DevinAdapter(DEVIN_VARIANT, config, dataDir)
+  const patStore = createFilePatStore({
+    filePath: join(dataDir, '.devin-auth.json'),
+    envToken: DEVIN_VARIANT.envToken,
+  })
+  const adapter = new DevinAdapter(DEVIN_VARIANT, config, dataDir, patStore)
   const releaseAdapter = ctx.llm.registerAdapter([DEVIN_VARIANT.id], adapter)
   const configured = config.models
   const initialModels = configured.length > 0
@@ -220,10 +232,7 @@ export function apply(ctx: any, config: DevinConfig) {
       dataDir,
       modelsCachePath: cachePath,
       defaultModels: DEFAULT_MODELS.map((m) => ({ id: m.id, name: m.name })),
-      store: createFilePatStore({
-        filePath: join(dataDir, '.devin-auth.json'),
-        envToken: DEVIN_VARIANT.envToken,
-      }),
+      store: patStore,
       authKey: createControlKey(),
     })
   })

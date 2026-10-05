@@ -1,4 +1,4 @@
-import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type PatStore, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { readFileSync, watch } from 'node:fs'
 import { homedir } from 'node:os'
@@ -134,8 +134,9 @@ class QoderAdapter extends CliLlmAdapter {
   private readonly selectedParams = new Map<string, AdapterModelParams>()
   private readonly modelCachePath: string
   private readonly paramsStore: SelectedParamsStore
+  private readonly patStore: PatStore
 
-  constructor(variant: CliVariant & { modelCachePath: string }, config: QoderConfig, dataDir: string) {
+  constructor(variant: CliVariant & { modelCachePath: string }, config: QoderConfig, dataDir: string, patStore: PatStore) {
     const configured = config.models
     const cached = readModelCacheSync(variant.modelCachePath)
     const models = configured.length > 0
@@ -144,6 +145,13 @@ class QoderAdapter extends CliLlmAdapter {
     super({ variant: { ...variant, defaultModels: models }, config: config as Record<string, unknown> })
     this.modelCachePath = variant.modelCachePath
     this.paramsStore = createSelectedParamsStore(dataDir)
+    this.patStore = patStore
+  }
+
+  protected override async resolveToken(): Promise<string | undefined> {
+    const env = process.env[this.variant.envToken]
+    if (env) return env
+    return this.patStore.get()
   }
 
   override async listModels(): Promise<readonly LlmModelInfo[]> {
@@ -211,6 +219,7 @@ export function apply(ctx: any, config: QoderConfig) {
   const releaseAdapters: Array<() => void> = []
   const releaseDirectories: Array<() => void> = []
   const watchers: Array<() => void> = []
+  const patStores: PatStore[] = []
 
   function buildProviderEntry(variant: QoderVariant, models: LlmModelInfo[]) {
     return {
@@ -224,8 +233,20 @@ export function apply(ctx: any, config: QoderConfig) {
 
   for (const variant of variants) {
     const variantWithCache = { ...variant, modelCachePath: qoderModelCachePath(dataDir, variant.id) }
-    const adapter = new QoderAdapter(variantWithCache, config, dataDir)
+    const patStore = createFilePatStore({
+      filePath: join(
+        dataDir,
+        variant.id === 'qoder'
+          ? '.qoder-auth.json'
+          : variant.id === 'qoder-china'
+            ? '.qoder-china-auth.json'
+            : '.qoder-global-auth.json',
+      ),
+      envToken: variant.envToken,
+    })
+    const adapter = new QoderAdapter(variantWithCache, config, dataDir, patStore)
     adapters.push(adapter)
+    patStores.push(patStore)
     releaseAdapters.push(ctx.llm.registerAdapter([variant.id], adapter))
 
     const configured = config.models
@@ -258,7 +279,7 @@ export function apply(ctx: any, config: QoderConfig) {
   })
 
   ctx.inject(['webServer'], (webCtx: WebRouteContext) => {
-    const runtimes = variants.map((variant) => ({
+    const runtimes = variants.map((variant, index) => ({
       id: variant.id,
       envToken: variant.envToken,
       dataDir,
@@ -269,7 +290,7 @@ export function apply(ctx: any, config: QoderConfig) {
       selectPath: `/plugins/dsh-qoder-connect/select/${variant.id}`,
       probePath: variant.probePath,
       modelCachePath: qoderModelCachePath(dataDir, variant.id),
-      store: createFilePatStore({
+      store: patStores[index] ?? createFilePatStore({
         filePath: join(
           dataDir,
           variant.id === 'qoder'

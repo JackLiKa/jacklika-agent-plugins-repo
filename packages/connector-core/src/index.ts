@@ -143,8 +143,12 @@ export abstract class CliLlmAdapter extends LlmAdapter {
   protected abstract buildArgs(options: GenerateOptions): string[]
   protected abstract parseLine(line: string): StreamChunk | undefined
 
+  protected async resolveToken(): Promise<string | undefined> {
+    return process.env[this.variant.envToken]
+  }
+
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    const token = process.env[this.variant.envToken]
+    const token = await this.resolveToken()
     if (!token || token.length === 0) {
       throw new Error(`Missing environment token: ${this.variant.envToken}`)
     }
