@@ -276,7 +276,7 @@ The repository also ships optional LLM-provider connectors and a model selector:
 Install the connector umbrella into the same Profile as the memory Bundle:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-connector@0.1.0-alpha.8
+dsh plugin --profile memory add @jacklika/dsh-connector@0.1.0-alpha.9
 ```
 
 Or install them from a checkout path:
@@ -290,7 +290,7 @@ Then authenticate each provider through its settings card. The unified connector
 If you want only the selector without the connectors, install it separately:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-model-selector@0.1.0-alpha.0
+dsh plugin --profile memory add @jacklika/dsh-model-selector@0.1.0-alpha.1
 ```
 
 ## Troubleshooting

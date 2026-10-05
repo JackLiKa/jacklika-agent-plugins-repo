@@ -276,7 +276,7 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 将连接器总包装进同一个 Profile：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-connector@0.1.0-alpha.8
+dsh plugin --profile memory add @jacklika/dsh-connector@0.1.0-alpha.9
 ```
 
 或从 checkout 路径安装：
@@ -290,7 +290,7 @@ dsh plugin --profile memory add /absolute/path/to/jacklika-agent-plugins-repo/pa
 如果只想安装选择器而不带连接器，可单独安装：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-model-selector@0.1.0-alpha.0
+dsh plugin --profile memory add @jacklika/dsh-model-selector@0.1.0-alpha.1
 ```
 
 ## 常见问题
