@@ -1,3 +1,10 @@
+export interface QuotaAccount {
+  name: string
+  used: number
+  total: number
+  percent: number
+}
+
 export interface ConnectorProviderStatus {
   id: string
   name: string
@@ -15,6 +22,7 @@ export interface ConnectorProviderStatus {
   quotaPercent?: number | undefined
   quotaUsed?: number | undefined
   quotaTotal?: number | undefined
+  quotaAccounts?: QuotaAccount[] | undefined
   extra?: Record<string, string> | undefined
 }
 
@@ -73,6 +81,7 @@ export function setConnectorStatus(provider: ConnectorProviderStatus): void {
     current.quotaPercent !== provider.quotaPercent ||
     current.quotaUsed !== provider.quotaUsed ||
     current.quotaTotal !== provider.quotaTotal ||
+    current.quotaAccounts !== provider.quotaAccounts ||
     current.username !== provider.username ||
     current.email !== provider.email
   ) {

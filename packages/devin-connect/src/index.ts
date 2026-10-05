@@ -69,6 +69,16 @@ function ensureProvider(models: readonly LlmModelInfo[], provider: string): LlmM
   return models.map((m) => (m.provider ? m : { ...m, provider }))
 }
 
+function withFamilyPrefix(models: readonly LlmModelInfo[]): LlmModelInfo[] {
+  return models.map((m) => {
+    const family = (m as unknown as Record<string, unknown>).family
+    if (typeof family === 'string' && family.length > 0 && !m.name.startsWith(`${family} › `)) {
+      return { ...m, name: `${family} › ${m.name}` }
+    }
+    return m
+  })
+}
+
 function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
   try {
     const text = readFileSync(path, 'utf8')
@@ -89,7 +99,7 @@ class DevinAdapter extends CliLlmAdapter {
     const configured = config.models
     const models = configured.length > 0
       ? configured.map((m) => ({ provider: variant.id, id: m.id, name: m.name, inputModalities: ['text' as const] }))
-      : variant.defaultModels
+      : withFamilyPrefix(variant.defaultModels)
     super({ variant: { ...variant, cliCommand: config.cliCommand, defaultModels: models }, config: config as Record<string, unknown> })
     this.cachePath = modelCachePath(dataDir)
   }
@@ -99,7 +109,7 @@ class DevinAdapter extends CliLlmAdapter {
       const text = await readFile(this.cachePath, 'utf8')
       const parsed = JSON.parse(text) as unknown
       if (Array.isArray(parsed) && parsed.length > 0 && typeof (parsed[0] as Record<string, unknown>).id === 'string') {
-        return ensureProvider(parsed as LlmModelInfo[], 'devin')
+        return withFamilyPrefix(ensureProvider(parsed as LlmModelInfo[], 'devin'))
       }
     } catch {
       // ignore missing or malformed cache
@@ -147,7 +157,7 @@ export function apply(ctx: any, config: DevinConfig) {
   const configured = config.models
   const initialModels = configured.length > 0
     ? configured.map((m) => ({ provider: 'devin', id: m.id, name: m.name, inputModalities: ['text' as const] }))
-    : readModelCacheSync(cachePath) ?? DEFAULT_MODELS.map((m) => ({ provider: 'devin', id: m.id, name: m.name, inputModalities: ['text' as const] }))
+    : withFamilyPrefix(readModelCacheSync(cachePath) ?? DEFAULT_MODELS.map((m) => ({ provider: 'devin', id: m.id, name: m.name, inputModalities: ['text' as const] })))
 
   const releaseDirectory = ctx.llm.registerConfigurableProviders([
     {

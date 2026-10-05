@@ -30,7 +30,8 @@ function startStatusPoller(): () => void {
             const name = typeof item.name === 'string' ? item.name : String(item.id ?? '')
             const family = typeof item.family === 'string' ? item.family : 'Models'
             if (!name) continue
-            modelNames.push(name)
+            const displayName = family && family !== 'Models' ? `${family} › ${name}` : name
+            modelNames.push(displayName)
             if (!modelGroups[family]) modelGroups[family] = []
             modelGroups[family].push(name)
           }

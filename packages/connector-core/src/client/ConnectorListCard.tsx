@@ -24,11 +24,28 @@ interface ProviderCardProps {
   onToggle: () => void
 }
 
+function SingleBar({ percent, used, total, color }: { percent: number; used: number; total: number; color?: string }): JSX.Element {
+  const fillColor = color ?? (percent >= 90 ? '#ff4d4f' : percent >= 70 ? '#faad14' : '#52c41a')
+  return (
+    <div>
+      <div style={progressTrackStyle}>
+        <div
+          style={{
+            ...progressFillStyle,
+            width: `${clamp(percent, 0, 100)}%`,
+            backgroundColor: fillColor,
+          }}
+        />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, fontSize: 11, color: '#888' }}>
+        <span>{percent}% used</span>
+        <span>{formatNumber(used)} / {formatNumber(total)}</span>
+      </div>
+    </div>
+  )
+}
+
 function QuotaBar({ provider }: { provider: ConnectorProviderStatus }): JSX.Element {
-  const hasQuota = provider.quotaTotal !== undefined && provider.quotaTotal > 0
-  const percent = provider.quotaPercent ?? 0
-  const used = provider.quotaUsed ?? 0
-  const total = provider.quotaTotal ?? 0
   const unlimited = provider.quotaText?.toLowerCase().includes('unlimited')
 
   return (
@@ -39,23 +56,22 @@ function QuotaBar({ provider }: { provider: ConnectorProviderStatus }): JSX.Elem
           {provider.quotaText ?? (unlimited ? 'Unlimited' : 'Not available')}
         </span>
       </div>
-      {hasQuota && (
-        <div>
-          <div style={progressTrackStyle}>
-            <div
-              style={{
-                ...progressFillStyle,
-                width: `${clamp(percent, 0, 100)}%`,
-                backgroundColor: percent >= 90 ? '#ff4d4f' : percent >= 70 ? '#faad14' : '#52c41a',
-              }}
-            />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, fontSize: 11, color: '#888' }}>
-            <span>{percent}% used</span>
-            <span>{formatNumber(used)} / {formatNumber(total)}</span>
-          </div>
+      {provider.quotaAccounts && provider.quotaAccounts.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {provider.quotaAccounts.map((account) => (
+            <div key={account.name}>
+              <div style={{ fontSize: 12, color: '#555', marginBottom: 3 }}>{account.name}</div>
+              <SingleBar percent={account.percent} used={account.used} total={account.total} />
+            </div>
+          ))}
         </div>
-      )}
+      ) : provider.quotaTotal !== undefined && provider.quotaTotal > 0 ? (
+        <SingleBar
+          percent={provider.quotaPercent ?? 0}
+          used={provider.quotaUsed ?? 0}
+          total={provider.quotaTotal}
+        />
+      ) : null}
     </div>
   )
 }
