@@ -45,10 +45,12 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/schemastery": "^3.18.2",
     "react": "^18.2.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/schemastery": "3.18.2",
     "@types/react": "~18.3.31",
     "react": "^18.2.0"
   }
