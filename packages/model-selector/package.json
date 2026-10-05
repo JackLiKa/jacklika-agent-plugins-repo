@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-model-selector",
   "description": "Provider-first model selector for the DeepSeek Harness composer seat, with family grouping and rich model metadata.",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "keywords": [
     "deepseek-harness",
     "dsh",

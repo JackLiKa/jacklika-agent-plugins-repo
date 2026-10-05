@@ -1,4 +1,4 @@
-import { CliLlmAdapter, createControlKey, createFilePatStore, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, ModelModality, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { readFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
@@ -119,6 +119,7 @@ function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
 
 class DevinAdapter extends CliLlmAdapter {
   private readonly cachePath: string
+  private readonly paramsStore: SelectedParamsStore
   private readonly selectedParams = new Map<string, AdapterModelParams>()
 
   constructor(variant: CliVariant, config: DevinConfig, dataDir: string) {
@@ -128,6 +129,7 @@ class DevinAdapter extends CliLlmAdapter {
       : withFamilyPrefix(variant.defaultModels)
     super({ variant: { ...variant, cliCommand: config.cliCommand, defaultModels: models }, config: config as Record<string, unknown> })
     this.cachePath = modelCachePath(dataDir)
+    this.paramsStore = createSelectedParamsStore(dataDir)
   }
 
   private async cachedModels(): Promise<readonly LlmModelInfo[]> {
@@ -164,9 +166,10 @@ class DevinAdapter extends CliLlmAdapter {
   protected buildArgs(options: GenerateOptions): string[] {
     const base = this.buildBaseOptions(options)
     const args = ['-p']
-    const params = options.model ? this.selectedParams.get(options.model) : undefined
-    const reasoningEffort = params?.reasoningEffort ?? options.reasoningEffort
-    const maxTokens = params?.maxTokens ?? params?.contextWindow ?? base.maxTokens
+    const stored = options.model ? this.paramsStore.readSync(options.model) : undefined
+    const encoded = options.model ? this.selectedParams.get(options.model) : undefined
+    const reasoningEffort = encoded?.reasoningEffort ?? stored?.reasoningEffort ?? options.reasoningEffort
+    const maxTokens = encoded?.maxTokens ?? encoded?.contextWindow ?? stored?.maxTokens ?? stored?.contextWindow ?? base.maxTokens
     if (options.model) args.push('--model', options.model)
     if (maxTokens) args.push('--max-output-tokens', String(maxTokens))
     if (reasoningEffort) args.push('--reasoning-effort', reasoningEffort)
@@ -213,6 +216,8 @@ export function apply(ctx: any, config: DevinConfig) {
       envToken: DEVIN_VARIANT.envToken,
       statusPath: DEVIN_VARIANT.statusPath,
       authPath: DEVIN_VARIANT.authPath,
+      selectPath: '/plugins/dsh-devin-connect/select',
+      dataDir,
       modelsCachePath: cachePath,
       defaultModels: DEFAULT_MODELS.map((m) => ({ id: m.id, name: m.name })),
       store: createFilePatStore({

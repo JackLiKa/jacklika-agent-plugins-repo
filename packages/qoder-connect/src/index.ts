@@ -1,4 +1,4 @@
-import { CliLlmAdapter, createControlKey, createFilePatStore, type CliVariant, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { readFileSync, watch } from 'node:fs'
 import { homedir } from 'node:os'
@@ -133,8 +133,9 @@ export const inject = ['llm', 'profileContext'] as const
 class QoderAdapter extends CliLlmAdapter {
   private readonly selectedParams = new Map<string, AdapterModelParams>()
   private readonly modelCachePath: string
+  private readonly paramsStore: SelectedParamsStore
 
-  constructor(variant: CliVariant & { modelCachePath: string }, config: QoderConfig) {
+  constructor(variant: CliVariant & { modelCachePath: string }, config: QoderConfig, dataDir: string) {
     const configured = config.models
     const cached = readModelCacheSync(variant.modelCachePath)
     const models = configured.length > 0
@@ -142,6 +143,7 @@ class QoderAdapter extends CliLlmAdapter {
       : cached ?? variant.defaultModels
     super({ variant: { ...variant, defaultModels: models }, config: config as Record<string, unknown> })
     this.modelCachePath = variant.modelCachePath
+    this.paramsStore = createSelectedParamsStore(dataDir)
   }
 
   override async listModels(): Promise<readonly LlmModelInfo[]> {
@@ -158,9 +160,10 @@ class QoderAdapter extends CliLlmAdapter {
 
   protected buildArgs(options: GenerateOptions): string[] {
     const base = this.buildBaseOptions(options)
-    const params = options.model ? this.selectedParams.get(options.model) : undefined
-    const reasoningEffort = params?.reasoningEffort ?? options.reasoningEffort
-    const maxTokens = params?.maxTokens ?? params?.contextWindow ?? base.maxTokens
+    const stored = options.model ? this.paramsStore.readSync(options.model) : undefined
+    const encoded = options.model ? this.selectedParams.get(options.model) : undefined
+    const reasoningEffort = encoded?.reasoningEffort ?? stored?.reasoningEffort ?? options.reasoningEffort
+    const maxTokens = encoded?.maxTokens ?? encoded?.contextWindow ?? stored?.maxTokens ?? stored?.contextWindow ?? base.maxTokens
     const args = [
       '-p',
       '--model',
@@ -221,7 +224,7 @@ export function apply(ctx: any, config: QoderConfig) {
 
   for (const variant of variants) {
     const variantWithCache = { ...variant, modelCachePath: qoderModelCachePath(dataDir, variant.id) }
-    const adapter = new QoderAdapter(variantWithCache, config)
+    const adapter = new QoderAdapter(variantWithCache, config, dataDir)
     adapters.push(adapter)
     releaseAdapters.push(ctx.llm.registerAdapter([variant.id], adapter))
 
@@ -263,6 +266,7 @@ export function apply(ctx: any, config: QoderConfig) {
       region: variant.region,
       statusPath: variant.statusPath,
       authPath: variant.authPath,
+      selectPath: `/plugins/dsh-qoder-connect/select/${variant.id}`,
       probePath: variant.probePath,
       modelCachePath: qoderModelCachePath(dataDir, variant.id),
       store: createFilePatStore({

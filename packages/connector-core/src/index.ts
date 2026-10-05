@@ -14,6 +14,7 @@ import type {
 
 export * from './web.js'
 export * from './store.js'
+export * from './params-store.js'
 
 export interface CliVariant {
   id: string

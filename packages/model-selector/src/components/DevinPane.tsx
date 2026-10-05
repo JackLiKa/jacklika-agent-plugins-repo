@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { decodeModelId, selectionFor } from '../model/selection.ts'
-import type { CatalogGroup, CatalogModel, DirectorySnapshot, ModelProviderSelectProps, Selection } from '../model/types.ts'
+import { persistModelParams, readStoredParams } from '../api.ts'
+import { selectionFor } from '../model/selection.ts'
+import type { CatalogGroup, CatalogModel, DirectorySnapshot, ModelParams, ModelProviderSelectProps, Selection } from '../model/types.ts'
 
 interface DevinPaneProps {
   directory: DirectorySnapshot
@@ -17,15 +18,19 @@ const CONTEXT_OPTIONS = [
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max']
 
 export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Element {
+  const providerId = 'devin'
+  const currentModelId = directory.current?.provider === providerId ? directory.current.model : undefined
+  const currentParams = useMemo(() => (currentModelId !== undefined ? readStoredParams(providerId, currentModelId) : {}), [currentModelId])
   const [query, setQuery] = useState('')
-  const decoded = useMemo(() => (directory.current ? decodeModelId(directory.current.model) : null), [directory.current])
-  const [contextWindow, setContextWindow] = useState<number>(decoded?.params.contextWindow ?? 200_000)
-  const [reasoningEffort, setReasoningEffort] = useState<string>(decoded?.params.reasoningEffort ?? 'medium')
+  const [contextWindow, setContextWindow] = useState<number>(currentParams.contextWindow ?? 200_000)
+  const [reasoningEffort, setReasoningEffort] = useState<string>(currentParams.reasoningEffort ?? 'medium')
 
   useEffect(() => {
-    if (decoded?.params.contextWindow !== undefined) setContextWindow(decoded.params.contextWindow)
-    if (decoded?.params.reasoningEffort !== undefined) setReasoningEffort(decoded.params.reasoningEffort)
-  }, [decoded?.params.contextWindow, decoded?.params.reasoningEffort])
+    if (currentModelId === undefined) return
+    const params = readStoredParams(providerId, currentModelId)
+    if (params.contextWindow !== undefined) setContextWindow(params.contextWindow)
+    if (params.reasoningEffort !== undefined) setReasoningEffort(params.reasoningEffort)
+  }, [currentModelId])
 
   const groups = useMemo(() => buildDevinSections(directory.groups, directory.current), [directory.groups, directory.current])
   const filteredGroups = useMemo(() => {
@@ -36,13 +41,10 @@ export function DevinPane({ directory, onSelect, t }: DevinPaneProps): JSX.Eleme
       .filter((section) => section.models.length > 0)
   }, [groups, query])
 
-  const selectModel = (group: CatalogGroup, model: CatalogModel) => {
-    onSelect(
-      selectionFor(group, model, {
-        contextWindow,
-        reasoningEffort,
-      }),
-    )
+  const selectModel = async (group: CatalogGroup, model: CatalogModel) => {
+    const params: ModelParams = { contextWindow, reasoningEffort }
+    await persistModelParams(group.id, model.id, params)
+    onSelect(selectionFor(group, model, params))
   }
 
   return (
@@ -119,7 +121,7 @@ function Section({
     <div style={sectionStyle}>
       <div style={sectionTitleStyle}>{title}</div>
       {models.map(({ group, model }) => {
-        const selected = current?.provider === group.id && decodeModelId(current.model).baseModelId === model.id
+        const selected = current?.provider === group.id && current.model === model.id
         return <DevinRow key={`${group.id}-${model.id}`} group={group} model={model} selected={selected} onSelect={onSelect} />
       })}
     </div>
@@ -160,7 +162,7 @@ function DevinRow({
 }
 
 function buildDevinSections(groups: CatalogGroup[], current: DirectorySnapshot['current']) {
-  const currentBaseId = current ? decodeModelId(current.model).baseModelId : null
+  const currentBaseId = current?.model ?? null
   const recentlyUsed: { group: CatalogGroup; model: CatalogModel }[] = []
   const recommended: { group: CatalogGroup; model: CatalogModel }[] = []
   const others: { group: CatalogGroup; model: CatalogModel }[] = []
