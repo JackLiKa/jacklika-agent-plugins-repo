@@ -148,7 +148,7 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
       : []
     setConnectorStatus({
       id: currentVariant.id,
-      name: currentVariant.id === 'qoder' ? 'Qoder' : 'Qoder Global',
+      name: currentVariant.id === 'qoder' ? 'Qoder' : 'Qoder China',
       signedIn,
       ...(detail ? { detail } : {}),
       username: user?.username,

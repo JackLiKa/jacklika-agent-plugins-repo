@@ -42,9 +42,9 @@ function makeQoderVariants(dataDir: string): QoderVariant[] {
     },
     {
       id: 'qoder-global',
-      displayName: 'Qoder Global',
+      displayName: 'Qoder China',
       cliCommand: 'qodercli',
-      envToken: 'QODER_GLOBAL_PERSONAL_ACCESS_TOKEN',
+      envToken: 'QODER_CHINA_PERSONAL_ACCESS_TOKEN',
       cliConfigDir: join(dataDir, 'qoder-global', 'qoder-config'),
       region: 'china',
       defaultModels: DEFAULT_MODELS.map((m) => ({ ...m, provider: 'qoder-global' })),
