@@ -187,9 +187,9 @@ describe('memory-queue real Loader composition through cordis.yml', () => {
     const ctx = await boot([
       '    crossProcessLock: true',
       `    vaultRoot: ${vault}`,
-      '    lockStaleMs: 300',
+      '    lockStaleMs: 600',
       '    lockHeartbeatMs: 100',
-      '    lockTimeoutMs: 1200',
+      '    lockTimeoutMs: 1600',
       '    lockRetryMs: 50',
     ])
     const intervals: Interval[] = []
@@ -209,13 +209,15 @@ describe('memory-queue real Loader composition through cordis.yml', () => {
     // cross-process protocol relies on a changing heartbeat file for liveness.
     await mkdir(lockPath)
     const heartbeatPath = join(lockPath, 'heartbeat')
-    let counter = 0
+    let counter = 1
     let lastWrite = writeFile(heartbeatPath, String(counter), 'utf8')
     const refresh = setInterval(() => {
       counter += 1
       lastWrite = writeFile(heartbeatPath, String(counter), 'utf8').catch(() => undefined)
     }, 100)
     try {
+      await lastWrite
+      await new Promise((resolve) => setTimeout(resolve, 150))
       const blocked = await call(ctx, 'blocked')
       expect(blocked.isError).toBe(true)
       await expect(stat(lockPath)).resolves.toBeDefined()
