@@ -8,7 +8,7 @@ import { OriginalPane } from './OriginalPane.tsx'
 import { QoderPane } from './QoderPane.tsx'
 import { StatusBlock } from './StatusBlock.tsx'
 
-const MENU_MIN_WIDTH = 360
+const MENU_MIN_WIDTH = 460
 const MENU_MAX_HEIGHT = 560
 const MENU_MARGIN = 8
 const MODE_KEY = '@jacklika/dsh-model-selector:mode'
@@ -402,6 +402,7 @@ const tabsStyle: React.CSSProperties = {
   gap: 2,
   padding: '8px 12px 0',
   borderBottom: '1px solid var(--ms-border)',
+  overflowX: 'auto',
 }
 
 const tabStyle: React.CSSProperties = {
@@ -411,6 +412,8 @@ const tabStyle: React.CSSProperties = {
   color: 'var(--ms-fg-muted)',
   cursor: 'pointer',
   fontSize: 13,
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
 }
 
 const activeTabStyle: React.CSSProperties = {

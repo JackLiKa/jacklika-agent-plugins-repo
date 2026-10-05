@@ -217,16 +217,19 @@ const paramsPanelStyle: React.CSSProperties = {
 
 const paramRowStyle: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  marginBottom: 8,
+  alignItems: 'flex-start',
+  gap: 10,
+  marginBottom: 10,
+  flexWrap: 'wrap',
 }
 
 const paramLabelStyle: React.CSSProperties = {
-  width: 70,
+  minWidth: 90,
   fontSize: 12,
   color: 'var(--ms-fg-muted)',
   flexShrink: 0,
+  lineHeight: '28px',
+  whiteSpace: 'nowrap',
 }
 
 const chipsStyle: React.CSSProperties = {
