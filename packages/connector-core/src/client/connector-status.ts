@@ -35,7 +35,10 @@ export function setConnectorStatus(provider: ConnectorProviderStatus): void {
     current.signedIn !== provider.signedIn ||
     current.detail !== provider.detail ||
     current.modelsCount !== provider.modelsCount ||
-    current.name !== provider.name
+    current.name !== provider.name ||
+    current.quotaText !== provider.quotaText ||
+    current.username !== provider.username ||
+    current.email !== provider.email
   ) {
     state = {
       providers: { ...state.providers, [provider.id]: provider },
