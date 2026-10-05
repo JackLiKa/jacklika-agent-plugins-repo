@@ -142,11 +142,16 @@ export function apply(ctx: any, config: QoderConfig) {
   for (const variant of variants) {
     const adapter = new QoderAdapter(variant, config)
     adapters.push(adapter)
+    const configured = config.models
+    const models = configured.length > 0
+      ? configured.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
+      : variant.defaultModels
     providers.push({
       provider: variant.id,
       displayName: variant.displayName,
       settingsNs: 'qoder',
       settingsPath: [],
+      models,
     })
   }
 

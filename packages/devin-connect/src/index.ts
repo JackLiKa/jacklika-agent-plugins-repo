@@ -90,12 +90,18 @@ export function apply(ctx: any, config: DevinConfig) {
   const dataDir = devinDataDir(ctx)
   const adapter = new DevinAdapter(DEVIN_VARIANT, config)
   const releaseAdapter = ctx.llm.registerAdapter([DEVIN_VARIANT.id], adapter)
+  const configured = config.models
+  const models = configured.length > 0
+    ? configured.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
+    : DEFAULT_MODELS.map((m) => ({ id: m.id, name: m.name, inputModalities: ['text' as const] }))
+
   const releaseDirectory = ctx.llm.registerConfigurableProviders([
     {
       provider: DEVIN_VARIANT.id,
       displayName: DEVIN_VARIANT.displayName,
       settingsNs: 'devin',
       settingsPath: [],
+      models,
     },
   ])
 
