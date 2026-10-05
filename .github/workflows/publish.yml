@@ -106,7 +106,7 @@ jobs:
               # New scoped packages may inherit restricted visibility from the
               # org default; ensure every published package is publicly installable.
               echo "Setting public access for $name..."
-              if npm access public "$name" 2>&1; then
+              if npm access set status=public "$name" 2>&1; then
                 echo "Public access set for $name"
               else
                 echo "WARN: could not set public access for $name (see above)"
