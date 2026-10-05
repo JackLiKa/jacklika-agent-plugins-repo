@@ -74,7 +74,16 @@ async function buildStatus(runtime: QoderVariantRuntime): Promise<unknown> {
     probeKey: runtime.probeKey,
     pat: { source: 'saved', tail: patTail(pat) },
     catalog: { source: 'live', fetchedAt: Date.now() },
-    user: user ? { username: user.username, email: user.email, userType: user.user_type } : undefined,
+    user: user
+      ? {
+          username: user.username,
+          email: user.email,
+          userType: user.user_type,
+          orgId: user.org_id,
+          avatarUrl: user.avatar_url,
+          allowByok: user.allow_byok === 1,
+        }
+      : undefined,
     models,
     credits: normalizeUsage(usage),
     probe: { candidates: [], results: [] },

@@ -10,6 +10,9 @@ export interface QoderUser {
   username?: string
   email?: string
   user_type?: string
+  org_id?: string
+  avatar_url?: string
+  allow_byok?: number
 }
 
 export interface QoderUsage {

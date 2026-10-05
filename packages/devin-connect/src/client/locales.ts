@@ -21,6 +21,11 @@ export type DevinLocaleKey =
   | 'invalidPat'
   | 'organizations'
   | 'connected'
+  | 'models'
+  | 'noModels'
+  | 'userName'
+  | 'userEmail'
+  | 'userType'
 
 export const DEVIN_LOCALES: Record<BuiltInLocaleId, Record<DevinLocaleKey, string>> = {
   en: {
@@ -36,6 +41,11 @@ export const DEVIN_LOCALES: Record<BuiltInLocaleId, Record<DevinLocaleKey, strin
     invalidPat: 'Invalid or expired PAT',
     organizations: 'Organizations',
     connected: 'Connected',
+    models: 'Available models',
+    noModels: 'No models available',
+    userName: 'Username',
+    userEmail: 'Email',
+    userType: 'User type',
   },
   zh: {
     title: 'Devin',
@@ -50,5 +60,10 @@ export const DEVIN_LOCALES: Record<BuiltInLocaleId, Record<DevinLocaleKey, strin
     invalidPat: '令牌无效或已过期',
     organizations: '组织',
     connected: '已连接',
+    models: '可用模型',
+    noModels: '暂无可用模型',
+    userName: '用户名',
+    userEmail: '邮箱',
+    userType: '用户类型',
   },
 }

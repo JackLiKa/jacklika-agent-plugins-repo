@@ -146,8 +146,23 @@ export function DevinSettingsCard({ close, t }: DevinSettingsCardProps): JSX.Ele
       {status?.status === 'signed-in' && (
         <div>
           <p>{t('signedInAs', { tail: status.pat.tail })}</p>
-          <p>{status.user.email ?? status.user.name}</p>
-          <p>{t('organizations')}: {status.user.organizations.join(', ')}</p>
+          {status.user.name && <p>{t('userName')}: {status.user.name}</p>}
+          {status.user.email && <p>{t('userEmail')}: {status.user.email}</p>}
+          {status.user.organizations.length > 0 && <p>{t('organizations')}: {status.user.organizations.join(', ')}</p>}
+          <h4 style={{ marginTop: 16, marginBottom: 8 }}>{t('models')}</h4>
+          {status.models.length === 0 ? (
+            <p>{t('noModels')}</p>
+          ) : (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {status.models.map((model, index) => {
+                const id = typeof model === 'string' ? model : String((model as Record<string, unknown>).id ?? index)
+                const name = typeof model === 'object' && model !== null && typeof (model as Record<string, unknown>).name === 'string'
+                  ? (model as Record<string, unknown>).name as string
+                  : id
+                return <li key={index} style={{ padding: '4px 0' }}>{name}</li>
+              })}
+            </ul>
+          )}
         </div>
       )}
     </div>

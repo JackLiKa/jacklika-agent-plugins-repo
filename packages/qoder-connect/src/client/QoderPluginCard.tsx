@@ -423,27 +423,45 @@ function statusTab(t: TranslateNS<'qoder'>, status: Extract<QoderWebStatus, { st
   const totalSize = groups.reduce((sum, g) => sum + (g.unlimited ? 0 : g.size), 0)
   const unlimitedAll = groups.length > 0 && groups.every((g) => g.unlimited)
   const cycleReset = status.credits?.cycleResetTime
+  const user = status.user
 
   return (
     <div style={tabPanelStyle}>
-      <h4>{t('creditsHeading')}</h4>
-      <div style={rowStyle}>
-        <span>
-          {t('remaining')}: {unlimitedAll ? t('creditsTotalUnlimited') : totalRemain}
-        </span>
-        <span>
-          {t('total')}: {unlimitedAll ? t('creditsTotalUnlimited') : totalSize > 0 ? totalSize : '?'}
-        </span>
-      </div>
-      {cycleReset && <p style={bodyStyle}>{t('cycleResetAt', { time: formatTime(cycleReset) })}</p>}
-      {status.credits?.error && <p style={errorStyle}>{t('creditsError', { message: String(status.credits.error) })}</p>}
-
-      <h4>{t('creditsDetailHeading')}</h4>
+      <h4>{t('accountHeading')}</h4>
       <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-        {sortPackageRows(groups).map((group, index) => (
-          <CreditBar key={`${group.packageName}-${index}`} group={group} t={t} />
-        ))}
+        {user?.username && <li style={bodyStyle}>{t('userName')}: {user.username}</li>}
+        {user?.email && <li style={bodyStyle}>{t('userEmail')}: {user.email}</li>}
+        {user?.userType && <li style={bodyStyle}>{t('userType')}: {user.userType}</li>}
+        {user?.orgId && <li style={bodyStyle}>{t('orgId')}: {user.orgId}</li>}
+        {typeof status.models?.length === 'number' && (
+          <li style={bodyStyle}>{t('modelsAvailable')}: {status.models.length}</li>
+        )}
       </ul>
+
+      <h4>{t('creditsHeading')}</h4>
+      {groups.length === 0 ? (
+        <p style={bodyStyle}>{t('quotaUnavailable')}</p>
+      ) : (
+        <>
+          <div style={rowStyle}>
+            <span>
+              {t('remaining')}: {unlimitedAll ? t('creditsTotalUnlimited') : totalRemain}
+            </span>
+            <span>
+              {t('total')}: {unlimitedAll ? t('creditsTotalUnlimited') : totalSize > 0 ? totalSize : '?'}
+            </span>
+          </div>
+          {cycleReset && <p style={bodyStyle}>{t('cycleResetAt', { time: formatTime(cycleReset) })}</p>}
+          {status.credits?.error && <p style={errorStyle}>{t('creditsError', { message: String(status.credits.error) })}</p>}
+
+          <h4>{t('creditsDetailHeading')}</h4>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {sortPackageRows(groups).map((group, index) => (
+              <CreditBar key={`${group.packageName}-${index}`} group={group} t={t} />
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   )
 }

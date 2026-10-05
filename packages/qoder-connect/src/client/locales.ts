@@ -73,6 +73,12 @@ export type QoderLocaleKey =
   | 'collapse'
   | 'totalCredits'
   | 'noModels'
+  | 'userName'
+  | 'userEmail'
+  | 'userType'
+  | 'orgId'
+  | 'modelsAvailable'
+  | 'quotaUnavailable'
 
 export const QODER_LOCALES: Record<BuiltInLocaleId, Record<QoderLocaleKey, string>> = {
   en: {
@@ -140,6 +146,12 @@ export const QODER_LOCALES: Record<BuiltInLocaleId, Record<QoderLocaleKey, strin
     collapse: 'Collapse',
     totalCredits: 'Total credits',
     noModels: 'No models available',
+    userName: 'Username',
+    userEmail: 'Email',
+    userType: 'User type',
+    orgId: 'Organization ID',
+    modelsAvailable: 'Models available',
+    quotaUnavailable: 'Quota data is not available from the Qoder CLI.',
   },
   zh: {
     title: 'Qoder',
@@ -206,5 +218,11 @@ export const QODER_LOCALES: Record<BuiltInLocaleId, Record<QoderLocaleKey, strin
     collapse: '收起',
     totalCredits: '总额度',
     noModels: '暂无可用模型',
+    userName: '用户名',
+    userEmail: '邮箱',
+    userType: '用户类型',
+    orgId: '组织 ID',
+    modelsAvailable: '可用模型数',
+    quotaUnavailable: 'Qoder CLI 未返回额度数据。',
   },
 }
