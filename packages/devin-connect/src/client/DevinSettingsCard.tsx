@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { setConnectorStatus } from '@jacklika/dsh-connector-core/client'
 import { isDevinWebStatus, type DevinWebStatus } from './status-document.ts'
 import { noteDevinStatus } from './status-store.ts'
 
@@ -59,11 +60,17 @@ async function postClear(authKey: string): Promise<{ ok: boolean; error?: string
 }
 
 function syncStatus(next: DevinWebStatus | undefined): void {
-  if (next?.status === 'signed-in') {
-    noteDevinStatus(true, next.user?.email ?? next.user?.name, Array.isArray(next.models) ? next.models.length : 0)
-  } else {
-    noteDevinStatus(false)
-  }
+  const signedIn = next?.status === 'signed-in'
+  const detail = signedIn ? (next.user?.email ?? next.user?.name) : undefined
+  const modelsCount = signedIn && Array.isArray(next.models) ? next.models.length : 0
+  noteDevinStatus(signedIn, detail, modelsCount)
+  setConnectorStatus({
+    id: 'devin',
+    name: 'Devin',
+    signedIn,
+    ...(detail ? { detail } : {}),
+    modelsCount,
+  })
 }
 
 export function DevinSettingsCard({ close, t }: DevinSettingsCardProps): JSX.Element {

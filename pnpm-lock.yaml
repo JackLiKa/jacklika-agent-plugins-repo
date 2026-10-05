@@ -113,6 +113,9 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.2
         version: 3.18.2
+      '@types/react':
+        specifier: ~18.3.31
+        version: 18.3.31
 
   packages/devin-connect:
     dependencies:

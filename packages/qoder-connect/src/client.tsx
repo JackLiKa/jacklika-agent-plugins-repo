@@ -2,10 +2,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import { ConnectorListCard } from '@jacklika/dsh-connector-core/client'
 import { QoderPluginCard } from './client/QoderPluginCard.tsx'
 import { injectQuotaCss } from './client/quota-styles.ts'
 import { QODER_LOCALES } from './client/locales.ts'
-import { SidebarQuotaCard } from './client/SidebarQuotaCard.tsx'
 
 export const name = 'jacklika/qoder-connect-client'
 
@@ -30,11 +30,11 @@ export function apply(ctx: Context): void {
       const disposeFooter = ctx.slots.inject('sidebar.footer.action', () =>
         ctx.slots.register({
           name: 'sidebar.footer.action',
-          id: 'qoder-quota',
+          id: 'connector-list',
           order: 100,
-          label: 'Qoder',
+          label: 'Connectors',
           locale: 'qoder',
-        } as const, SidebarQuotaCard))
+        } as const, ConnectorListCard))
       return () => {
         disposeSection()
         disposeFooter()

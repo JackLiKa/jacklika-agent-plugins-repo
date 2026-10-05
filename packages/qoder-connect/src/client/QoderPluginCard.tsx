@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ref } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { setConnectorStatus } from '@jacklika/dsh-connector-core/client'
 import { mergeCreditAccounts, sortPackageRows, visibleQuotaGroups, clampPercent } from './quota-merge.ts'
 import { noteQuotaSignIn, noteQuotaStatus } from './quota-settings-store.ts'
 import { isQoderWebStatus, type QoderWebStatus } from './status-document.ts'
@@ -123,6 +124,20 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
     return () => { window.clearInterval(id) }
   }, [open, currentVariant.statusPath])
 
+  function syncConnectorStatus(value: QoderWebStatus): void {
+    const signedIn = value.status === 'signed-in'
+    const detail = signedIn && value.user
+      ? (value.user.email ?? value.user.username ?? value.pat?.tail)
+      : (value.status === 'error' ? value.message : undefined)
+    setConnectorStatus({
+      id: currentVariant.id,
+      name: currentVariant.id === 'qoder' ? 'Qoder' : 'Qoder Global',
+      signedIn,
+      ...(detail ? { detail } : {}),
+      modelsCount: signedIn && Array.isArray(value.models) ? value.models.length : 0,
+    })
+  }
+
   function trackController(): AbortController {
     const controller = new AbortController()
     manualControllers.current.add(controller)
@@ -148,6 +163,7 @@ export function QoderPluginCard({ close, t, variant, unified = false }: QoderPlu
       if (!isQoderWebStatus(value)) throw new Error(t('statusResponseInvalid'))
       if (!current()) return false
       setStatus(value)
+      syncConnectorStatus(value)
       noteQuotaStatus(currentVariant.statusPath, value)
       noteQuotaSignIn(currentVariant.id, value.status === 'signed-in')
       setReadFailure(undefined)
