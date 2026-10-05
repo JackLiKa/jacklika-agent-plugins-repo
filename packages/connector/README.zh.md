@@ -1,6 +1,6 @@
 # @jacklika/dsh-connector
 
-将 Qoder 与 Devin 连接器插件打包为 DeepSeek Harness Bundle。
+将 Qoder 与 Devin 连接器插件及供应商优先模型选择器打包为 DeepSeek Harness Bundle。
 
 ## 安装
 
@@ -15,6 +15,7 @@ dsh plugin add @jacklika/dsh-connector
 - `@jacklika/dsh-qoder-connect` — Qoder CLI 连接器（中国 + 国际）
 - `@jacklika/dsh-devin-connect` — Devin API 连接器
 - `@jacklika/dsh-connector-core` — 共享宿主/客户端原语
+- `@jacklika/dsh-model-selector` — 供应商优先、按 family 分组的对话输入模型选择器
 
 ## 要求
 

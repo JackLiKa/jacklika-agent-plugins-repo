@@ -265,13 +265,13 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 
 ## Connector plugins
 
-The repository also ships optional LLM-provider connectors:
+The repository also ships optional LLM-provider connectors and a model selector:
 
-- `@jacklika/dsh-connector` — umbrella package that depends on `@jacklika/dsh-qoder-connect` and `@jacklika/dsh-devin-connect`.
+- `@jacklika/dsh-connector` — umbrella package that depends on `@jacklika/dsh-qoder-connect`, `@jacklika/dsh-devin-connect`, and `@jacklika/dsh-model-selector`.
 - `@jacklika/dsh-qoder-connect` — Qoder Global/China provider with PAT → jobToken authentication.
 - `@jacklika/dsh-devin-connect` — Devin provider with PAT + CLI session model discovery.
 - `@jacklika/dsh-connector-core` — shared status store, unified dashboard, and adapter base class.
-- `@jacklika/dsh-model-selector` — optional provider-first model selector seat.
+- `@jacklika/dsh-model-selector` — provider-first, family-grouped composer model selector.
 
 Install the connector umbrella into the same Profile as the memory Bundle:
 
@@ -285,9 +285,9 @@ Or install them from a checkout path:
 dsh plugin --profile memory add /absolute/path/to/jacklika-agent-plugins-repo/packages/connector
 ```
 
-Then authenticate each provider through its settings card. The unified connector dashboard appears in the sidebar once at least one provider is signed in.
+Then authenticate each provider through its settings card. The unified connector dashboard appears in the sidebar once at least one provider is signed in, and the composer model selector is replaced by the provider-first family-grouped selector.
 
-To replace the composer model selector with the provider-first family-grouped selector, also add:
+If you want only the selector without the connectors, install it separately:
 
 ```sh
 dsh plugin --profile memory add @jacklika/dsh-model-selector@0.1.0-alpha.0

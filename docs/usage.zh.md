@@ -265,13 +265,13 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 
 ## 连接器插件
 
-仓库还提供可选的 LLM 供应商连接器：
+仓库还提供可选的 LLM 供应商连接器与模型选择器：
 
-- `@jacklika/dsh-connector` — 总包，依赖 `@jacklika/dsh-qoder-connect` 与 `@jacklika/dsh-devin-connect`。
+- `@jacklika/dsh-connector` — 总包，依赖 `@jacklika/dsh-qoder-connect`、`@jacklika/dsh-devin-connect` 与 `@jacklika/dsh-model-selector`。
 - `@jacklika/dsh-qoder-connect` — Qoder 全球/中国区域 provider，使用 PAT → jobToken 认证。
 - `@jacklika/dsh-devin-connect` — Devin provider，支持 PAT 与 CLI session 模型发现。
 - `@jacklika/dsh-connector-core` — 共享状态存储、统一面板与 adapter 基类。
-- `@jacklika/dsh-model-selector` — 可选的供应商优先 family 分组模型选择器。
+- `@jacklika/dsh-model-selector` — 供应商优先、按 family 分组的对话输入模型选择器。
 
 将连接器总包装进同一个 Profile：
 
@@ -285,9 +285,9 @@ dsh plugin --profile memory add @jacklika/dsh-connector@0.1.0-alpha.8
 dsh plugin --profile memory add /absolute/path/to/jacklika-agent-plugins-repo/packages/connector
 ```
 
-然后在设置卡片中为每个供应商完成认证。当至少一个 provider 登录后，侧栏会出现统一的连接器面板。
+然后在设置卡片中为每个供应商完成认证。当至少一个 provider 登录后，侧栏会出现统一的连接器面板，同时聊天输入框的模型选择器会被替换为供应商优先、按 family 分组的版本。
 
-如果想把聊天输入框的模型选择器替换为供应商优先、按 family 分组的版本，再添加：
+如果只想安装选择器而不带连接器，可单独安装：
 
 ```sh
 dsh plugin --profile memory add @jacklika/dsh-model-selector@0.1.0-alpha.0

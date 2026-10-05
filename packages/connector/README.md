@@ -1,6 +1,6 @@
 # @jacklika/dsh-connector
 
-Bundle combining the Qoder and Devin connector plugins for DeepSeek Harness.
+Bundle combining the Qoder and Devin connector plugins for DeepSeek Harness, plus a provider-first model selector.
 
 ## Install
 
@@ -15,6 +15,7 @@ dsh plugin add @jacklika/dsh-connector
 - `@jacklika/dsh-qoder-connect` — Qoder CLI connector (CN + Global)
 - `@jacklika/dsh-devin-connect` — Devin API connector
 - `@jacklika/dsh-connector-core` — shared host/client primitives
+- `@jacklika/dsh-model-selector` — provider-first, family-grouped composer model selector
 
 ## Requirements
 
