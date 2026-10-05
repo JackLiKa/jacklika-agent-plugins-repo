@@ -107,21 +107,25 @@ export function ModelSelector({ locked, available, directory, load, select, t }:
     const rect = trigger.getBoundingClientRect()
     const viewportWidth = window.innerWidth
     const viewportHeight = window.innerHeight
-    const width = Math.max(MENU_MIN_WIDTH, Math.min(420, rect.width))
-    let left = rect.left
+    const width = Math.max(MENU_MIN_WIDTH, rect.width)
+    const maxHeight = Math.min(MENU_MAX_HEIGHT, Math.max(240, viewportHeight * 0.75))
+
+    // Prefer above the trigger, since the selector sits at the bottom of the composer.
+    let top = rect.top - maxHeight - 6
+    if (top < MENU_MARGIN) {
+      top = rect.bottom + 6
+    }
+    if (top + maxHeight + MENU_MARGIN > viewportHeight) {
+      top = Math.max(MENU_MARGIN, viewportHeight - maxHeight - MENU_MARGIN)
+    }
+
+    // Center horizontally over the trigger, then clamp to viewport edges.
+    let left = rect.left + rect.width / 2 - width / 2
+    if (left < MENU_MARGIN) left = MENU_MARGIN
     if (left + width + MENU_MARGIN > viewportWidth) {
       left = Math.max(MENU_MARGIN, viewportWidth - width - MENU_MARGIN)
     }
-    const maxHeight = Math.min(MENU_MAX_HEIGHT, Math.max(240, viewportHeight * 0.75))
-    let top = rect.bottom + 6
-    if (top + maxHeight + MENU_MARGIN > viewportHeight) {
-      const topSpace = rect.top - MENU_MARGIN - maxHeight
-      if (topSpace > MENU_MARGIN) {
-        top = topSpace
-      } else {
-        top = MENU_MARGIN
-      }
-    }
+
     setMenuPos({ top, left, width, maxHeight })
   }
 
