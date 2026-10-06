@@ -231,20 +231,10 @@ function parseDevinCliModelCatalog(parsed: unknown): DevinModel[] {
 }
 
 export async function listDevinModels(pat: string): Promise<DevinModel[]> {
-  // Prefer the Devin CLI because it uses the user's existing CLI session and
-  // returns the same rich catalog shown in Windsurf.
-  const result = await runDevin(['models', 'list', '--format', 'json'], pat)
-  if (result.ok) {
-    try {
-      const parsed = JSON.parse(result.stdout) as unknown
-      const models = parseDevinCliModelCatalog(parsed)
-      if (models.length > 0) return models
-    } catch {
-      // fall through to protobuf
-    }
-  }
-
-  // Fall back to the connect-protocol protobuf endpoint.
+  // Prefer the connect-protocol protobuf endpoint: it authenticates with the
+  // PAT directly and never spawns the CLI. Invoking `devin models` while no
+  // CLI credentials exist makes the CLI launch a browser login window.
+  let protoError: unknown
   try {
     const body = encodeGetCliModelConfigsRequest({ apiKey: normalizeDevinSessionToken(pat) })
     const response = await fetch(`${DEVIN_BASE_URL}/exa.api_server_pb.ApiServerService/GetCliModelConfigs`, {
@@ -265,13 +255,28 @@ export async function listDevinModels(pat: string): Promise<DevinModel[]> {
       .filter((c) => !c.disabled && c.modelUid.trim().length > 0)
       .map((c) => ({ id: c.modelUid.trim(), name: c.label.trim() || c.modelUid.trim() }))
     if (models.length > 0) return models
-  } catch {
-    // ignore
+  } catch (error) {
+    protoError = error
   }
 
-  if (!result.ok) {
-    throw new Error(result.stderr || `devin exited with ${result.exitCode}`)
+  // Fall back to the Devin CLI only when the user has an existing CLI session;
+  // otherwise the invocation itself would trigger a browser login.
+  if (await readDevinCredentials()) {
+    const result = await runDevin(['models', 'list', '--format', 'json'], pat)
+    if (result.ok) {
+      try {
+        const parsed = JSON.parse(result.stdout) as unknown
+        const models = parseDevinCliModelCatalog(parsed)
+        if (models.length > 0) return models
+      } catch {
+        // fall through to error reporting
+      }
+    } else {
+      throw new Error(result.stderr || `devin exited with ${result.exitCode}`)
+    }
   }
+
+  if (protoError instanceof Error) throw protoError
   return []
 }
 
