@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process'
-import { createInterface } from 'node:readline'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -55,29 +53,6 @@ export interface DevinModel {
   name: string
   family?: string
   description?: string
-}
-
-async function runDevin(args: string[], pat?: string): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }> {
-  const env: NodeJS.ProcessEnv = { ...process.env }
-  if (pat) env.DEVIN_API_KEY = pat
-  const command = `devin ${args.map((a) => shellEscape(a)).join(' ')}`
-  const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash'
-  const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-lc', command]
-  return new Promise((resolve) => {
-    const child = spawn(shell, shellArgs, { env })
-    const stdout: string[] = []
-    const stderr: string[] = []
-    if (child.stdout) createInterface(child.stdout).on('line', (line) => stdout.push(line))
-    if (child.stderr) createInterface(child.stderr).on('line', (line) => stderr.push(line))
-    child.on('close', (exitCode) => {
-      resolve({ ok: exitCode === 0, stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode })
-    })
-  })
-}
-
-function shellEscape(arg: string): string {
-  if (/^[A-Za-z0-9_./:=@-]+$/.test(arg)) return arg
-  return `"${arg.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
 interface DevinCredentials {
@@ -193,91 +168,32 @@ async function fetchDevinUsageFromCredentials(): Promise<DevinCredits | undefine
   return result
 }
 
-function parseDevinCliModelCatalog(parsed: unknown): DevinModel[] {
-  const families: unknown[] = []
-  if (Array.isArray(parsed)) {
-    families.push(...parsed)
-  } else if (parsed && typeof parsed === 'object') {
-    const obj = parsed as Record<string, unknown>
-    if (Array.isArray(obj.models)) families.push(...obj.models)
-    if (Array.isArray(obj.families)) families.push(...obj.families)
-  }
-  const models: DevinModel[] = []
-  for (const family of families) {
-    if (!family || typeof family !== 'object') continue
-    const f = family as Record<string, unknown>
-    const variants = Array.isArray(f.variants) ? f.variants : [family]
-    for (const raw of variants) {
-      if (!raw || typeof raw !== 'object') continue
-      const v = raw as Record<string, unknown>
-      const id = typeof v.model_uid === 'string' ? v.model_uid : typeof v.id === 'string' ? v.id : ''
-      const name = typeof v.label === 'string' ? v.label : typeof v.name === 'string' ? v.name : id
-      const family = typeof f.family_label === 'string' ? f.family_label : undefined
-      const costSummary = typeof v.cost_summary === 'string' ? v.cost_summary : undefined
-      const contextTokens = typeof v.max_context_tokens === 'number' ? v.max_context_tokens : undefined
-      const parts: string[] = []
-      if (contextTokens !== undefined) parts.push(`Context ${contextTokens.toLocaleString()}`)
-      if (costSummary !== undefined) parts.push(costSummary)
-      const description = parts.length > 0 ? parts.join(' · ') : undefined
-      if (id.trim().length > 0) {
-        const model: DevinModel = { id: id.trim(), name: name.trim() || id.trim() }
-        if (family) model.family = family
-        if (description) model.description = description
-        models.push(model)
-      }
-    }
-  }
-  return models
-}
-
 export async function listDevinModels(pat: string): Promise<DevinModel[]> {
-  // Prefer the connect-protocol protobuf endpoint: it authenticates with the
+  // Protobuf endpoint authenticates with the PAT directly.
   // PAT directly and never spawns the CLI. Invoking `devin models` while no
   // CLI credentials exist makes the CLI launch a browser login window.
-  let protoError: unknown
-  try {
-    const body = encodeGetCliModelConfigsRequest({ apiKey: normalizeDevinSessionToken(pat) })
-    const response = await fetch(`${DEVIN_BASE_URL}/exa.api_server_pb.ApiServerService/GetCliModelConfigs`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/proto',
-        'connect-protocol-version': '1',
-        accept: '*/*',
-      },
-      body: body as unknown as BodyInit,
-    })
-    if (!response.ok) {
-      throw new Error(`Devin model discovery failed: ${response.status}`)
-    }
-    const raw = Buffer.from(await response.arrayBuffer())
-    const decoded = decodeGetCliModelConfigsResponse(maybeGunzip(raw))
-    const models = decoded
-      .filter((c) => !c.disabled && c.modelUid.trim().length > 0)
-      .map((c) => ({ id: c.modelUid.trim(), name: c.label.trim() || c.modelUid.trim() }))
-    if (models.length > 0) return models
-  } catch (error) {
-    protoError = error
+  // Protobuf endpoint authenticates with the PAT directly. The `devin` CLI
+  // is never invoked here: without a valid interactive CLI session it opens
+  // a browser login window, and a `credentials.toml` written for another
+  // session type does not stop it.
+  const body = encodeGetCliModelConfigsRequest({ apiKey: normalizeDevinSessionToken(pat) })
+  const response = await fetch(`${DEVIN_BASE_URL}/exa.api_server_pb.ApiServerService/GetCliModelConfigs`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/proto',
+      'connect-protocol-version': '1',
+      accept: '*/*',
+    },
+    body: body as unknown as BodyInit,
+  })
+  if (!response.ok) {
+    throw new Error(`Devin model discovery failed: ${response.status}`)
   }
-
-  // Fall back to the Devin CLI only when the user has an existing CLI session;
-  // otherwise the invocation itself would trigger a browser login.
-  if (await readDevinCredentials()) {
-    const result = await runDevin(['models', 'list', '--format', 'json'], pat)
-    if (result.ok) {
-      try {
-        const parsed = JSON.parse(result.stdout) as unknown
-        const models = parseDevinCliModelCatalog(parsed)
-        if (models.length > 0) return models
-      } catch {
-        // fall through to error reporting
-      }
-    } else {
-      throw new Error(result.stderr || `devin exited with ${result.exitCode}`)
-    }
-  }
-
-  if (protoError instanceof Error) throw protoError
-  return []
+  const raw = Buffer.from(await response.arrayBuffer())
+  const decoded = decodeGetCliModelConfigsResponse(maybeGunzip(raw))
+  return decoded
+    .filter((c) => !c.disabled && c.modelUid.trim().length > 0)
+    .map((c) => ({ id: c.modelUid.trim(), name: c.label.trim() || c.modelUid.trim() }))
 }
 
 export interface DevinCredits {
