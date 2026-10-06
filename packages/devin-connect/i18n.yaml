@@ -1,6 +1,0 @@
-# Bilingual-pair consistency record (packages/devin-connect/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
-#   pnpm run verify-translation-pairing --write
-README.md: 8e02c47d572c4821c607a86969e3852e62931b86
-README.zh.md: 2c0f341cae43cc0596a2d393f7393d1394d16e5a
