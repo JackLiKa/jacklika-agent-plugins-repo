@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-curator",
   "description": "Curator tools for the DSH memory vault: memory_recall before acting and memory_capture after significant work, with conflict detection and optional user approval.",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "publishConfig": {
     "access": "public"
   },

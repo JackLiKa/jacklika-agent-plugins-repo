@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-tool-memory-vector",
   "description": "Model-facing semantic search over a Markdown memory vault: embeds notes through a configurable OpenAI-compatible embeddings endpoint and ranks results by cosine similarity.",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "publishConfig": {
     "access": "public"
   },
