@@ -52,7 +52,10 @@ try {
   await mkdir(tarballs)
   run(process.execPath, [join(root, 'scripts', 'pack-all.mjs'), tarballs], root)
   const files = (await readdir(tarballs)).filter(file => file.endsWith('.tgz')).sort()
-  if (files.length !== 14) throw new Error(`expected 14 tarballs, found ${files.length}`)
+  // Derive the expectation from the same source pack-all.mjs packs, so adding a
+  // workspace package cannot silently leave this check asserting a stale count.
+  const expected = (await readdir(join(root, 'packages'))).length
+  if (files.length !== expected) throw new Error(`expected ${expected} tarballs, found ${files.length}`)
 
   const packageSpecs = new Map()
   for (const file of files) {

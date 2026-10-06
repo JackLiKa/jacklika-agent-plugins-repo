@@ -53,7 +53,7 @@ kind: "package-reference"
 ### 工具
 
 - `wiki_read(id)` — 按仓库相对路径读取笔记，返回 frontmatter、正文、链接、已解析的链接笔记，以及内容指纹 `version`。
-- `wiki_search(query)` — 按标题、id、正文关键词搜索；结果包含反向链接数量。
+- `wiki_search(query)` — 按标题、id、正文关键词搜索；查询词采用 OR 匹配，并按字段加权的 BM25 式评分排序（标题/id 命中权重最高，稀有词权重更高），另有整段短语加分与被强命中笔记链接的图增强；挂载 `wiki_semantic_search` 时两路排序经 RRF 融合。结果包含分数与反向链接数量。
 - `wiki_write(id, content, mode?, baseVersion?)` — 创建或追加笔记。追加模式保留 frontmatter 并添加时间戳标题。把 `wiki_read` 返回的 `version` 作为 `baseVersion` 传入时，若笔记在读取后被其他写入方改动，写入会显式失败。
 
 ### 安全
@@ -65,7 +65,7 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-本包是一个没有运行时服务的 Cordis 函数插件，只在 `ctx.tools` 上注册三个类型化工具。仓库根目录在每次工具调用时解析：优先使用显式 `vaultRoot`（相对路径锚定会话工作区），否则使用 `<session cwd>/.dsh/memory/`，使每个工作区拥有自己的笔记。每个工具都通过 `node:fs/promises` 直接读取 Markdown 文件，并借助 `path.resolve` + 前缀检查保持在解析出的根目录内。YAML frontmatter 使用 `js-yaml` 解析；`[[link|alias]]` 形式的引用会提取管道符前的目标。搜索时从仓库内容构建临时索引，并按反向链接数量排序。`wiki_write` 以原子方式发布：正文先写入同级临时文件，再 `rename` 覆盖目标，因此并发读者永远不会读到写了一半的笔记。
+本包是一个没有运行时服务的 Cordis 函数插件，只在 `ctx.tools` 上注册三个类型化工具。仓库根目录在每次工具调用时解析：优先使用显式 `vaultRoot`（相对路径锚定会话工作区），否则使用 `<session cwd>/.dsh/memory/`，使每个工作区拥有自己的笔记。每个工具都通过 `node:fs/promises` 直接读取 Markdown 文件，并借助 `path.resolve` + 前缀检查保持在解析出的根目录内。YAML frontmatter 使用 `js-yaml` 解析；`[[link|alias]]` 形式的引用会提取管道符前的目标；出现在行内代码或围栏代码块中的 `[[...]]` 是语法示例而非链接，会被忽略。链接目标按 Obsidian 语义对已索引的笔记 id 解析：先精确匹配仓库相对路径，再做路径后缀匹配（`[[notes/foo]]` 可命中 `shared/notes/foo.md`），最后匹配仓库内任意位置的 basename——每一级都容忍目标带或不带扩展名。多重命中时优先路径段最少者，仍并列则取码点序最小的 id，因此解析结果跨平台确定。搜索时从仓库内容构建临时索引并分层排序：OR 匹配的字段加权评分（id/标题 ×3、反向链接 ×1、正文 ×1，含 IDF 使稀有词权重更高、BM25 饱和与长度归一化避免长笔记占优）、整段短语加分，以及被强命中笔记链接的图增强。挂载 `wiki_semantic_search` 时其排序经倒数排名融合并入；语义检索失败时回退到纯词法排序。`wiki_write` 以原子方式发布：正文先写入同级临时文件，再 `rename` 覆盖目标，因此并发读者永远不会读到写了一半的笔记。
 
 -----
 
@@ -76,7 +76,7 @@ kind: "package-reference"
 
 #### 模型看到的内容
 
-模型看到的是生成的 [`wiki_read`、`wiki_search` 和 `wiki_write` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-memory-filesystem)。工具描述会告知模型：笔记是带 YAML frontmatter 和 Obsidian 风格 `[[link]]` 链接的 Markdown 文件，`wiki_read` 会按配置深度跟随链接。
+模型看到的是生成的 `wiki_read`、`wiki_search` 和 `wiki_write` schema。工具描述会告知模型：笔记是带 YAML frontmatter 和 Obsidian 风格 `[[link]]` 链接的 Markdown 文件，`wiki_read` 会按配置深度跟随链接。
 
 ##### `wiki_read` 的完整描述
 
@@ -87,7 +87,7 @@ Read one Markdown note from the wiki vault, optionally following Obsidian-style 
 ##### `wiki_search` 的完整描述
 
 ```markdown
-Search the wiki vault by note title or body keyword. Returns matching note ids, titles, and backlink counts. Use this before asking the user which note to read.
+Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns matching note ids, titles, scores, and backlink counts. Use this before asking the user which note to read.
 ```
 
 ##### `wiki_write` 的完整描述

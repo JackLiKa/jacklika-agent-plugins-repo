@@ -17,7 +17,8 @@ import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { formatBeijingTime } from '@jacklika/dsh-memory-time'
 import yaml from 'js-yaml'
-import type { IndexedNote, Note, SearchResult } from './types.ts'
+import { codeUnitCompare, fuseRankings, rankNotes } from './search.ts'
+import type { IndexedNote, Note } from './types.ts'
 
 export type * from './types.ts'
 
@@ -150,12 +151,15 @@ export function splitFrontmatter(text: string): { frontmatter: Record<string, un
   const bodyText = match[2] ?? ''
   try {
     const parsed = yaml.load(frontmatterText)
-    return {
-      frontmatter: parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {},
-      body: bodyText,
+    const frontmatter: Record<string, unknown> = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+    // js-yaml coerces unquoted timestamps to Date; vault convention stores them
+    // as Asia/Shanghai +08:00 strings, so convert back before they reach callers.
+    for (const [key, value] of Object.entries(frontmatter)) {
+      if (value instanceof Date) frontmatter[key] = formatBeijingTime(value)
     }
+    return { frontmatter, body: bodyText }
   } catch {
     return { frontmatter: {}, body: text }
   }
@@ -181,10 +185,63 @@ export function extractLinks(text: string): string[] {
   const links: string[] = []
   const pattern = /\[\[([^|\]\r\n]+)(?:\|[^\]]*)?\]\]/g
   let match: RegExpExecArray | null
-  while ((match = pattern.exec(text)) !== null) {
+  while ((match = pattern.exec(stripCode(text))) !== null) {
     if (match[1] !== undefined) links.push(match[1].trim())
   }
   return [...new Set(links)]
+}
+
+/**
+ * Remove fenced code blocks and inline code spans so literal `[[...]]` inside
+ * them is not treated as a link. Fences follow CommonMark: a closing fence
+ * must use the same marker character and be at least as long as the opener —
+ * a rule a regex backreference cannot express, so fences are scanned line by
+ * line. Inline spans treat backtick runs as maximal units: a run closes only
+ * at a later run of exactly equal length; an unmatched run is literal text.
+ * @param text - note body.
+ * @returns the text with all code sections dropped.
+ */
+function stripCode(text: string): string {
+  const kept: string[] = []
+  let fenceChar = ''
+  let fenceLen = 0
+  for (const line of text.split('\n')) {
+    if (fenceChar === '') {
+      const open = /^( {0,3})(`{3,}|~{3,})/.exec(line)
+      if (open?.[2] !== undefined) {
+        fenceChar = open[2][0] ?? ''
+        fenceLen = open[2].length
+        continue
+      }
+      kept.push(line)
+    } else if (new RegExp(`^ {0,3}${fenceChar === '`' ? '`' : '~'}{${fenceLen},}[ \t]*$`).test(line)) {
+      fenceChar = ''
+    }
+  }
+  const body = kept.join('\n')
+  let out = ''
+  let i = 0
+  while (i < body.length) {
+    if (body[i] !== '`') {
+      out += body[i]
+      i++
+      continue
+    }
+    let j = i
+    while (body[j] === '`') j++
+    const run = body.slice(i, j)
+    let close = body.indexOf(run, j)
+    while (close !== -1 && (body[close - 1] === '`' || body[close + run.length] === '`')) {
+      close = body.indexOf(run, close + 1)
+    }
+    if (close === -1) {
+      out += run
+      i = j
+      continue
+    }
+    i = close + run.length
+  }
+  return out
 }
 
 /**
@@ -197,18 +254,94 @@ export function dottedExtension(ext: string): string {
 }
 
 /**
- * Resolve a link target to an existing note file inside the vault. The target
- * may omit the extension; extensions are tried in config order.
+ * A link resolver maps an Obsidian `[[target]]` to a vault-relative note id,
+ * or `undefined` when nothing matches.
+ */
+export type LinkResolver = (target: string) => string | undefined
+
+/**
+ * Build a resolver over the known note ids, matching Obsidian semantics: an
+ * exact vault-relative path first, then a path-suffix match, then a bare
+ * basename match — each tier tolerates the target carrying or omitting the
+ * extension. Ambiguity within a tier resolves to the id with the fewest path
+ * segments, ties by code-unit order, so results are identical across hosts.
+ * @param ids - vault-relative note ids (e.g. `shared/notes/foo.md`).
+ * @returns resolver function for `[[...]]` targets.
+ */
+export function createLinkResolver(ids: string[]): LinkResolver {
+  interface Entry {
+    id: string
+    stem: string
+    basenameId: string
+    basenameStem: string
+    segments: number
+  }
+  const entries: Entry[] = ids.map(id => {
+    const stem = id.replace(/\.[^./]+$/, '')
+    return {
+      id,
+      stem,
+      basenameId: id.slice(id.lastIndexOf('/') + 1),
+      basenameStem: stem.slice(stem.lastIndexOf('/') + 1),
+      segments: id.split('/').length,
+    }
+  })
+  // O(1) lookup tables keyed by every segment-boundary suffix of each id and
+  // stem: an exact hit is the full-string key, a path-suffix hit is a proper
+  // suffix, and a basename hit is the last segment.
+  const exact = new Map<string, Entry[]>()
+  const suffix = new Map<string, Entry[]>()
+  const basename = new Map<string, Entry[]>()
+  const add = (table: Map<string, Entry[]>, key: string, entry: Entry): void => {
+    const list = table.get(key)
+    if (list === undefined) table.set(key, [entry])
+    else list.push(entry)
+  }
+  for (const entry of entries) {
+    add(basename, entry.basenameId, entry)
+    add(basename, entry.basenameStem, entry)
+    for (const s of [entry.id, entry.stem]) {
+      let boundary = -1
+      while ((boundary = s.indexOf('/', boundary + 1)) !== -1) {
+        add(suffix, s.slice(boundary + 1), entry)
+      }
+      add(exact, s, entry)
+    }
+  }
+  const pick = (matches: Entry[] | undefined): string | undefined => {
+    if (matches === undefined || matches.length === 0) return undefined
+    matches.sort((a, b) => a.segments - b.segments || codeUnitCompare(a.id, b.id))
+    return matches[0]?.id
+  }
+  return (target: string) => {
+    const t = target.replace(/\\/g, '/')
+    const hit = pick(exact.get(t)) ?? pick(suffix.get(t)) ?? pick(basename.get(t))
+    return hit
+  }
+}
+
+/**
+ * Resolve a link target to an existing note file inside the vault. When
+ * `resolve` is provided the target is first looked up in the note-id set with
+ * Obsidian semantics (exact path, then path suffix, then basename); otherwise
+ * the target is probed as a vault-relative path and extensions are tried in
+ * config order. Every result still passes the realpath containment check.
  * @param root - vault root.
  * @param extensions - note extensions.
  * @param target - link target from `[[...]]`.
+ * @param resolve - optional resolver built by {@link createLinkResolver}.
  * @returns the resolved absolute path, or `undefined` if no file exists.
  */
 export async function resolveLinkTarget(
   root: string,
   extensions: string[],
   target: string,
+  resolve?: LinkResolver,
 ): Promise<string | undefined> {
+  if (resolve !== undefined) {
+    const id = resolve(target)
+    if (id !== undefined) return containedPathReal(root, id)
+  }
   const candidates = extensions.map(ext => `${target}${dottedExtension(ext)}`)
   candidates.push(target)
   for (const candidate of candidates) {
@@ -283,6 +416,8 @@ export interface LinkedNote {
  * @param maxLinkDepth - how many link hops to resolve.
  * @param absolutePath - absolute path of the note.
  * @param visited - set of already-visited absolute paths to prevent cycles.
+ * @param linkResolver - resolver over the vault's note ids; built once per
+ *   call tree so bare `[[filename]]` links resolve without rescanning.
  * @returns the parsed note with linked notes attached.
  */
 export async function readNote(
@@ -291,6 +426,7 @@ export async function readNote(
   maxLinkDepth: number,
   absolutePath: string,
   visited: ReadonlySet<string> = new Set(),
+  linkResolver?: LinkResolver,
 ): Promise<Note & { linkedNotes: LinkedNote[] }> {
   if (visited.has(absolutePath)) {
     return {
@@ -311,9 +447,9 @@ export async function readNote(
   const linkedNotes: LinkedNote[] = []
   if (maxLinkDepth > 0) {
     for (const link of links) {
-      const target = await resolveLinkTarget(root, extensions, link)
+      const target = await resolveLinkTarget(root, extensions, link, linkResolver)
       if (target !== undefined) {
-        const child = await readNote(root, extensions, maxLinkDepth - 1, target, nextVisited)
+        const child = await readNote(root, extensions, maxLinkDepth - 1, target, nextVisited, linkResolver)
         linkedNotes.push(child)
       }
     }
@@ -365,12 +501,10 @@ export async function buildIndex(
       : note.id.replace(/\.[^.]+$/, '')
     index.set(note.id, { id: note.id, title, backlinks: [], body: note.body })
   }
+  const linkResolver = createLinkResolver([...index.keys()])
   for (const note of notes) {
     for (const link of note.links) {
-      const targetId = [...index.keys()].find((id) => {
-        const base = id.replace(/\.[^.]+$/, '')
-        return base === link || id === link
-      })
+      const targetId = linkResolver(link)
       if (targetId !== undefined) {
         const entry = index.get(targetId)
         if (entry !== undefined && !entry.backlinks.includes(note.id)) {
@@ -443,14 +577,18 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
       const absolutePath = await containedPathReal(vaultRoot, args.id)
-      const note = await readNote(vaultRoot, resolved.extensions, resolved.maxLinkDepth, absolutePath)
+      const linkResolver = createLinkResolver(
+        (await listNotePaths(vaultRoot, resolved.extensions, resolved.indexHiddenDirs))
+          .map(path => vaultRelativeId(vaultRoot, path)),
+      )
+      const note = await readNote(vaultRoot, resolved.extensions, resolved.maxLinkDepth, absolutePath, new Set(), linkResolver)
       return note as unknown as JsonValue
     },
   })))
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_search',
-    description: 'Search the wiki vault by note title or body keyword. Returns matching note ids, titles, and backlink counts. Use this before asking the user which note to read.',
+    description: 'Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns matching note ids, titles, scores, and backlink counts. Use this before asking the user which note to read.',
     parameters: {
       query: {
         type: 'string',
@@ -467,6 +605,7 @@ export function apply(ctx: Context, config: Config): void {
           properties: {
             id: { type: 'string' },
             title: { type: 'string' },
+            score: { type: 'number' },
             backlinks: { type: 'array', items: { type: 'string' } },
           },
         },
@@ -476,15 +615,41 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
       const index = await buildIndex(vaultRoot, resolved.extensions, resolved.indexHiddenDirs)
-      const terms = args.query.toLowerCase().split(/\s+/).filter(Boolean)
-      const hits: SearchResult[] = []
-      for (const result of index.values()) {
-        const haystack = `${result.id} ${result.title} ${result.backlinks.join(' ')} ${result.body}`.toLowerCase()
-        if (terms.every(term => haystack.includes(term))) {
-          hits.push({ id: result.id, title: result.title, backlinks: result.backlinks })
+      let hits = rankNotes(index, args.query)
+      // Optional semantic layer: when `wiki_semantic_search` is mounted, fuse
+      // both rankings via reciprocal rank fusion. Only the dispatch is
+      // fail-soft — an unavailable or erroring semantic layer degrades to the
+      // lexical ranking; parse/fusion errors propagate so real bugs surface
+      // instead of silently weakening results.
+      if (ctx.tools.get('wiki_semantic_search') !== undefined) {
+        let semantic
+        try {
+          semantic = await ctx.tools.execute({
+            callId: `${exec.callId}:wiki_semantic_search:${randomUUID()}` as typeof exec.callId,
+            rootCallId: exec.rootCallId,
+            name: 'wiki_semantic_search',
+            arguments: { query: args.query },
+            parent: exec.token,
+            signal: exec.signal,
+            ...(exec.agent !== undefined ? { agent: exec.agent } : {}),
+          })
+        } catch (error) {
+          ctx.logger?.warn('tool-memory-filesystem: semantic fusion skipped: ' + String(error))
+        }
+        if (semantic !== undefined && !semantic.isError) {
+          const semanticHits = JSON.parse(
+            semantic.content
+              .map(block => {
+                const maybe = block as { type?: unknown; text?: unknown }
+                return maybe.type === 'text' && typeof maybe.text === 'string' ? maybe.text : ''
+              })
+              .join('') || '[]',
+          ) as { id: string }[]
+          hits = fuseRankings(hits, semanticHits.map(hit => hit.id), index)
+        } else if (semantic !== undefined) {
+          ctx.logger?.warn('tool-memory-filesystem: semantic fusion skipped: wiki_semantic_search returned an error')
         }
       }
-      hits.sort((a, b) => b.backlinks.length - a.backlinks.length)
       return hits.slice(0, resolved.maxSearchResults)
     },
   })))

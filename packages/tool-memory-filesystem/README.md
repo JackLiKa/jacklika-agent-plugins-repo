@@ -53,7 +53,7 @@ A relative `vaultRoot` resolves against the calling session's workspace.
 ### Tools
 
 - `wiki_read(id)` — read one note by vault-relative path and return its frontmatter, body, links, linked notes, and a `version` content fingerprint.
-- `wiki_search(query)` — keyword search across note titles, ids, and bodies; results include backlink counts.
+- `wiki_search(query)` — keyword search across note titles, ids, and bodies; query terms are OR-matched and ranked by field-weighted BM25-style scoring (title/id hits weigh most, rare terms weigh more) plus a verbatim-phrase bonus and a link-graph boost; when `wiki_semantic_search` is mounted the two rankings fuse via reciprocal rank fusion. Results include the score and backlink counts.
 - `wiki_write(id, content, mode?, baseVersion?)` — create or append to a note. Append mode preserves frontmatter and adds a timestamp header. Passing a `version` from `wiki_read` as `baseVersion` makes the write fail loudly when another writer changed the note in between.
 
 ### Security
@@ -65,7 +65,7 @@ All paths are resolved under the vault root for that call; a path that escapes t
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-This package is a single Cordis function plugin with no runtime service. It registers three typed tools on `ctx.tools`. The vault root is resolved per tool call: the explicit `vaultRoot` config when set (relative paths anchor at the session workspace), otherwise `<session cwd>/.dsh/memory/` so each workspace owns its notes. Each tool reads Markdown files directly through `node:fs/promises` and stays inside the resolved root via `path.resolve` + prefix checking. YAML frontmatter is parsed with `js-yaml`; `[[link|alias]]` references extract the target before the pipe. Search builds a transient index from the vault contents and sorts hits by backlink count. `wiki_write` publishes atomically: the body is staged in a sibling temp file and `rename`d over the target, so concurrent readers never observe a partially written note.
+This package is a single Cordis function plugin with no runtime service. It registers three typed tools on `ctx.tools`. The vault root is resolved per tool call: the explicit `vaultRoot` config when set (relative paths anchor at the session workspace), otherwise `<session cwd>/.dsh/memory/` so each workspace owns its notes. Each tool reads Markdown files directly through `node:fs/promises` and stays inside the resolved root via `path.resolve` + prefix checking. YAML frontmatter is parsed with `js-yaml`; `[[link|alias]]` references extract the target before the pipe; `[[...]]` inside inline code spans or fenced code blocks is documentation, not a link, and is ignored. Link targets resolve Obsidian-style against the indexed note ids: an exact vault-relative path first, then a path-suffix match (`[[notes/foo]]` finds `shared/notes/foo.md`), then a basename match anywhere in the vault — each tier tolerates the target carrying or omitting the extension. Ambiguous matches pick the fewest path segments, then the lowest id in code-point order, so resolution is deterministic across platforms. Search builds a transient index from the vault contents and ranks it in layers: OR-matched field-weighted scoring (id/title ×3, backlinks ×1, body ×1, with IDF so rare terms weigh more and BM25 saturation plus length normalization so long notes do not dominate), a verbatim-phrase bonus, and a graph boost for notes linked from strong hits. When `wiki_semantic_search` is registered, its ranking is fused in via reciprocal rank fusion; semantic failures fall back to the lexical ranking. `wiki_write` publishes atomically: the body is staged in a sibling temp file and `rename`d over the target, so concurrent readers never observe a partially written note.
 
 -----
 
@@ -76,7 +76,7 @@ This package is a single Cordis function plugin with no runtime service. It regi
 
 #### What the model sees
 
-The model sees the generated [`wiki_read`, `wiki_search`, and `wiki_write` schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-memory-filesystem). Their descriptions tell the model that notes are Markdown files with YAML frontmatter and Obsidian-style `[[link]]` references, and that `wiki_read` follows links up to the configured depth.
+The model sees the generated `wiki_read`, `wiki_search`, and `wiki_write` schemas. Their descriptions tell the model that notes are Markdown files with YAML frontmatter and Obsidian-style `[[link]]` references, and that `wiki_read` follows links up to the configured depth.
 
 ##### Verbatim description for `wiki_read`
 
@@ -87,7 +87,7 @@ Read one Markdown note from the wiki vault, optionally following Obsidian-style 
 ##### Verbatim description for `wiki_search`
 
 ```markdown
-Search the wiki vault by note title or body keyword. Returns matching note ids, titles, and backlink counts. Use this before asking the user which note to read.
+Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns matching note ids, titles, scores, and backlink counts. Use this before asking the user which note to read.
 ```
 
 ##### Verbatim description for `wiki_write`

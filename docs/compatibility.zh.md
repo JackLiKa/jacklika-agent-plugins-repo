@@ -22,14 +22,27 @@ Harness 在 registry 安装前和 Profile 组合前都会检查所有 `@deepseek
 | scope | `@deepseek-ai/dsh-llm` 的 `ToolCallId`；`@deepseek-ai/dsh-tools` 的 `ToolDispatchExecution`、`ToolExecutionResult` 与 `ctx.tools.execute` |
 | queue 与 git | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布 |
 | filesystem、graph、vector、curator | `@deepseek-ai/dsh-tools` 的 `defineTool` / `ToolRunContext`；filesystem、graph、curator 也使用 `@deepseek-ai/dsh-util-values` 的 `JsonValue` |
-| connector-core、devin-connect、qoder-connect | `@deepseek-ai/dsh-llm` 的 `CliLlmAdapter`、模型注册与解析；`@deepseek-ai/cordis` 的 web 路由原语 |
+| todo-anchor | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布；`@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context` |
 
 Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。
+
+## 本套件依赖的 Harness 接缝
+
+| 接缝 | 使用方 | 所依赖的契约 |
+|---|---|---|
+| `tools/execute` 瀑布 | scope、queue、git、todo-anchor | 监听器调用 `next()`，之后可读 `exec.name` / `exec.arguments`。todo-anchor 把错误结果视为“未写入”，绝不锚定它。 |
+| `ctx.systemPrompt.context` | todo-anchor | 注册有序的动态运行时上下文。`text` 可以是函数，在**每次提示词组装**时求值；结果长度为 0 则被丢弃。渲染出的快照被标注为取代此前的运行时上下文快照——这正是注入值能比压缩摘要活得更久的原因。 |
+| `todo/write` 会话事件 | Harness，非本套件 | `todo_write` 把 `{content, status}[]` 作为会话事件持久化。本套件把它记录为**所依赖的事实**，而绝不作为自己调用的 API。 |
+
+## 本套件绕过的已知 Harness 缺口
+
+- **没有 `todo_read`。** `todo_write` 全量替换清单，且没有任何工具把它读回来，因此停止写入的模型会一直看到自己上次的声明，而上下文里丢了清单的会话也无法找回。todo-anchor 把清单镜像进动态上下文，消除的是**丢失**那一半；**过期**那一半是行为问题，任何插件都无法消除。
+- **`exec.agent` 的会话身份存在但类型单薄。** `tools/execute` 派发携带 `exec.agent.id`——即会话 id——todo-anchor 据此按会话分键清单。公开 `Agent` 类型只保证 `id`，因此插件做防御式读取（先 `id` 再 `sessionId`），并对无 scope 的组装回退到进程级最近清单。
+- **任务清单状态不会被注入系统提示词。** `@deepseek-ai/dsh-system-prompt` 中没有任何 todo 贡献，因此被 resume、fork 或压缩过的会话没有一等公民途径找回当前清单。
+
+一个 `todo_read` 工具，或每轮重新注入当前清单，都会让 todo-anchor 变得不必要。在它出现之前，镜像就是变通方案，而仓库笔记仍是持久记录。
 
 ## 跨平台说明
 
 - Vault 路径通过 Node `path` 模块解析，并在任何读写前经过校验。
-- 连接器 CLI adapter 会启动登录 shell（macOS/Linux 用 `/bin/bash -lc`，Windows 用 `cmd.exe /c`），从而继承用户的 PATH 与环境。
-- Devin CLI 凭证发现：macOS/Linux 使用 `~/.local/share/devin/credentials.toml`，Windows 使用 `%LOCALAPPDATA%/devin/credentials.toml`。
-- Qoder 配置目录在所有平台下均位于 `~/.dsh/profiles/<profile>/.dsh-qoder-connect`。
 - 完整 Windows/macOS/Linux CI 矩阵会在每次 push 时运行 `install`、`typecheck`、`lint`、`test`、`build`、`test:multiprocess`、`test:pack` 与 `test:profile`。

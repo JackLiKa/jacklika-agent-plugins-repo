@@ -51,7 +51,7 @@ It resolves the same vault root per call as `tool-memory-filesystem`: an explici
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The package is a single Cordis function plugin that registers `wiki_graph` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper, lists notes through the shared `listNotePaths` walker, and extracts `[[link]]` targets through `extractLinks`/`resolveLinkTarget`. A breadth-first walk selects the node set first; edges are then collected from every selected node so boundary-node outgoing edges are not dropped. Output is `{ nodes: [{ id, title, backlinks }], edges: [{ from, to }] }`.
+The package is a single Cordis function plugin that registers `wiki_graph` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper, lists notes through the shared `listNotePaths` walker, and extracts `[[link]]` targets through `extractLinks`/`resolveLinkTarget`. Targets resolve with the same Obsidian-style tiers as `wiki_read` — exact vault-relative path, then path suffix, then basename anywhere in the vault, with deterministic ambiguity handling. A breadth-first walk selects the node set first; edges are then collected from every selected node so boundary-node outgoing edges are not dropped. Output is `{ nodes: [{ id, title, backlinks }], edges: [{ from, to }] }`.
 
 -----
 
@@ -62,7 +62,7 @@ The package is a single Cordis function plugin that registers `wiki_graph` on `c
 
 #### What the model sees
 
-The model sees the generated `wiki_graph` schema in the [tool catalog](../../../docs/tool-catalog.md#deepseek-aidsh-tool-memory-graph). The description states that the graph is read-only and derived from `[[link]]` references.
+The model sees the generated `wiki_graph` schema. The description states that the graph is read-only and derived from `[[link]]` references.
 
 ##### Verbatim description for `wiki_graph`
 

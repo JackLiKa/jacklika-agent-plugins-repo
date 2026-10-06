@@ -71,7 +71,7 @@ kind: "package-reference"
 
 #### 模型可见内容
 
-模型在[工具目录](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-memory-vector)中看到生成的 `wiki_semantic_search` schema。描述说明这是基于语义的检索，并提示模型用 `wiki_search` 做精确关键词查找。
+模型看到生成的 `wiki_semantic_search` schema。描述说明这是基于语义的检索，并提示模型用 `wiki_search` 做精确关键词查找。
 
 ##### `wiki_semantic_search` 的原文描述
 

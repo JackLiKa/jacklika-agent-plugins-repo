@@ -46,10 +46,20 @@ function originUrl(): string | undefined {
 
 async function packageManifests(): Promise<{ path: string; value: Record<string, unknown> }[]> {
   const names = await readdir(packageRoot)
-  return Promise.all(names.map(async (name) => {
+  const manifests = await Promise.all(names.map(async (name) => {
     const path = join(packageRoot, name, 'package.json')
-    return { path, value: JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown> }
+    try {
+      return { path, value: JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown> }
+    } catch (error) {
+      // Skip stray entries under packages/ that are not packages. ENOTDIR
+      // covers plain files (packages/foo.txt/package.json); ENOENT covers
+      // directories without a manifest.
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR') return undefined
+      throw error
+    }
   }))
+  return manifests.filter((item): item is { path: string; value: Record<string, unknown> } => item !== undefined)
 }
 
 describe('published package manifests', () => {

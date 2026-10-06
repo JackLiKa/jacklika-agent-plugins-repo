@@ -71,7 +71,7 @@ The package is a single Cordis function plugin that registers `wiki_semantic_sea
 
 #### What the model sees
 
-The model sees the generated `wiki_semantic_search` schema in the [tool catalog](../../../docs/tool-catalog.md#deepseek-aidsh-tool-memory-vector). The description tells the model this is meaning-based retrieval and points it to `wiki_search` for exact keyword lookups.
+The model sees the generated `wiki_semantic_search` schema. The description tells the model this is meaning-based retrieval and points it to `wiki_search` for exact keyword lookups.
 
 ##### Verbatim description for `wiki_semantic_search`
 

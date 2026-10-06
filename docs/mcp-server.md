@@ -8,7 +8,7 @@
 node packages/memory-mcp/src/server.mjs --vault /path/to/vault [--max-link-depth N]
 ```
 
-`--vault` defaults to `<cwd>/.plugins/memory/` to match the dsh-memory Bundle default. The server has no dependencies and no build step.
+`--vault` defaults to `<cwd>/.plugins/memory/` to match the dsh-memory Bundle default. The server has no build step.
 
 ## Client configuration
 
@@ -25,7 +25,7 @@ node packages/memory-mcp/src/server.mjs --vault /path/to/vault [--max-link-depth
 
 ## Surface
 
-- Tools: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` — same semantics as the dsh tools, including `baseVersion` conflict errors.
+- Tools: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` — same tool names and `baseVersion` conflict errors as the dsh tools, with one intentional difference: MCP `wiki_search` is a plain AND keyword match sorted by note id and returns only `{id, title}` (no relevance `score`, no `backlinks`, no layered ranking). The layered BM25/phrase/graph/semantic ranking lives in `@jacklika/dsh-tool-memory-filesystem`; the MCP server stays dependency-free. `wiki_read`/`wiki_graph` resolve `[[link]]` targets with the same Obsidian-style semantics as the dsh tools: exact vault-relative path, then path suffix, then basename match, choosing the fewest path segments then the lowest id on ambiguity.
 - Resources: `note:///<id>` via `resources/list` / `resources/read`.
 
 ## What it guarantees — and what it does not

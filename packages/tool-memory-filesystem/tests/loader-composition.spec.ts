@@ -8,7 +8,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import * as ToolMemory from '@jacklika/dsh-tool-memory-filesystem'
 
 let root: string | undefined
@@ -71,6 +71,20 @@ async function boot(vaultRoot?: string, indexHiddenDirs = false): Promise<Contex
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
   return ctx
+}
+
+/**
+ * A vault laid out like the real `.plugins/memory/`: notes nested under
+ * `shared/notes/` referencing each other by bare filename, the way Obsidian
+ * users actually write links.
+ */
+async function makeNestedVault(): Promise<string> {
+  const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-memory-vault-nested-'))
+  const dir = join(vaultRoot, 'shared', 'notes')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'a.md'), '# Alpha\n\nAlpha body mentions zephyr-token. See [[b]].\n')
+  await writeFile(join(dir, 'b.md'), '# Beta\n\nBeta body has no shared keywords.\n')
+  return vaultRoot
 }
 
 async function makeVault(): Promise<string> {
@@ -150,6 +164,147 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     const hits = JSON.parse(resultText(result)) as { id: string; title: string }[]
     expect(hits.some(h => h.id === 'embedding.md')).toBe(true)
     expect(hits.every(h => !Object.hasOwn(h, 'body'))).toBe(true)
+  })
+
+  it('OR-matches long queries and ranks by field-weighted score', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    // A term absent from the whole vault must not void the note that matched
+    // the rest — under AND semantics this query returned nothing.
+    const partial = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-partial'),
+      name: 'wiki_search',
+      arguments: { query: 'retrieval absent-xyzzy' },
+    })
+    if (partial.isError) throw new Error('expected wiki_search success')
+    const partialHits = JSON.parse(resultText(partial)) as { id: string; score: number }[]
+    // RAG.md matches 'retrieval' lexically; embedding.md matches nothing but
+    // is linked from RAG.md, so the graph boost surfaces it second.
+    expect(partialHits.map(h => h.id)).toEqual(['concepts/RAG.md', 'embedding.md'])
+    expect(partialHits[0].score).toBeGreaterThan(partialHits[1].score)
+
+    // 'rag' hits the embedding note's body AND backlink field plus its own
+    // title/id; 'vector' only appears in embedding.md's body. The note that
+    // matches both terms in heavier fields ranks first.
+    const ranked = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-ranked'),
+      name: 'wiki_search',
+      arguments: { query: 'rag vector' },
+    })
+    if (ranked.isError) throw new Error('expected wiki_search success')
+    const rankedHits = JSON.parse(resultText(ranked)) as { id: string; score: number }[]
+    expect(rankedHits[0].id).toBe('embedding.md')
+    expect(rankedHits.map(h => h.id)).toContain('concepts/RAG.md')
+    expect(rankedHits.every(h => typeof h.score === 'number' && h.score > 0)).toBe(true)
+
+    // Field weighting: 'embedding' appears in embedding.md's id+title (×3)
+    // and body, but only as a body link inside RAG.md — the title hit wins.
+    const fielded = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-fielded'),
+      name: 'wiki_search',
+      arguments: { query: 'embedding' },
+    })
+    if (fielded.isError) throw new Error('expected wiki_search success')
+    const fieldedHits = JSON.parse(resultText(fielded)) as { id: string }[]
+    expect(fieldedHits[0].id).toBe('embedding.md')
+  })
+
+  it('fails wiki_search when the semantic layer returns malformed output', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    ctx.tools.register(defineTool({
+      name: 'wiki_semantic_search',
+      description: 'stub',
+      parameters: { query: { type: 'string', required: true } },
+      output: {
+        schema: { type: 'json' },
+        // Deliberately malformed JSON: only dispatch failures are fail-soft;
+        // a broken semantic payload must propagate instead of degrading.
+        render: () => [{ type: 'text', text: '{not json' }],
+      },
+      async execute() {
+        return []
+      },
+    }))
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-malformed-semantic'),
+      name: 'wiki_search',
+      arguments: { query: 'rag' },
+    })
+    expect(result.isError).toBe(true)
+  })
+
+  it('degrades to lexical hits when the semantic layer errors', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    ctx.tools.register(defineTool({
+      name: 'wiki_semantic_search',
+      description: 'stub',
+      parameters: { query: { type: 'string', required: true } },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+      },
+      async execute() {
+        throw new Error('embeddings endpoint down')
+      },
+    }))
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-semantic-down'),
+      name: 'wiki_search',
+      arguments: { query: 'rag' },
+    })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected wiki_search success')
+    const hits = JSON.parse(resultText(result)) as { id: string }[]
+    expect(hits.map(h => h.id)).toContain('concepts/RAG.md')
+  })
+
+  it('resolves bare-filename links across nested directories', async () => {
+    const vault = await makeNestedVault()
+    const ctx = await boot(vault)
+
+    // wiki_read must follow [[b]] to shared/notes/b.md.
+    const read = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('read-nested-a'),
+      name: 'wiki_read',
+      arguments: { id: 'shared/notes/a.md' },
+    })
+    if (read.isError) throw new Error('expected wiki_read success')
+    const note = JSON.parse(resultText(read)) as { links: string[]; linkedNotes: { id: string }[] }
+    expect(note.links).toContain('b')
+    expect(note.linkedNotes.map(n => n.id)).toContain('shared/notes/b.md')
+
+    // buildIndex must record the backlink: searching b's id surfaces a.
+    const search = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-nested-beta'),
+      name: 'wiki_search',
+      arguments: { query: 'beta' },
+    })
+    if (search.isError) throw new Error('expected wiki_search success')
+    const hits = JSON.parse(resultText(search)) as { id: string; backlinks: string[] }[]
+    const beta = hits.find(h => h.id === 'shared/notes/b.md')
+    expect(beta?.backlinks).toContain('shared/notes/a.md')
+
+    // Graph boost: 'zephyr-token' appears only in a.md, but b.md is linked
+    // from it, so it must surface in the results.
+    const boosted = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-nested-boost'),
+      name: 'wiki_search',
+      arguments: { query: 'zephyr-token' },
+    })
+    if (boosted.isError) throw new Error('expected wiki_search success')
+    const boostedHits = JSON.parse(resultText(boosted)) as { id: string }[]
+    expect(boostedHits.map(h => h.id)).toEqual(['shared/notes/a.md', 'shared/notes/b.md'])
   })
 
   it('appends to a note while preserving frontmatter', async () => {

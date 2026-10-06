@@ -1,6 +1,6 @@
 # @jacklika/dsh-memory-mcp
 
-Zero-dependency MCP stdio server that exposes the memory vault to any MCP client (Claude Code, Cursor, Obsidian bridges, `dsh-mcp-client`). One process owns every write, so clients serialize through the server instead of negotiating filesystem locks — this is the "single writer" deployment of the memory suite.
+MCP stdio server that exposes the memory vault to any MCP client (Claude Code, Cursor, Obsidian bridges, `dsh-mcp-client`). One process owns every write, so clients serialize through the server instead of negotiating filesystem locks — this is the "single writer" deployment of the memory suite.
 
 ## Run
 

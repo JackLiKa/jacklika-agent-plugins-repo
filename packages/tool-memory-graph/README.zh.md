@@ -51,7 +51,7 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-本包是单个 Cordis 函数插件，在 `ctx.tools` 上注册 `wiki_graph`。每次调用通过共享的 `resolveMemoryVaultRoot` 解析仓库根，用 `listNotePaths` 遍历笔记，用 `extractLinks`/`resolveLinkTarget` 提取 `[[link]]` 目标。先用广度优先遍历确定节点集合，再从所有已选节点收集边，因此边界节点的出边不会丢失。输出为 `{ nodes: [{ id, title, backlinks }], edges: [{ from, to }] }`。
+本包是单个 Cordis 函数插件，在 `ctx.tools` 上注册 `wiki_graph`。每次调用通过共享的 `resolveMemoryVaultRoot` 解析仓库根，用 `listNotePaths` 遍历笔记，用 `extractLinks`/`resolveLinkTarget` 提取 `[[link]]` 目标。目标按与 `wiki_read` 相同的 Obsidian 语义解析——先精确仓库相对路径，再路径后缀，最后全仓库 basename 匹配，多重命中按确定性规则选择。先用广度优先遍历确定节点集合，再从所有已选节点收集边，因此边界节点的出边不会丢失。输出为 `{ nodes: [{ id, title, backlinks }], edges: [{ from, to }] }`。
 
 -----
 
@@ -62,7 +62,7 @@ kind: "package-reference"
 
 #### 模型可见内容
 
-模型在[工具目录](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-memory-graph)中看到生成的 `wiki_graph` schema。描述声明该图是只读的，由 `[[link]]` 引用推导。
+模型看到生成的 `wiki_graph` schema。描述声明该图是只读的，由 `[[link]]` 引用推导。
 
 ##### `wiki_graph` 的原文描述
 

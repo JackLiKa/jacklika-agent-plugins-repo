@@ -13,6 +13,7 @@
     { "path": "packages/memory-scope" },
     { "path": "packages/tool-memory-filesystem" },
     { "path": "packages/tool-memory-graph" },
-    { "path": "packages/tool-memory-vector" }
+    { "path": "packages/tool-memory-vector" },
+    { "path": "packages/todo-anchor" }
   ]
 }

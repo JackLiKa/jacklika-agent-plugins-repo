@@ -1,0 +1,41 @@
+{
+  "name": "@jacklika/dsh-todo-anchor",
+  "description": "Re-injects the session task list into every prompt. `todo_write` replaces the whole list and nothing reads it back, so a list written once and left stale misreports progress; this plugin observes successful writes and renders the current list as dynamic runtime context.",
+  "version": "0.1.0-alpha.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git",
+    "directory": "packages/todo-anchor"
+  },
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/types/**/*.d.ts",
+    "README.md",
+    "README.zh.md"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-system-prompt": ">=0.1.7-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1 <0.3.0-0"
+  }
+}

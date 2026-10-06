@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * @jacklika/dsh-memory-mcp — a zero-dependency MCP stdio server exposing the
- * memory vault to any MCP client. One process owns all writes, so clients
- * serialize through the server instead of negotiating filesystem locks.
+ * @jacklika/dsh-memory-mcp — an MCP stdio server exposing the memory vault to
+ * any MCP client. One process owns all writes, so clients serialize through
+ * the server instead of negotiating filesystem locks.
  *
  * Usage: dsh-memory-mcp [--vault <path>] [--max-link-depth N]
  *   --vault defaults to <cwd>/.plugins/memory/ to match the Bundle default.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
 import { formatBeijingTime } from '@jacklika/dsh-memory-time'
+import yaml from 'js-yaml'
 
 const PROTOCOL_VERSION = '2024-11-05'
 const SERVER_INFO = { name: 'dsh-memory-mcp', version: '0.1.0' }
@@ -66,16 +67,26 @@ async function containedPathReal(candidate) {
   }
 }
 
+// Mirrors splitFrontmatter in @jacklika/dsh-tool-memory-filesystem so notes
+// written by external editors (CRLF, unquoted timestamps, YAML lists) read
+// the same through MCP as through the dsh tools.
 function splitFrontmatter(text) {
-  if (!text.startsWith('---\n')) return { frontmatter: {}, body: text }
-  const end = text.indexOf('\n---\n', 4)
-  if (end < 0) return { frontmatter: {}, body: text }
-  const frontmatter = {}
-  for (const line of text.slice(4, end).split('\n')) {
-    const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line)
-    if (m) frontmatter[m[1]] = m[2]
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text)
+  if (match === null) return { frontmatter: {}, body: text }
+  const frontmatterText = match[1] ?? ''
+  const bodyText = match[2] ?? ''
+  try {
+    const parsed = yaml.load(frontmatterText)
+    const frontmatter = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {}
+    for (const [key, value] of Object.entries(frontmatter)) {
+      if (value instanceof Date) frontmatter[key] = formatBeijingTime(value)
+    }
+    return { frontmatter, body: bodyText }
+  } catch {
+    return { frontmatter: {}, body: text }
   }
-  return { frontmatter, body: text.slice(end + 5) }
 }
 
 function noteVersion(text) {
@@ -84,8 +95,59 @@ function noteVersion(text) {
 
 function extractLinks(text) {
   const links = []
-  for (const m of text.matchAll(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)) links.push(m[1].trim())
+  for (const m of stripCode(text).matchAll(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)) links.push(m[1].trim())
   return links
+}
+
+/**
+ * Remove fenced code blocks and inline code spans so literal `[[...]]` inside
+ * them is not treated as a link. Fences follow CommonMark: a closing fence
+ * must use the same marker character and be at least as long as the opener —
+ * a rule a regex backreference cannot express, so fences are scanned line by
+ * line. Inline spans treat backtick runs as maximal units: a run closes only
+ * at a later run of exactly equal length; an unmatched run is literal text.
+ */
+function stripCode(text) {
+  const kept = []
+  let fenceChar = ''
+  let fenceLen = 0
+  for (const line of text.split('\n')) {
+    if (fenceChar === '') {
+      const open = /^( {0,3})(`{3,}|~{3,})/.exec(line)
+      if (open?.[2] !== undefined) {
+        fenceChar = open[2][0] ?? ''
+        fenceLen = open[2].length
+        continue
+      }
+      kept.push(line)
+    } else if (new RegExp(`^ {0,3}${fenceChar === '`' ? '`' : '~'}{${fenceLen},}[ \t]*$`).test(line)) {
+      fenceChar = ''
+    }
+  }
+  const body = kept.join('\n')
+  let out = ''
+  let i = 0
+  while (i < body.length) {
+    if (body[i] !== '`') {
+      out += body[i]
+      i++
+      continue
+    }
+    let j = i
+    while (body[j] === '`') j++
+    const run = body.slice(i, j)
+    let close = body.indexOf(run, j)
+    while (close !== -1 && (body[close - 1] === '`' || body[close + run.length] === '`')) {
+      close = body.indexOf(run, close + 1)
+    }
+    if (close === -1) {
+      out += run
+      i = j
+      continue
+    }
+    i = close + run.length
+  }
+  return out
 }
 
 async function listNotePaths(dir = VAULT) {
@@ -105,7 +167,66 @@ async function listNotePaths(dir = VAULT) {
   return results
 }
 
-async function resolveLinkTarget(link) {
+/**
+ * Build a resolver over the known note ids, matching Obsidian semantics: an
+ * exact vault-relative path first, then a path-suffix match, then a bare
+ * basename match — each tier tolerates the target carrying or omitting the
+ * extension. Ambiguity within a tier resolves to the id with the fewest path
+ * segments, ties by code-unit order, so results are identical across hosts.
+ */
+function createLinkResolver(ids) {
+  const entries = ids.map(id => {
+    const stem = id.replace(/\.[^./]+$/, '')
+    return {
+      id,
+      stem,
+      basenameId: id.slice(id.lastIndexOf('/') + 1),
+      basenameStem: stem.slice(stem.lastIndexOf('/') + 1),
+      segments: id.split('/').length,
+    }
+  })
+  // O(1) lookup tables keyed by every segment-boundary suffix of each id and
+  // stem: an exact hit is the full-string key, a path-suffix hit is a proper
+  // suffix, and a basename hit is the last segment.
+  const exact = new Map()
+  const suffix = new Map()
+  const basename = new Map()
+  const add = (table, key, entry) => {
+    const list = table.get(key)
+    if (list === undefined) table.set(key, [entry])
+    else list.push(entry)
+  }
+  for (const entry of entries) {
+    add(basename, entry.basenameId, entry)
+    add(basename, entry.basenameStem, entry)
+    for (const s of [entry.id, entry.stem]) {
+      let boundary = -1
+      while ((boundary = s.indexOf('/', boundary + 1)) !== -1) {
+        add(suffix, s.slice(boundary + 1), entry)
+      }
+      add(exact, s, entry)
+    }
+  }
+  const pick = matches => {
+    if (matches === undefined || matches.length === 0) return undefined
+    matches.sort((a, b) => a.segments - b.segments || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    return matches[0].id
+  }
+  return target => {
+    const t = target.replace(/\\/g, '/')
+    return pick(exact.get(t)) ?? pick(suffix.get(t)) ?? pick(basename.get(t))
+  }
+}
+
+async function vaultLinkResolver() {
+  return createLinkResolver((await listNotePaths()).map(p => vaultRelativeId(p)))
+}
+
+async function resolveLinkTarget(link, resolve) {
+  if (resolve !== undefined) {
+    const id = resolve(link)
+    if (id !== undefined) return containedPathReal(id)
+  }
   for (const candidate of [link, ...EXTENSIONS.map(ext => `${link}${ext}`)]) {
     try {
       const p = await containedPathReal(candidate)
@@ -115,15 +236,10 @@ async function resolveLinkTarget(link) {
       if (error?.code !== 'ENOENT') throw error
     }
   }
-  // search by basename among indexed notes
-  const want = basename(link).replace(/\.[^.]+$/, '')
-  for (const p of await listNotePaths()) {
-    if (basename(p).replace(/\.[^.]+$/, '') === want) return p
-  }
   return undefined
 }
 
-async function readNote(absolutePath, depth, visited = new Set()) {
+async function readNote(absolutePath, depth, visited = new Set(), resolve) {
   const id = vaultRelativeId(absolutePath)
   if (visited.has(absolutePath)) {
     return { id, frontmatter: {}, body: '', links: [], version: '', linkedNotes: [] }
@@ -135,9 +251,10 @@ async function readNote(absolutePath, depth, visited = new Set()) {
   const links = extractLinks(text)
   const linkedNotes = []
   if (depth > 0) {
+    resolve ??= await vaultLinkResolver()
     for (const link of links) {
-      const target = await resolveLinkTarget(link)
-      if (target !== undefined) linkedNotes.push(await readNote(target, depth - 1, next))
+      const target = await resolveLinkTarget(link, resolve)
+      if (target !== undefined) linkedNotes.push(await readNote(target, depth - 1, next, resolve))
     }
   }
   return { id, frontmatter, body, links, version: noteVersion(text), linkedNotes }
@@ -157,7 +274,7 @@ async function searchNotes(query, maxResults = 20) {
     const haystack = `${n.id} ${n.title} ${n.body}`.toLowerCase()
     return terms.every(t => haystack.includes(t))
   })
-  hits.sort((a, b) => a.id.localeCompare(b.id))
+  hits.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   return hits.slice(0, maxResults).map(({ id, title }) => ({ id, title }))
 }
 
@@ -182,7 +299,7 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
   } else {
     const { frontmatter, body } = splitFrontmatter(existing ?? '')
     const fm = Object.keys(frontmatter).length > 0
-      ? `---\n${Object.entries(frontmatter).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n`
+      ? `---\n${yaml.dump(frontmatter).trimEnd()}\n---\n\n`
       : ''
     finalBody = `${fm}${body}\n\n## ${formatBeijingTime(new Date())}\n\n${content}\n`
   }
@@ -204,6 +321,7 @@ async function buildGraph(id, depth = 1, maxNodes = 200) {
     return /^#\s+(.+)$/m.exec(body)?.[1]?.trim() ?? idOf(p).replace(/\.[^.]+$/, '')
   }
   let paths
+  const resolve = await vaultLinkResolver()
   if (id === undefined) {
     paths = await listNotePaths()
   } else {
@@ -214,7 +332,7 @@ async function buildGraph(id, depth = 1, maxNodes = 200) {
       const next = []
       for (const p of frontier) {
         for (const link of extractLinks(await readFile(p, 'utf8'))) {
-          const t = await resolveLinkTarget(link)
+          const t = await resolveLinkTarget(link, resolve)
           if (t !== undefined && !seen.has(idOf(t))) { seen.set(idOf(t), t); next.push(t) }
         }
       }
@@ -230,7 +348,7 @@ async function buildGraph(id, depth = 1, maxNodes = 200) {
   for (const p of capped) {
     nodes.push({ id: idOf(p), title: await title(p) })
     for (const link of extractLinks(await readFile(p, 'utf8'))) {
-      const t = await resolveLinkTarget(link)
+      const t = await resolveLinkTarget(link, resolve)
       if (t !== undefined && idSet.has(idOf(t))) edges.push({ from: idOf(p), to: idOf(t) })
     }
   }

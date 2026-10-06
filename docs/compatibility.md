@@ -22,14 +22,27 @@ Harness checks every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer before regis
 | scope | `ToolCallId` from `@deepseek-ai/dsh-llm`; `ToolDispatchExecution`, `ToolExecutionResult`, and `ctx.tools.execute` from `@deepseek-ai/dsh-tools` |
 | queue and git | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools` |
 | filesystem, graph, vector, curator | `defineTool` / `ToolRunContext` from `@deepseek-ai/dsh-tools`; filesystem, graph, and curator also use `JsonValue` from `@deepseek-ai/dsh-util-values` |
-| connector-core, devin-connect, qoder-connect | `CliLlmAdapter`, DSH LLM model registration and resolution from `@deepseek-ai/dsh-llm`; web route primitives from `@deepseek-ai/cordis` |
+| todo-anchor | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools`; `ctx.systemPrompt.context` from `@deepseek-ai/dsh-system-prompt` |
 
 The Bundle itself contains only a Cordis patch and runtime dependencies on the member packages.
+
+## Harness seams this suite depends on
+
+| Seam | Used by | Contract relied on |
+|---|---|---|
+| `tools/execute` waterfall | scope, queue, git, todo-anchor | A listener calls `next()` and may read `exec.name` / `exec.arguments` afterwards. todo-anchor treats an error result as "not written" and never anchors it. |
+| `ctx.systemPrompt.context` | todo-anchor | Registers ordered dynamic runtime context. `text` may be a function, evaluated on every prompt assembly; a zero-length result is dropped. The rendered snapshot is marked as superseding earlier runtime-context snapshots, which is what lets an injected value outlive a compaction summary. |
+| `todo/write` session event | Harness, not this suite | `todo_write` persists `{content, status}[]` as a session event. The suite records this as a fact it depends on, never as an API it calls. |
+
+## Known Harness gaps this suite works around
+
+- **No `todo_read`.** `todo_write` replaces the whole list and no tool reads it back, so a model that stops writing keeps seeing its own last claim, and a session that loses the list in context cannot recover it. todo-anchor mirrors the list into dynamic context to remove the *loss* half; the *staleness* half is behavioural and no plugin can close it.
+- **`exec.agent` session identity is present but thinly typed.** `tools/execute` dispatches carry `exec.agent.id` — the session id — which todo-anchor uses to key lists per session. The public `Agent` type only guarantees `id`, so the plugin reads it defensively (`id`, then `sessionId`) and falls back to a process-global list for scope-less assemblies.
+- **Todo state is not injected into the system prompt.** `@deepseek-ai/dsh-system-prompt` contains no todo contribution, so a resumed, forked, or compacted session has no first-class way to recover the current list.
+
+A `todo_read` tool, or re-injecting the current list on every turn, would make todo-anchor unnecessary. Until one exists, the mirror is the workaround and a Vault note remains the durable record.
 
 ## Cross-platform notes
 
 - Vault paths are resolved with Node's `path` module and validated before any read/write.
-- Connector CLI adapters spawn a login shell (`/bin/bash -lc` on macOS/Linux, `cmd.exe /c` on Windows) so the user's PATH and environment are available.
-- Devin CLI credential discovery uses `~/.local/share/devin/credentials.toml` on macOS/Linux and `%LOCALAPPDATA%/devin/credentials.toml` on Windows.
-- Qoder config directories live under `~/.dsh/profiles/<profile>/.dsh-qoder-connect` on all platforms.
 - The full Windows/macOS/Linux CI matrix runs `install`, `typecheck`, `lint`, `test`, `build`, `test:multiprocess`, `test:pack`, and `test:profile` on every push.

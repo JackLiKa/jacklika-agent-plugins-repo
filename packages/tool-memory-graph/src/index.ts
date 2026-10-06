@@ -12,7 +12,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
-  containedPathReal, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter, vaultRelativeId,
+  containedPathReal, createLinkResolver, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter, vaultRelativeId,
 } from '@jacklika/dsh-tool-memory-filesystem'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -100,6 +100,7 @@ async function noteTitle(absolutePath: string, id: string): Promise<string> {
 async function buildGraph(root: string, resolved: ResolvedConfig): Promise<MemoryGraph> {
   const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
   const entries = paths.map(path => [vaultRelativeId(root, path), path] as const)
+  const linkResolver = createLinkResolver(entries.map(([id]) => id))
 
   const truncated = entries.length > resolved.maxNodes
   const capped = entries.slice(0, resolved.maxNodes)
@@ -111,7 +112,7 @@ async function buildGraph(root: string, resolved: ResolvedConfig): Promise<Memor
   for (const [id, path] of capped) {
     const text = await readFile(path, 'utf8')
     for (const link of extractLinks(text)) {
-      const targetPath = await resolveLinkTarget(root, resolved.extensions, link)
+      const targetPath = await resolveLinkTarget(root, resolved.extensions, link, linkResolver)
       if (targetPath === undefined) continue
       const targetId = vaultRelativeId(root, targetPath)
       if (idSet.has(targetId)) edges.push({ from: id, to: targetId })
@@ -136,6 +137,10 @@ async function buildSubgraph(
   depth: number,
 ): Promise<MemoryGraph> {
   const startPath = await containedPathReal(root, startId)
+  const linkResolver = createLinkResolver(
+    (await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs))
+      .map(path => vaultRelativeId(root, path)),
+  )
   const visited = new Map<string, string>([[vaultRelativeId(root, startPath), startPath]])
   let frontier = [startPath]
 
@@ -144,7 +149,7 @@ async function buildSubgraph(
     for (const path of frontier) {
       const text = await readFile(path, 'utf8')
       for (const link of extractLinks(text)) {
-        const targetPath = await resolveLinkTarget(root, resolved.extensions, link)
+        const targetPath = await resolveLinkTarget(root, resolved.extensions, link, linkResolver)
         if (targetPath === undefined) continue
         const toId = vaultRelativeId(root, targetPath)
         if (!visited.has(toId)) {
@@ -166,7 +171,7 @@ async function buildSubgraph(
     nodes.push({ id, title: await noteTitle(path, id) })
     const text = await readFile(path, 'utf8')
     for (const link of extractLinks(text)) {
-      const targetPath = await resolveLinkTarget(root, resolved.extensions, link)
+      const targetPath = await resolveLinkTarget(root, resolved.extensions, link, linkResolver)
       if (targetPath === undefined) continue
       const toId = vaultRelativeId(root, targetPath)
       if (idSet.has(toId)) edges.push({ from: id, to: toId })

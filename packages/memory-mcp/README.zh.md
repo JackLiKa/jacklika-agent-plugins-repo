@@ -1,6 +1,6 @@
 # @jacklika/dsh-memory-mcp
 
-零依赖的 MCP stdio 服务器，把 memory vault 暴露给任意 MCP 客户端（Claude Code、Cursor、Obsidian 桥、`dsh-mcp-client`）。单一进程持有所有写操作，因此客户端通过服务器串行化，而不是自己协商文件系统锁——这是 memory 套件的“单写者”部署形态。
+MCP stdio 服务器，把 memory vault 暴露给任意 MCP 客户端（Claude Code、Cursor、Obsidian 桥、`dsh-mcp-client`）。单一进程持有所有写操作，因此客户端通过服务器串行化，而不是自己协商文件系统锁——这是 memory 套件的“单写者”部署形态。
 
 ## 运行
 

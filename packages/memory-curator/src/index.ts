@@ -59,6 +59,7 @@ type ResolvedConfig = Required<Config>
 interface SearchHit {
   id: string
   title: string
+  score: number
   backlinks: string[]
 }
 
@@ -155,7 +156,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_recall',
-    description: 'Search the memory vault for prior notes related to the current task or topic. Call this at the start of a development task to avoid asking the user to repeat context that is already captured. Returns matching note ids, titles, and backlink counts.',
+    description: 'Search the memory vault for prior notes related to the current task or topic. Call this at the start of a development task to avoid asking the user to repeat context that is already captured. Query terms are OR-matched and ranked by field-weighted relevance, so partial matches still return. Returns matching note ids, titles, scores, and backlink counts.',
     parameters: {
       query: {
         type: 'string',

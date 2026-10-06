@@ -1,6 +1,6 @@
 // Smoke test: spawn the server, drive initialize + tools/call over stdio.
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -113,6 +113,46 @@ async function runSmoke() {
 
     const rr = await Promise.race([call('resources/read', { uri: 'note:///concepts/RAG.md' }), earlyExit])
     assert(rr.contents[0].text.includes('Retrieval'), 'resources/read')
+
+    // External editors (e.g. Obsidian on Windows) write CRLF frontmatter with
+    // unquoted timestamps; the MCP read path must see the same values as the
+    // dsh tools.
+    await mkdir(join(vault, 'external'), { recursive: true })
+    await writeFile(join(vault, 'external', 'obsidian.md'),
+      '---\r\ntitle: External note\r\ncreated: 2026-01-01T00:00:00+08:00\r\ntags:\r\n  - alpha\r\n  - beta\r\n---\r\n\r\nExternal body.\r\n')
+    const ext = await Promise.race([call('tools/call', { name: 'wiki_read', arguments: { id: 'external/obsidian.md' } }), earlyExit])
+    const extNote = JSON.parse(ext.content[0].text)
+    assert(extNote.frontmatter.created === '2026-01-01T00:00:00+08:00', `CRLF frontmatter created ${JSON.stringify(extNote.frontmatter)}`)
+    assert(Array.isArray(extNote.frontmatter.tags) && extNote.frontmatter.tags.length === 2, 'CRLF frontmatter tags list')
+    assert(extNote.body.includes('External body.'), 'CRLF body parsed')
+
+    // Obsidian-style bare-filename links must resolve across nested dirs:
+    // shared/notes/x.md → [[y]] → shared/notes/y.md, visible in both
+    // wiki_read's linkedNotes and wiki_graph's edges.
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'x.md'), '# X\n\nSee [[y]].\n')
+    await writeFile(join(vault, 'shared', 'notes', 'y.md'), '# Y\n\nBody.\n')
+    const xr = await Promise.race([call('tools/call', { name: 'wiki_read', arguments: { id: 'shared/notes/x.md' } }), earlyExit])
+    const xNote = JSON.parse(xr.content[0].text)
+    assert(
+      xNote.linkedNotes.some(n => n.id === 'shared/notes/y.md'),
+      `bare link [[y]] resolved: ${JSON.stringify(xNote.linkedNotes.map(n => n.id))}`,
+    )
+    const g = await Promise.race([call('tools/call', { name: 'wiki_graph', arguments: { id: 'shared/notes/x.md' } }), earlyExit])
+    const graph = JSON.parse(g.content[0].text)
+    assert(
+      graph.edges.some(e => e.from === 'shared/notes/x.md' && e.to === 'shared/notes/y.md'),
+      `wiki_graph edge x→y: ${JSON.stringify(graph.edges)}`,
+    )
+
+    // An unmatched backtick run must not mispair with a later span opener and
+    // expose a literal [[link]] — the real-vault defect from the deploy note.
+    await writeFile(join(vault, 'shared', 'notes', 'z.md'),
+      '# Z\n\nFences `(``` / ~~~)` are literal, and `[[link]]` documents syntax.\nSee [[x]] and [[y]].\n')
+    const zr = await Promise.race([call('tools/call', { name: 'wiki_read', arguments: { id: 'shared/notes/z.md' } }), earlyExit])
+    const zNote = JSON.parse(zr.content[0].text)
+    assert(!zNote.links.includes('link'), `literal [[link]] leaked: ${JSON.stringify(zNote.links)}`)
+    assert(zNote.links.includes('x') && zNote.links.includes('y'), `real links kept: ${JSON.stringify(zNote.links)}`)
 
     console.log('memory-mcp smoke: all assertions passed')
     if (!linked) {

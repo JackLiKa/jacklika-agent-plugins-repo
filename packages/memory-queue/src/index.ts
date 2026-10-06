@@ -175,8 +175,10 @@ async function acquireLock(
         try {
           await rename(lockPath, tombstone)
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-          throw error
+          // Windows file indexers/antivirus can hold a handle on the lock
+          // directory; tolerate the same transient codes as stale-lock reclaim.
+          if (!['ENOENT', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+          return
         }
         await rm(tombstone, { recursive: true, force: true })
       }

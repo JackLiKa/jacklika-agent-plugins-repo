@@ -263,30 +263,6 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 
 `<vault>` 默认为 `<session workspace>/.plugins/memory/`。请单独挂载 `skills/memory-vault`（`customSkillDirs`），否则模型不会知道"先读后写"与 `baseVersion` 的约定。
 
-## 连接器插件
-
-仓库还提供可选的 LLM 供应商连接器：
-
-- `@jacklika/dsh-connector` — 总包，依赖 `@jacklika/dsh-qoder-connect` 与 `@jacklika/dsh-devin-connect`。
-- `@jacklika/dsh-qoder-connect` — Qoder 全球/中国区域 provider，使用 PAT → jobToken 认证。
-- `@jacklika/dsh-devin-connect` — Devin provider，支持 PAT 与 CLI session 模型发现。
-- `@jacklika/dsh-connector-core` — 共享状态存储、统一面板与 adapter 基类。
-
-将连接器总包装进同一个 Profile：
-
-```sh
-dsh plugin --profile memory add @jacklika/dsh-connector@0.1.0-alpha.9
-```
-
-或从 checkout 路径安装：
-
-```sh
-dsh plugin --profile memory add /absolute/path/to/jacklika-agent-plugins-repo/packages/connector
-```
-
-然后在设置卡片中为每个供应商完成认证。当至少一个 provider 登录后，侧栏会出现统一的连接器面板，登录后模型会出现在原生模型选择器中。
-
-
 ## 常见问题
 
 | 现象 | 处理 |

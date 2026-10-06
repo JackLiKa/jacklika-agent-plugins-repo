@@ -16,7 +16,7 @@
   "scripts": {
     "test": "vitest run && node packages/memory-mcp/tests/smoke.mjs",
     "typecheck": "tsc -b",
-    "lint": "oxlint .",
+    "lint": "oxlint --deny-warnings .",
     "build": "tsc -b && node scripts/build-client-bundles.mjs",
     "verify-translation-pairing": "node scripts/verify-translation-pairing.mjs",
     "pack:all": "pnpm build && node scripts/pack-all.mjs",
