@@ -40,29 +40,10 @@ interface ConfiguredModel {
   contextWindow?: number
 }
 
-interface AdapterModelParams {
-  contextWindow?: number
-  reasoningEffort?: string
-  maxTokens?: number
-}
-
-const PARAMS_SEP = '@@'
-
-function parseCompositeModelId(compositeId: string): { baseId: string; params: AdapterModelParams } {
-  const idx = compositeId.indexOf(PARAMS_SEP)
-  if (idx < 0) return { baseId: compositeId, params: {} }
-  const baseId = compositeId.slice(0, idx)
-  const params: AdapterModelParams = {}
-  const query = compositeId.slice(idx + PARAMS_SEP.length)
-  for (const part of query.split('&')) {
-    const [key, value] = part.split('=')
-    if (value === undefined) continue
-    const decoded = decodeURIComponent(value)
-    if (key === 'ctx') params.contextWindow = Number(decoded)
-    if (key === 'effort') params.reasoningEffort = decoded
-    if (key === 'max') params.maxTokens = Number(decoded)
-  }
-  return { baseId, params }
+/** Strip a legacy `id@@params` suffix left behind by the removed selector. */
+function baseModelId(id: string): string {
+  const idx = id.indexOf('@@')
+  return idx < 0 ? id : id.slice(0, idx)
 }
 
 const ModelSchema = Schema.object({
@@ -122,7 +103,6 @@ function readModelCacheSync(path: string): LlmModelInfo[] | undefined {
 class DevinAdapter extends CliLlmAdapter {
   private readonly cachePath: string
   private readonly patStore: PatStore
-  private readonly selectedParams = new Map<string, AdapterModelParams>()
 
   constructor(variant: CliVariant, config: DevinConfig, dataDir: string, patStore: PatStore) {
     const configured = config.models
@@ -158,13 +138,10 @@ class DevinAdapter extends CliLlmAdapter {
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const parsed = parseCompositeModelId(model)
-    if (Object.keys(parsed.params).length > 0) {
-      this.selectedParams.set(parsed.baseId, parsed.params)
-    }
+    const baseId = baseModelId(model)
     const cached = await this.cachedModels()
-    const info = cached.find((m) => m.id === parsed.baseId)
-    const result: LlmResolvedModelInfo = { provider, id: parsed.baseId, name: info?.name ?? parsed.baseId }
+    const info = cached.find((m) => m.id === baseId)
+    const result: LlmResolvedModelInfo = { provider, id: baseId, name: info?.name ?? baseId }
     if (info?.inputModalities !== undefined) {
       result.inputModalities = info.inputModalities as readonly ModelModality[]
     }
@@ -378,7 +355,7 @@ class DevinAdapter extends CliLlmAdapter {
 
   protected buildArgs(options: GenerateOptions): string[] {
     const args = ['acp']
-    if (options.model) args.push('--model', options.model)
+    if (options.model) args.push('--model', baseModelId(options.model))
     return args
   }
 
@@ -436,7 +413,6 @@ export function apply(ctx: any, config: DevinConfig) {
       envToken: DEVIN_VARIANT.envToken,
       statusPath: DEVIN_VARIANT.statusPath,
       authPath: DEVIN_VARIANT.authPath,
-      selectPath: '/plugins/dsh-devin-connect/select',
       dataDir,
       modelsCachePath: cachePath,
       defaultModels: DEFAULT_MODELS.map((m) => ({ id: m.id, name: m.name })),

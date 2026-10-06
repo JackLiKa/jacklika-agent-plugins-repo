@@ -6,5 +6,3 @@
     - id: llm-devin
       name: '@jacklika/dsh-devin-connect'
 
-    - id: model-selector
-      name: '@jacklika/dsh-model-selector'

@@ -23,7 +23,6 @@ Harness checks every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer before regis
 | queue and git | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools` |
 | filesystem, graph, vector, curator | `defineTool` / `ToolRunContext` from `@deepseek-ai/dsh-tools`; filesystem, graph, and curator also use `JsonValue` from `@deepseek-ai/dsh-util-values` |
 | connector-core, devin-connect, qoder-connect | `CliLlmAdapter`, DSH LLM model registration and resolution from `@deepseek-ai/dsh-llm`; web route primitives from `@deepseek-ai/cordis` |
-| model-selector | `slots`, `modelDirectories`, `sessions`, `locale` from DSH client services; React 18 |
 
 The Bundle itself contains only a Cordis patch and runtime dependencies on the member packages.
 

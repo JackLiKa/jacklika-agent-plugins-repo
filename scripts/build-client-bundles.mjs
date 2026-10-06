@@ -18,12 +18,6 @@ const bundles = [
     out: join(root, '..', 'packages', 'devin-connect', 'lib', 'client.js'),
     tsconfig: join(root, '..', 'packages', 'devin-connect', 'tsconfig.json'),
   },
-  {
-    name: '@jacklika/dsh-model-selector',
-    entry: join(root, '..', 'packages', 'model-selector', 'src', 'client.tsx'),
-    out: join(root, '..', 'packages', 'model-selector', 'lib', 'client.js'),
-    tsconfig: join(root, '..', 'packages', 'model-selector', 'tsconfig.json'),
-  },
 ]
 
 const externals = [

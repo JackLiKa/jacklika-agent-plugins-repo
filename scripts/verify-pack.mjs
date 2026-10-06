@@ -52,7 +52,7 @@ try {
   await mkdir(tarballs)
   run(process.execPath, [join(root, 'scripts', 'pack-all.mjs'), tarballs], root)
   const files = (await readdir(tarballs)).filter(file => file.endsWith('.tgz')).sort()
-  if (files.length !== 15) throw new Error(`expected 15 tarballs, found ${files.length}`)
+  if (files.length !== 14) throw new Error(`expected 14 tarballs, found ${files.length}`)
 
   const packageSpecs = new Map()
   for (const file of files) {

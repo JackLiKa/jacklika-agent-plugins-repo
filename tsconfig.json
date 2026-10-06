@@ -4,7 +4,6 @@
     { "path": "packages/connector-core" },
     { "path": "packages/qoder-connect" },
     { "path": "packages/devin-connect" },
-    { "path": "packages/model-selector" },
     { "path": "packages/connector" },
     { "path": "packages/memory-time" },
     { "path": "packages/memory" },

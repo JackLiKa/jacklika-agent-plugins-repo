@@ -52,11 +52,10 @@ wiki_write("notes/x.md")
 
 宿主半区从不在响应中暴露完整 PAT；UI 只能看到脱敏后的 token 尾部。
 
-## 统一面板与模型选择器
+## 统一面板
 
 `@jacklika/dsh-connector-core` 提供：
 
 - `ConnectorListCard` — 侧栏卡片，仅在至少一个连接器报告 `signedIn` 时出现；点击打开统一面板。
 - 统一面板弹窗 — 手风琴式供应商行、每条额度账户的进度条、按 family 分组的可展开模型列表。
 
-`@jacklika/dsh-model-selector` 是可选的客户端插件，替换默认的 `conversation.input.model` 座位。它读取与原生选择器相同的 per-session `ModelDirectory`，并通过 `directory.select()` 提交选择，但以供应商优先、family 分组的形式展示模型元数据（上下文长度、价格）。

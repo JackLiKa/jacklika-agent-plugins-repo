@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { writeFile } from 'node:fs/promises'
 import {
-  createSelectedParamsStore,
   hostIsLoopback,
   json,
   keyMatches,
@@ -35,7 +34,6 @@ interface QoderVariantRuntime {
   region: 'china' | 'global'
   statusPath: string
   authPath: string
-  selectPath: string
   probePath: string
   store: PatStore
   authKey: string
@@ -206,58 +204,6 @@ function authHandler(runtime: QoderVariantRuntime) {
   }
 }
 
-function selectHandler(runtime: QoderVariantRuntime) {
-  return async (req: IncomingMessage, res: ServerResponse) => {
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      })
-      res.end()
-      return
-    }
-    if (req.method !== 'POST') {
-      json(res, 405, { error: 'method not allowed' })
-      return
-    }
-    if (!hostIsLoopback(req.headers.host)) {
-      json(res, 403, { error: 'request-not-trusted' })
-      return
-    }
-
-    const body = await readBody(req)
-    if (body === undefined) {
-      json(res, 413, { error: 'body too large' })
-      return
-    }
-
-    let request: { model?: string; contextWindow?: number; reasoningEffort?: string; maxTokens?: number }
-    try {
-      request = JSON.parse(body) as { model?: string; contextWindow?: number; reasoningEffort?: string; maxTokens?: number }
-    } catch {
-      json(res, 400, { error: 'invalid action' })
-      return
-    }
-    if (typeof request !== 'object' || request === null || typeof request.model !== 'string' || request.model.length === 0) {
-      json(res, 400, { error: 'invalid action' })
-      return
-    }
-
-    try {
-      const store = createSelectedParamsStore(runtime.dataDir)
-      store.write(request.model, {
-        contextWindow: request.contextWindow,
-        reasoningEffort: request.reasoningEffort,
-        maxTokens: request.maxTokens,
-      })
-      json(res, 200, { ok: true })
-    } catch (error) {
-      json(res, 500, { error: safeMessage(error) })
-    }
-  }
-}
-
 function probeHandler(runtime: QoderVariantRuntime) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method !== 'POST') {
@@ -342,16 +288,10 @@ export function registerQoderWebRoutes(ctx: WebRouteContext, runtimes: QoderVari
         path: runtime.probePath,
         handler: probeHandler(runtime),
       })
-      const disposeSelect = ctx.webServer.register({
-        kind: 'exact',
-        path: runtime.selectPath,
-        handler: selectHandler(runtime),
-      })
       return () => {
         disposeStatus()
         disposeAuth()
         disposeProbe()
-        disposeSelect()
       }
     }, `dsh-qoder-connect: web routes (${runtime.id})`)
   }

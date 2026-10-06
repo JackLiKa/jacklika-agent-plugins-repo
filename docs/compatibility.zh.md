@@ -23,7 +23,6 @@ Harness 在 registry 安装前和 Profile 组合前都会检查所有 `@deepseek
 | queue 与 git | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布 |
 | filesystem、graph、vector、curator | `@deepseek-ai/dsh-tools` 的 `defineTool` / `ToolRunContext`；filesystem、graph、curator 也使用 `@deepseek-ai/dsh-util-values` 的 `JsonValue` |
 | connector-core、devin-connect、qoder-connect | `@deepseek-ai/dsh-llm` 的 `CliLlmAdapter`、模型注册与解析；`@deepseek-ai/cordis` 的 web 路由原语 |
-| model-selector | DSH 客户端服务的 `slots`、`modelDirectories`、`sessions`、`locale`；React 18 |
 
 Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。
 

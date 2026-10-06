@@ -1,4 +1,4 @@
-import { CliLlmAdapter, StreamBlockEmitter, createControlKey, createFilePatStore, createSelectedParamsStore, type CliVariant, type PatStore, type SelectedParamsStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
+import { CliLlmAdapter, StreamBlockEmitter, createControlKey, createFilePatStore, type CliVariant, type PatStore, type WebRouteContext } from '@jacklika/dsh-connector-core'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { readFileSync, watch } from 'node:fs'
 import { homedir } from 'node:os'
@@ -73,29 +73,10 @@ const ModelSchema = Schema.object({
   contextWindow: Schema.number(),
 })
 
-interface AdapterModelParams {
-  contextWindow?: number
-  reasoningEffort?: string
-  maxTokens?: number
-}
-
-const PARAMS_SEP = '@@'
-
-function parseCompositeModelId(compositeId: string): { baseId: string; params: AdapterModelParams } {
-  const idx = compositeId.indexOf(PARAMS_SEP)
-  if (idx < 0) return { baseId: compositeId, params: {} }
-  const baseId = compositeId.slice(0, idx)
-  const params: AdapterModelParams = {}
-  const query = compositeId.slice(idx + PARAMS_SEP.length)
-  for (const part of query.split('&')) {
-    const [key, value] = part.split('=')
-    if (value === undefined) continue
-    const decoded = decodeURIComponent(value)
-    if (key === 'ctx') params.contextWindow = Number(decoded)
-    if (key === 'effort') params.reasoningEffort = decoded
-    if (key === 'max') params.maxTokens = Number(decoded)
-  }
-  return { baseId, params }
+/** Strip a legacy `id@@params` suffix left behind by the removed selector. */
+function baseModelId(id: string): string {
+  const idx = id.indexOf('@@')
+  return idx < 0 ? id : id.slice(0, idx)
 }
 
 function qoderModelCachePath(dataDir: string, variantId: string): string {
@@ -218,12 +199,10 @@ export class QoderStreamParser {
 
 class QoderAdapter extends CliLlmAdapter {
   private parser = new QoderStreamParser()
-  private readonly selectedParams = new Map<string, AdapterModelParams>()
   private readonly modelCachePath: string
-  private readonly paramsStore: SelectedParamsStore
   private readonly patStore: PatStore
 
-  constructor(variant: CliVariant & { modelCachePath: string }, config: QoderConfig, dataDir: string, patStore: PatStore) {
+  constructor(variant: CliVariant & { modelCachePath: string }, config: QoderConfig, patStore: PatStore) {
     const configured = config.models
     const cached = readModelCacheSync(variant.modelCachePath)
     const models = configured.length > 0
@@ -231,7 +210,6 @@ class QoderAdapter extends CliLlmAdapter {
       : cached ?? variant.defaultModels
     super({ variant: { ...variant, defaultModels: models }, config: config as Record<string, unknown> })
     this.modelCachePath = variant.modelCachePath
-    this.paramsStore = createSelectedParamsStore(dataDir)
     this.patStore = patStore
   }
 
@@ -246,24 +224,19 @@ class QoderAdapter extends CliLlmAdapter {
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const parsed = parseCompositeModelId(model)
-    if (Object.keys(parsed.params).length > 0) {
-      this.selectedParams.set(parsed.baseId, parsed.params)
-    }
-    return { provider, id: parsed.baseId, name: parsed.baseId }
+    const baseId = baseModelId(model)
+    return { provider, id: baseId, name: baseId }
   }
 
   protected buildArgs(options: GenerateOptions): string[] {
     this.parser = new QoderStreamParser()
     const base = this.buildBaseOptions(options)
-    const stored = options.model ? this.paramsStore.readSync(options.model) : undefined
-    const encoded = options.model ? this.selectedParams.get(options.model) : undefined
-    const reasoningEffort = options.reasoningEffort ?? encoded?.reasoningEffort ?? stored?.reasoningEffort
-    const maxTokens = encoded?.maxTokens ?? encoded?.contextWindow ?? stored?.maxTokens ?? stored?.contextWindow ?? base.maxTokens
+    const reasoningEffort = options.reasoningEffort
+    const maxTokens = options.maxTokens ?? base.maxTokens
     const args = [
       '-p',
       '--model',
-      options.model,
+      baseModelId(options.model),
       '--output-format',
       'stream-json',
       '--no-session-persistence',
@@ -326,7 +299,7 @@ export function apply(ctx: any, config: QoderConfig) {
       ),
       envToken: variant.envToken,
     })
-    const adapter = new QoderAdapter(variantWithCache, config, dataDir, patStore)
+    const adapter = new QoderAdapter(variantWithCache, config, patStore)
     adapters.push(adapter)
     patStores.push(patStore)
     releaseAdapters.push(ctx.llm.registerAdapter([variant.id], adapter))
@@ -369,7 +342,6 @@ export function apply(ctx: any, config: QoderConfig) {
       region: variant.region,
       statusPath: variant.statusPath,
       authPath: variant.authPath,
-      selectPath: `/plugins/dsh-qoder-connect/select/${variant.id}`,
       probePath: variant.probePath,
       modelCachePath: qoderModelCachePath(dataDir, variant.id),
       store: patStores[index] ?? createFilePatStore({

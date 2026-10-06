@@ -98,9 +98,6 @@ importers:
       '@jacklika/dsh-devin-connect':
         specifier: workspace:*
         version: link:../devin-connect
-      '@jacklika/dsh-model-selector':
-        specifier: workspace:^
-        version: link:../model-selector
       '@jacklika/dsh-qoder-connect':
         specifier: workspace:*
         version: link:../qoder-connect
@@ -247,21 +244,6 @@ importers:
         version: link:../tool-memory-filesystem
 
   packages/memory-time: {}
-
-  packages/model-selector:
-    devDependencies:
-      '@deepseek-ai/cordis':
-        specifier: 4.0.4
-        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
-      '@deepseek-ai/schemastery':
-        specifier: 3.18.2
-        version: 3.18.2
-      '@types/react':
-        specifier: ~18.3.31
-        version: 18.3.31
-      react:
-        specifier: ^18.2.0
-        version: 18.3.1
 
   packages/qoder-connect:
     dependencies:
