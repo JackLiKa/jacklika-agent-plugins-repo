@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/llm-qoder/README.md
-README.md: f3a812fb9207aac83d16e3706468da45feb9fcae
-README.zh.md: 5401738e586b13e4e82ca900f31586c244b2a924
+README.md: db2eb2355e46a9b47b75ff33db2cfc532dde88dc
+README.zh.md: 4300c14ca4bc3f13d139b5c46ab50115c14ee756

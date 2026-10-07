@@ -57,7 +57,22 @@ A row patch replaces the whole config, so repeat every key the profile still nee
 
 ### Credentials
 
-There is no token field. The adapter authenticates through the Qoder CLI's own login on the machine running dsh, so a deployment needs `qodercli` installed and signed in; a profile cannot supply an account. The BYOK route is not a second account — it is the same catalog filtered to account-custom models.
+There is no token field. The adapter authenticates through the Qoder CLI's own login on the machine running dsh, so a deployment needs a signed-in Qoder account; a profile cannot supply one. The BYOK route is not a second account — it is the same catalog filtered to account-custom models.
+
+### Runtime
+
+Signing in is not the same as having something to run: the work is done by `@qoder-ai/qoder-agent-sdk`, which resolves its own runtime in this order.
+
+1. `options.pathToQoderCLIExecutable` — this package never sets it.
+2. `QODERCLI_PATH`, which makes the SDK spawn that executable instead (the process transport).
+3. Otherwise the worker runtime the SDK's own `postinstall` downloads into its `dist/_worker` — about 56 MB at SDK 1.0.50, from `download.qoder.com`.
+
+Step 3 is the default, and package managers block dependency build scripts by default. A pnpm install then reports `Ignored build scripts: @qoder-ai/qoder-agent-sdk`, and every call fails locally with `Qoder worker runtime not found: …/dist/_worker/qoder-worker-runtime.obf.mjs`. The plugin still registers and the routes still list — only the turn fails. Pick either:
+
+- allow the build script while installing (pnpm: an `allowBuilds` entry for `@qoder-ai/qoder-agent-sdk`), so the postinstall fetches the worker runtime; or
+- set `QODERCLI_PATH` to an existing `qodercli`, which the SDK spawns directly, making the download unnecessary — add `QODER_SKIP_DOWNLOAD=1` to skip it even where build scripts are allowed.
+
+Neither choice changes what the plugin does: the login state is read from the CLI's config directory either way, and a missing SDK runtime is not a plugin error to recover from at runtime.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
@@ -92,6 +107,7 @@ Capability is only claimed when verified. `resolveModel` declares image input on
 
 - **Nothing to configure but the pool and the TTL.** The route authenticates only through the local `qodercli` login; a profile cannot supply a token or an account, and a deployment without a signed-in CLI can list the static catalog but cannot run a turn.
 - **`qoder-byok` is a catalog split, not a second account.** Both routes read the same CLI login; the BYOK route only filters to account-custom models.
+- **The SDK's runtime choice is not a plugin config.** `pathToQoderCLIExecutable` is the SDK's own option and this package exposes no field for it, so `QODERCLI_PATH` — a process-wide variable — is the only lever. A `cliPath` config field that falls back to the SDK's worker runtime is deferred.
 - **Catalog freshness is bounded.** Entries live for the TTL, and a failed refresh quietly serves the last good snapshot. The static fallback is one account's capture from 2026-08 and declares no vision capability, because it cannot verify one.
 - **The fallback estimate is not provider metering.** It is good enough for the context meter and compaction thresholds, not for billing or cache-hit analysis.
 - **Warm sessions are process state.** `maxSessions` bounds them, overflow closes the least recently used session, a host restart rebuilds cold, and each warm session holds a live CLI subprocess.

@@ -8,8 +8,8 @@ adding-plugins.md: d922fc2d1bd8fd74cdd4b929a495ca5b9edf7602
 adding-plugins.zh.md: 6330ca8d86a6b7beb0e991c1125be0488e135f9c
 architecture.md: 03394dd36c44199508b2c09415b20b60c02fbba8
 architecture.zh.md: 9f3e1cebce14d48c7b315b15c375b3bed6a1c10d
-compatibility.md: 6325933bcc2c6636550d19ba1aef179f58b722b8
-compatibility.zh.md: 1ac7de785c4390bfccc44f386fa5e9af13c77035
+compatibility.md: fdabda65ef717ba561a4d45ab7d792c63786c1f4
+compatibility.zh.md: b3cea1a9c88536a2f532ff81c8f0faefaad32ecc
 mcp-server.md: 8cfa6b1c69be9cfe81ca7c4fb2ef43e102ca5a60
 mcp-server.zh.md: 71c1c9648b4f3658a7634264fbae243a8465cc12
 security.md: a1d5a395d578d9b4fe3d70ab4c89503ffbc66ded

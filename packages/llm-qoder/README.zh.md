@@ -57,7 +57,22 @@ bundle 自带的 patch 已经以 `llm-qoder` 这个 id 插入该行；profile �
 
 ### 凭据
 
-没有 token 字段。适配器通过运行 dsh 的这台机器上 Qoder CLI 自己的登录认证，因此部署需要装好并登录 `qodercli`；profile 无法提供账号。BYOK 路由不是第二个账号 —— 它用的是同一份 CLI 登录，只是把目录筛到账号自定义模型。
+没有 token 字段。适配器通过运行 dsh 的这台机器上 Qoder CLI 自己的登录认证，因此部署需要一份已登录的 Qoder 账号；profile 无法提供账号。BYOK 路由不是第二个账号 —— 它用的是同一份 CLI 登录，只是把目录筛到账号自定义模型。
+
+### 运行时
+
+登录了不等于有东西可跑：真正干活的是 `@qoder-ai/qoder-agent-sdk`，它按下面的顺序解析自己的运行时。
+
+1. `options.pathToQoderCLIExecutable` —— 本包从不设置它。
+2. `QODERCLI_PATH`，让 SDK 改为直接 spawn 该可执行文件（process transport）。
+3. 否则用它自己 `postinstall` 下载到 `dist/_worker` 的 worker 运行时 —— SDK 1.0.50 下约 56 MB，来自 `download.qoder.com`。
+
+第 3 条是默认路径，而包管理器默认会拦下依赖的构建脚本。此时 pnpm 安装会报 `Ignored build scripts: @qoder-ai/qoder-agent-sdk`，且每次调用都在本地失败：`Qoder worker runtime not found: …/dist/_worker/qoder-worker-runtime.obf.mjs`。插件照常注册、路由照常列出 —— 只有那一轮会失败。二选一：
+
+- 安装时放行该构建脚本（pnpm：为 `@qoder-ai/qoder-agent-sdk` 加一条 `allowBuilds`），让 postinstall 把 worker 运行时取回来；或
+- 把 `QODERCLI_PATH` 指向已有的 `qodercli`，SDK 会直接 spawn 它，下载也就不必要了 —— 再加 `QODER_SKIP_DOWNLOAD=1`，即使在放行构建脚本的环境里也跳过下载。
+
+两种选择都不改变插件的行为：无论走哪条路，登录态都从 CLI 的配置目录读取，而缺失的 SDK 运行时不是插件能在运行时恢复的错误。
 
 <a id="understand-the-implementation"></a>
 ## 理解实现
@@ -92,6 +107,7 @@ bundle 自带的 patch 已经以 `llm-qoder` 这个 id 插入该行；profile �
 
 - **除会话池与 TTL 外无可配置项。** 该路由只通过本机 `qodercli` 登录认证；profile 无法提供 token 或账号，而没有登录 CLI 的部署能列出静态目录却跑不了任何一轮。
 - **`qoder-byok` 是目录切分，不是第二个账号。** 两条路由读同一份 CLI 登录；BYOK 路由只是筛到账号自定义模型。
+- **SDK 的运行时选择不是插件配置项。** `pathToQoderCLIExecutable` 是 SDK 自己的选项，本包没有暴露对应字段，因此唯一的抓手是进程级的 `QODERCLI_PATH`。加一个会回退到 SDK worker 运行时的 `cliPath` 配置字段一事待办。
 - **目录新鲜度有上限。** 条目在 TTL 内有效，抓取失败时静默沿用上一份可用快照。静态回退是某个账号 2026-08 的抓取结果，且不声明任何视觉能力 —— 因为它无法验证。
 - **回退估算不是 provider 计量。** 它够上下文计量与压缩阈值使用，不足以支撑计费或缓存命中分析。
 - **常驻会话是进程状态。** `maxSessions` 为它们设上限，溢出时关闭最久未用者，宿主重启后冷重建，而每个常驻会话都持有一个活的 CLI 子进程。

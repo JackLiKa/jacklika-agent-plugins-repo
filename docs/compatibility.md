@@ -51,4 +51,5 @@ A `todo_read` tool, or re-injecting the current list on every turn, would make t
 
 - Vault paths are resolved with Node's `path` module and validated before any read/write.
 - The Devin adapter resolves its credentials file per platform (`~/.local/share/devin/credentials.toml` on Unix, `%APPDATA%\devin\credentials.toml` on Windows, or `DEVIN_CREDENTIALS_PATH` anywhere) and loads its proxy agents through `createRequire`, so no proxy dependency is loaded on a deployment that never uses one.
+- Installing `@jacklika/dsh-llm-qoder` also installs `@qoder-ai/qoder-agent-sdk`, whose `postinstall` downloads a ~56 MB worker runtime from `download.qoder.com`. pnpm versions that block dependency build scripts by default skip that download, and every qoder turn then fails locally with `Qoder worker runtime not found` — so the installing profile must allow the SDK's build script or point `QODERCLI_PATH` at an existing `qodercli`. See the package README's Runtime section.
 - The full Windows/macOS/Linux CI matrix runs `install`, `typecheck`, `lint`, `test`, `build`, `test:multiprocess`, `test:pack`, and `test:profile` on every push.

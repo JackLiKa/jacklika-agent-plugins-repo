@@ -51,4 +51,5 @@ Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。两个 p
 
 - Vault 路径通过 Node `path` 模块解析，并在任何读写前经过校验。
 - Devin 适配器按平台解析凭据文件（Unix 上是 `~/.local/share/devin/credentials.toml`，Windows 上是 `%APPDATA%\devin\credentials.toml`，任意平台都可用 `DEVIN_CREDENTIALS_PATH`），并通过 `createRequire` 加载代理 agent，因此从不使用代理的部署不会加载任何代理依赖。
+- 安装 `@jacklika/dsh-llm-qoder` 会一并安装 `@qoder-ai/qoder-agent-sdk`，后者的 `postinstall` 会从 `download.qoder.com` 下载约 56 MB 的 worker 运行时。默认拦截依赖构建脚本的 pnpm 版本会跳过这次下载，此后每一轮 qoder 调用都会在本地失败：`Qoder worker runtime not found` —— 因此安装它的 profile 必须放行该 SDK 的构建脚本，或把 `QODERCLI_PATH` 指向已有的 `qodercli`。详见该包 README 的运行时一节。
 - 完整 Windows/macOS/Linux CI 矩阵会在每次 push 时运行 `install`、`typecheck`、`lint`、`test`、`build`、`test:multiprocess`、`test:pack` 与 `test:profile`。
