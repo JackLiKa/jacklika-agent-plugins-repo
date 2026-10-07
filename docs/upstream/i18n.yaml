@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/upstream/harness-todo-gaps.md
-harness-todo-gaps.md: 7122bbd3bdf7eeb0eb8a5e1c24b4fd86ed7f75d3
-harness-todo-gaps.zh.md: 3e1da6163554c101ebfade6e8743d9c735ffe0b9
+harness-todo-gaps.md: a3414f2e726bc2253b40c487868295c5ca66f294
+harness-todo-gaps.zh.md: 7133c627e922abc34ef0c9756db495ab1b08fe83

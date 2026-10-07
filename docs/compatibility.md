@@ -23,6 +23,7 @@ Harness checks every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer before regis
 | queue and git | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools` |
 | filesystem, graph, vector, curator | `defineTool` / `ToolRunContext` from `@deepseek-ai/dsh-tools`; filesystem, graph, and curator also use `JsonValue` from `@deepseek-ai/dsh-util-values` |
 | todo-anchor | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools`; `ctx.systemPrompt.context` from `@deepseek-ai/dsh-system-prompt` |
+| memory-anchor | `ctx.systemPrompt.context` from `@deepseek-ai/dsh-system-prompt`; `formatBeijingTime` from `@jacklika/dsh-memory-time`; the Cordis `session/event` feed (no import — plain `ctx.on`) |
 
 The Bundle itself contains only a Cordis patch and runtime dependencies on the member packages.
 
@@ -33,6 +34,7 @@ The Bundle itself contains only a Cordis patch and runtime dependencies on the m
 | `tools/execute` waterfall | scope, queue, git, todo-anchor | A listener calls `next()` and may read `exec.name` / `exec.arguments` afterwards. todo-anchor treats an error result as "not written" and never anchors it. |
 | `ctx.systemPrompt.context` | todo-anchor | Registers ordered dynamic runtime context. `text` may be a function, evaluated on every prompt assembly; a zero-length result is dropped. The rendered snapshot is marked as superseding earlier runtime-context snapshots, which is what lets an injected value outlive a compaction summary. |
 | `todo/write` session event | Harness, not this suite | `todo_write` persists `{content, status}[]` as a session event. The suite records this as a fact it depends on, never as an API it calls. |
+| `session/event` Cordis event | memory-anchor | `ctx.sessions` publishes every session event (`turn/start`, `tool/call`, `tool/result`, `assistant/message`, `turn/end`) to descendant listeners — the same feed `dsh-workspace-changes` uses. Listeners are observe-only: errors are logged per listener, never propagated. |
 
 ## Known Harness gaps this suite works around
 

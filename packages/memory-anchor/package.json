@@ -1,6 +1,6 @@
 {
   "name": "@jacklika/dsh-memory-anchor",
-  "description": "Keeps the memory-recall/capture discipline in front of the model for every prompt. The Harness has no turn hooks, so this plugin contributes a short always-on reminder as dynamic runtime context rather than automating recall or capture.",
+  "description": "Keeps the memory-recall/capture discipline in front of the model for every prompt, and appends a mechanical per-turn summary to the vault on turn/end via the session/event feed.",
   "version": "0.1.0-alpha.0",
   "publishConfig": {
     "access": "public"
@@ -31,7 +31,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "3.18.4"
+    "@deepseek-ai/schemastery": "3.18.4",
+    "@jacklika/dsh-memory-time": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

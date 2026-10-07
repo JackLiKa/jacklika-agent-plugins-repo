@@ -11,7 +11,13 @@ import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import * as MemoryAnchor from '@jacklika/dsh-memory-anchor'
 
 /**
- * Stand-in for a vault write tool; the anchor only checks registration.
+ * Arguments the `wiki_write` stub recorded during a test.
+ */
+const writeCalls: { id: string; content: string; mode?: string }[] = []
+
+/**
+ * Stand-in for a vault write tool; the anchor only checks registration and,
+ * for auto-capture, calls `execute`.
  */
 const WikiWriteStub = {
   name: 'memory-anchor-test-stub',
@@ -25,7 +31,8 @@ const WikiWriteStub = {
         schema: { type: 'json' },
         render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
       },
-      async execute() {
+      async execute(args: { id: string; content: string; mode?: string }) {
+        writeCalls.push(args)
         return { written: true } as never
       },
     })))
@@ -38,6 +45,7 @@ let context: Context | undefined
 afterEach(async () => {
   await context?.fiber.dispose()
   context = undefined
+  writeCalls.length = 0
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
 })
@@ -148,5 +156,107 @@ describe('memory-anchor real Loader composition through cordis.yml', () => {
   it('honors a configured contextName and order', async () => {
     const ctx = await boot('  config:\n    contextName: custom:memory\n    order: 140\n')
     expect(await promptContext(ctx)).toContain('Memory discipline')
+  })
+})
+
+/**
+ * Emit one session event on the root context, the same way `dsh-session`'s
+ * `ctx.sessions` store publishes `session/event` to descendant listeners.
+ * @param ctx - the booted root context.
+ * @param session - the session stand-in (only `id` is read).
+ * @param type - the event type.
+ * @param data - the event payload.
+ */
+function emitSessionEvent(ctx: Context, session: object, type: string, data: object = {}): void {
+  ctx.emit('session/event', session, { type, seq: 1, time: Date.now(), data })
+}
+
+/** Yield once so the async `turn/end` capture can resolve its tool call. */
+async function flush(): Promise<void> {
+  await new Promise(resolve => setImmediate(resolve))
+}
+
+describe('memory-anchor auto-capture through the session/event feed', () => {
+  it('appends a turn summary through wiki_write on turn/end', async () => {
+    const ctx = await boot('', true)
+    const session = { id: 'sess:abc/1' }
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 3 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 3, step: 1, name: 'wiki_search' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 3, step: 1 })
+    emitSessionEvent(ctx, session, 'assistant/message', {
+      turn: 3, step: 1, message: { content: [{ type: 'text', text: 'Answer recorded.' }] },
+    })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 3, reason: 'completed' })
+    await flush()
+
+    expect(writeCalls).toHaveLength(1)
+    expect(writeCalls[0].id).toBe('shared/notes/auto-capture-sess-abc-1.md')
+    expect(writeCalls[0].mode).toBe('append')
+    expect(writeCalls[0].content).toContain('turn 3 (completed)')
+    expect(writeCalls[0].content).toContain('wiki_search')
+    expect(writeCalls[0].content).toContain('Answer recorded.')
+  })
+
+  it('skips a turn that did no observable work', async () => {
+    const ctx = await boot('', true)
+    const session = { id: 'idle' }
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
+    await flush()
+    expect(writeCalls).toHaveLength(0)
+  })
+
+  it('writes nothing when autoCapture is configured off', async () => {
+    const ctx = await boot('  config:\n    autoCapture: false\n', true)
+    const session = { id: 'off' }
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'wiki_search' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
+    await flush()
+    expect(writeCalls).toHaveLength(0)
+  })
+
+  it('writes nothing when no vault write tool is mounted', async () => {
+    const ctx = await boot()
+    const session = { id: 'novault' }
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'wiki_search' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
+    await flush()
+    expect(writeCalls).toHaveLength(0)
+  })
+
+  it('keeps per-session activity isolated', async () => {
+    const ctx = await boot('', true)
+    const a = { id: 'a' }
+    const b = { id: 'b' }
+    emitSessionEvent(ctx, a, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, b, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, a, 'tool/call', { turn: 1, step: 1, name: 'only_a' })
+    emitSessionEvent(ctx, a, 'tool/result', { turn: 1, step: 1 })
+    emitSessionEvent(ctx, b, 'turn/end', { turn: 1, reason: 'completed' })
+    emitSessionEvent(ctx, a, 'turn/end', { turn: 1, reason: 'completed' })
+    await flush()
+
+    expect(writeCalls).toHaveLength(1)
+    expect(writeCalls[0].id).toBe('shared/notes/auto-capture-a.md')
+    expect(writeCalls[0].content).toContain('only_a')
+  })
+
+  it('stops observing after the Loader fiber unloads', async () => {
+    const ctx = await boot('', true)
+    const entry = [...ctx.loader.entries()].find(candidate => candidate.options.name === '@jacklika/dsh-memory-anchor')
+    if (entry?.fiber === undefined) throw new Error('active memory-anchor entry missing')
+    await entry.fiber.dispose()
+
+    const session = { id: 'late' }
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'wiki_search' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
+    await flush()
+    expect(writeCalls).toHaveLength(0)
   })
 })

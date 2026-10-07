@@ -119,6 +119,9 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.4
         version: 3.18.4
+      '@jacklika/dsh-memory-time':
+        specifier: workspace:^
+        version: link:../memory-time
 
   packages/memory-curator:
     dependencies:

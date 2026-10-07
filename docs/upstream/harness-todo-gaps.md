@@ -31,6 +31,7 @@ Either of requests 1–2 removes the need for `@jacklika/dsh-todo-anchor`, which
 - `dsh-tool-todo` registers `todo_write` with `parameters.todos` (required array of `{content, status}` objects, `additionalProperties: false`) and the `todos` projection; it has no read path.
 - `dsh-system-prompt` has no todo reference; `dsh-session-projection` has no todo reader for models.
 - `dsh-tool-todo`'s projection resets on `turn/start`, so the projection is a UI surface, not durable model-facing state.
+- Note (2026-10): the `session/event` Cordis feed IS a plugin-subscribable seam — `ctx.sessions` publishes `turn/start`, `tool/call`, `tool/result`, `assistant/message`, and `turn/end` to descendant listeners (`dsh-workspace-changes` and `dsh-user-questions` subscribe this way). `@jacklika/dsh-memory-anchor` uses it for real per-turn auto-capture. The earlier assumption that no turn lifecycle is observable was wrong; what remains missing is only a model-facing, documented contract for it.
 
 ## Impact
 

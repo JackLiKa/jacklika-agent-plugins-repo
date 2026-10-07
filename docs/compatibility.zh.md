@@ -23,6 +23,7 @@ Harness 在 registry 安装前和 Profile 组合前都会检查所有 `@deepseek
 | queue 与 git | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布 |
 | filesystem、graph、vector、curator | `@deepseek-ai/dsh-tools` 的 `defineTool` / `ToolRunContext`；filesystem、graph、curator 也使用 `@deepseek-ai/dsh-util-values` 的 `JsonValue` |
 | todo-anchor | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布；`@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context` |
+| memory-anchor | `@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context`；`@jacklika/dsh-memory-time` 的 `formatBeijingTime`；Cordis 的 `session/event` 事件流（无 import —— 普通 `ctx.on`） |
 
 Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。
 
@@ -33,6 +34,7 @@ Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。
 | `tools/execute` 瀑布 | scope、queue、git、todo-anchor | 监听器调用 `next()`，之后可读 `exec.name` / `exec.arguments`。todo-anchor 把错误结果视为“未写入”，绝不锚定它。 |
 | `ctx.systemPrompt.context` | todo-anchor | 注册有序的动态运行时上下文。`text` 可以是函数，在**每次提示词组装**时求值；结果长度为 0 则被丢弃。渲染出的快照被标注为取代此前的运行时上下文快照——这正是注入值能比压缩摘要活得更久的原因。 |
 | `todo/write` 会话事件 | Harness，非本套件 | `todo_write` 把 `{content, status}[]` 作为会话事件持久化。本套件把它记录为**所依赖的事实**，而绝不作为自己调用的 API。 |
+| `session/event` Cordis 事件 | memory-anchor | `ctx.sessions` 把每个会话事件（`turn/start`、`tool/call`、`tool/result`、`assistant/message`、`turn/end`）发布给后代上下文的监听器——与 `dsh-workspace-changes` 所订阅的是同一事件流。监听器只读观察：错误按监听器记日志，绝不向上传播。 |
 
 ## 本套件绕过的已知 Harness 缺口
 

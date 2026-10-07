@@ -31,6 +31,7 @@ kind: "upstream-request"
 - `dsh-tool-todo` 注册的 `todo_write` 声明 `parameters.todos`（必填的 `{content, status}` 对象数组，`additionalProperties: false`），并注册 `todos` 投影；它没有读路径。
 - `dsh-system-prompt` 不含 todo 引用；`dsh-session-projection` 没有面向模型的 todo 读取。
 - `dsh-tool-todo` 的投影在 `turn/start` 时重置，因此该投影是 UI 面，不是持久的模型可见状态。
+- 注（2026-10）：`session/event` Cordis 事件流**是**插件可订阅的接缝——`ctx.sessions` 把 `turn/start`、`tool/call`、`tool/result`、`assistant/message`、`turn/end` 发布给后代上下文的监听器（`dsh-workspace-changes` 与 `dsh-user-questions` 均以此方式订阅）。`@jacklika/dsh-memory-anchor` 已用它实现真实的按轮自动入库。此前"无 turn 生命周期可观测"的假设有误；真正缺的只是面向模型的、有文档契约的接口。
 
 ## 影响
 
