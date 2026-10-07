@@ -15,6 +15,15 @@ DeepSeek Harness plugin suite: the memory vault chain plus future plugin packs. 
 | `@jacklika/dsh-memory` | Profile bundle mounting the whole chain in waterfall order |
 | `@jacklika/dsh-memory-mcp` | Zero-dependency MCP stdio server exposing the vault to any MCP client (single-writer semantics) |
 
+### LLM providers
+
+| Package | Role |
+|---|---|
+| `@jacklika/dsh-devin-bridge` | Mounts Devin Connect as the `devin` route: bundled 45-model catalog, Devin CLI `credentials.toml` or a configured token, reasoning-effort mapping, image input |
+| `@jacklika/dsh-llm-qoder` | Mounts the local `qodercli` as the `qoder` and `qoder-byok` routes: live CLI catalog, warm per-session inner sessions, image input, provider cache-token buckets |
+
+Both are forks of third-party plugins, absorbed with upstream attribution and an itemized local-change list in each package README. Neither is a Bundle member: a profile mounts them on demand, and each rides an external CLI login (`devin auth login`, `qodercli`) instead of a dsh-side credential.
+
 ## Skills
 
 | Skill | Role |

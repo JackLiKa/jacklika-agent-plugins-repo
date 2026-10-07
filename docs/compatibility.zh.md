@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | `^22.19.0 || >=24.0.0` | 本地：22.23.2；CI 覆盖 Linux、macOS、Windows 上的 22.19.0 与当前 24.x |
 | pnpm | 仓库开发使用 11.7.0 | 11.7.0 |
-| DeepSeek Harness 包 | peer `>=0.1.7-rc.1 <0.3.0-0` | `0.1.7-rc.10` 与 `0.2.0-rc.1` 均跑过完整套件 |
+| DeepSeek Harness 包 | peer `>=0.1.7-rc.1 <0.3.0-0` | `0.1.7-rc.10` 与 `0.2.0-rc.1` 均跑过完整套件；两个 LLM provider 适配器是在那次分线之后并入的，已验证线为 `0.2.0-rc.1` |
 | Cordis | peer exact `4.0.4` | 4.0.4 |
 | Git | `git` 必须在 `PATH` 中；插件使用 `-C`、`init`、`rev-parse`、`status`、`add`、`commit` | 本地：Apple Git 2.50.1；CI 使用各 runner 自带 Git |
 
@@ -24,8 +24,9 @@ Harness 在 registry 安装前和 Profile 组合前都会检查所有 `@deepseek
 | filesystem、graph、vector、curator | `@deepseek-ai/dsh-tools` 的 `defineTool` / `ToolRunContext`；filesystem、graph、curator 也使用 `@deepseek-ai/dsh-util-values` 的 `JsonValue` |
 | todo-anchor | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布；`@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context` |
 | memory-anchor | `@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context`；`@jacklika/dsh-memory-time` 的 `formatBeijingTime`；Cordis 的 `session/event` 事件流（无 import —— 普通 `ctx.on`） |
+| devin-bridge、llm-qoder | `@deepseek-ai/dsh-llm` 的 `LlmAdapter`、`LlmError`、`ToolCallId`、`ReasoningEffortId` 及注册接缝（`ctx.llm.registerAdapter`、`registerConfigurableProviders`、`registerModelDiscovery`）；`@deepseek-ai/dsh-attachment` 的 `attachments` 服务 |
 
-Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。
+Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。两个 provider 适配器是独立包：各自自带 `cordis.patch.yml`，直接挂载，从不经过 Bundle。
 
 ## 本套件依赖的 Harness 接缝
 
@@ -34,6 +35,8 @@ Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。
 | `tools/execute` 瀑布 | scope、queue、git、todo-anchor | 监听器调用 `next()`，之后可读 `exec.name` / `exec.arguments`。todo-anchor 把错误结果视为“未写入”，绝不锚定它。 |
 | `ctx.systemPrompt.context` | todo-anchor | 注册有序的动态运行时上下文。`text` 可以是函数，在**每次提示词组装**时求值；结果长度为 0 则被丢弃。渲染出的快照被标注为取代此前的运行时上下文快照——这正是注入值能比压缩摘要活得更久的原因。 |
 | `todo/write` 会话事件 | Harness，非本套件 | `todo_write` 把 `{content, status}[]` 作为会话事件持久化。本套件把它记录为**所依赖的事实**，而绝不作为自己调用的 API。 |
+| `ctx.llm` 注册接缝 | devin-bridge、llm-qoder | 适配器把路由、可配置 provider 目录条目、以及以 settings 命名空间为键的模型发现作为三个独立句柄注册，各自随 fiber 释放。两个适配器都依赖目录条目提供选择界面渲染的显示名，也都不指望 `registerAdapter` 的 disposer 去关闭适配器自己持有的东西——子进程、HTTP 客户端与常驻 CLI 会话需要各自的 `ctx.effect` 释放路径。 |
+| `attachments` 服务 | devin-bridge、llm-qoder | 图片引用经宿主 attachment store 解析为 provider 接受的字节。两个适配器都把该服务视为可选（devin 用 `ctx.get`，qoder 用 `ctx.inject`），因此在没有该服务的部署上，图片处理会退化为 Harness 展平的 handle 文本，而不是让整轮失败。 |
 | `session/event` Cordis 事件 | memory-anchor | `ctx.sessions` 把每个会话事件（`turn/start`、`tool/call`、`tool/result`、`assistant/message`、`turn/end`）发布给后代上下文的监听器——与 `dsh-workspace-changes` 所订阅的是同一事件流。监听器只读观察：错误按监听器记日志，绝不向上传播。 |
 
 ## 本套件绕过的已知 Harness 缺口
@@ -47,4 +50,5 @@ Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。
 ## 跨平台说明
 
 - Vault 路径通过 Node `path` 模块解析，并在任何读写前经过校验。
+- Devin 适配器按平台解析凭据文件（Unix 上是 `~/.local/share/devin/credentials.toml`，Windows 上是 `%APPDATA%\devin\credentials.toml`，任意平台都可用 `DEVIN_CREDENTIALS_PATH`），并通过 `createRequire` 加载代理 agent，因此从不使用代理的部署不会加载任何代理依赖。
 - 完整 Windows/macOS/Linux CI 矩阵会在每次 push 时运行 `install`、`typecheck`、`lint`、`test`、`build`、`test:multiprocess`、`test:pack` 与 `test:profile`。

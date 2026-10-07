@@ -11,6 +11,8 @@
     { "path": "packages/tool-memory-graph" },
     { "path": "packages/tool-memory-vector" },
     { "path": "packages/todo-anchor" },
-    { "path": "packages/memory-anchor" }
+    { "path": "packages/memory-anchor" },
+    { "path": "packages/llm-qoder" },
+    { "path": "packages/devin-bridge" }
   ]
 }

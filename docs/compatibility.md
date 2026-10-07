@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | `^22.19.0 || >=24.0.0` | Local: 22.23.2; CI covers 22.19.0 and current 24.x on Linux, macOS, and Windows |
 | pnpm | repository development uses 11.7.0 | 11.7.0 |
-| DeepSeek Harness packages | `>=0.1.7-rc.1 <0.3.0-0` peers | `0.1.7-rc.10` and `0.2.0-rc.1` each ran the full suite |
+| DeepSeek Harness packages | `>=0.1.7-rc.1 <0.3.0-0` peers | `0.1.7-rc.10` and `0.2.0-rc.1` each ran the full suite; the two LLM provider adapters were absorbed after that split and are verified on `0.2.0-rc.1` |
 | Cordis | exact `4.0.4` peer | 4.0.4 |
 | Git | `git` must be on `PATH`; the plugin uses `-C`, `init`, `rev-parse`, `status`, `add`, and `commit` | Local: Apple Git 2.50.1; CI uses each runner's Git |
 
@@ -24,8 +24,9 @@ Harness checks every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer before regis
 | filesystem, graph, vector, curator | `defineTool` / `ToolRunContext` from `@deepseek-ai/dsh-tools`; filesystem, graph, and curator also use `JsonValue` from `@deepseek-ai/dsh-util-values` |
 | todo-anchor | `ToolExecutionResult` and the `tools/execute` waterfall from `@deepseek-ai/dsh-tools`; `ctx.systemPrompt.context` from `@deepseek-ai/dsh-system-prompt` |
 | memory-anchor | `ctx.systemPrompt.context` from `@deepseek-ai/dsh-system-prompt`; `formatBeijingTime` from `@jacklika/dsh-memory-time`; the Cordis `session/event` feed (no import — plain `ctx.on`) |
+| devin-bridge, llm-qoder | `LlmAdapter`, `LlmError`, `ToolCallId`, `ReasoningEffortId` and the registration seams (`ctx.llm.registerAdapter`, `registerConfigurableProviders`, `registerModelDiscovery`) from `@deepseek-ai/dsh-llm`; the `attachments` service from `@deepseek-ai/dsh-attachment` |
 
-The Bundle itself contains only a Cordis patch and runtime dependencies on the member packages.
+The Bundle itself contains only a Cordis patch and runtime dependencies on the member packages. The two provider adapters are standalone: each ships its own `cordis.patch.yml` and is mounted directly, never through the Bundle.
 
 ## Harness seams this suite depends on
 
@@ -34,6 +35,8 @@ The Bundle itself contains only a Cordis patch and runtime dependencies on the m
 | `tools/execute` waterfall | scope, queue, git, todo-anchor | A listener calls `next()` and may read `exec.name` / `exec.arguments` afterwards. todo-anchor treats an error result as "not written" and never anchors it. |
 | `ctx.systemPrompt.context` | todo-anchor | Registers ordered dynamic runtime context. `text` may be a function, evaluated on every prompt assembly; a zero-length result is dropped. The rendered snapshot is marked as superseding earlier runtime-context snapshots, which is what lets an injected value outlive a compaction summary. |
 | `todo/write` session event | Harness, not this suite | `todo_write` persists `{content, status}[]` as a session event. The suite records this as a fact it depends on, never as an API it calls. |
+| `ctx.llm` registration seams | devin-bridge, llm-qoder | An adapter registers its routes, its configurable-provider directory entries, and its settings-namespace model discovery as three separate handles, each disposed with the fiber. Both adapters rely on the directory entry for the display name selection surfaces render, and neither expects `registerAdapter`'s disposer to close what the adapter itself owns — subprocesses, HTTP clients, and warm CLI sessions need their own `ctx.effect` teardown. |
+| `attachments` service | devin-bridge, llm-qoder | Image references resolve through the host attachment store into bytes the provider accepts. Both adapters treat the service as optional (devin: `ctx.get`, qoder: `ctx.inject`), so image handling degrades to the Harness's flattened handle text on a deployment without one instead of failing the turn. |
 | `session/event` Cordis event | memory-anchor | `ctx.sessions` publishes every session event (`turn/start`, `tool/call`, `tool/result`, `assistant/message`, `turn/end`) to descendant listeners — the same feed `dsh-workspace-changes` uses. Listeners are observe-only: errors are logged per listener, never propagated. |
 
 ## Known Harness gaps this suite works around
@@ -47,4 +50,5 @@ A `todo_read` tool, or re-injecting the current list on every turn, would make t
 ## Cross-platform notes
 
 - Vault paths are resolved with Node's `path` module and validated before any read/write.
+- The Devin adapter resolves its credentials file per platform (`~/.local/share/devin/credentials.toml` on Unix, `%APPDATA%\devin\credentials.toml` on Windows, or `DEVIN_CREDENTIALS_PATH` anywhere) and loads its proxy agents through `createRequire`, so no proxy dependency is loaded on a deployment that never uses one.
 - The full Windows/macOS/Linux CI matrix runs `install`, `typecheck`, `lint`, `test`, `build`, `test:multiprocess`, `test:pack`, and `test:profile` on every push.

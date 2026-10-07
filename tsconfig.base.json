@@ -22,6 +22,8 @@
     "noUnusedParameters": true,
     "types": ["node"],
     "paths": {
+      "@jacklika/dsh-devin-bridge": ["./packages/devin-bridge/src"],
+      "@jacklika/dsh-llm-qoder": ["./packages/llm-qoder/src"],
       "@jacklika/dsh-memory": ["./packages/memory/src"],
       "@jacklika/dsh-memory-curator": ["./packages/memory-curator/src"],
       "@jacklika/dsh-memory-time": ["./packages/memory-time/src"],

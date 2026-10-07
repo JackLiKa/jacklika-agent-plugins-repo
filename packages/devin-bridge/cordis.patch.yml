@@ -1,0 +1,13 @@
+# The dsh-devin-bridge bundle patch: registers Devin Connect as the `devin`
+# route of the dsh LLM service, so the agent loop can drive Devin-hosted models.
+# The user's profile cordis.patch.yml may address this row by id — the row id is
+# also the settings namespace ("devin-bridge") and the discovery key, so renaming
+# it detaches a profile override.
+#
+# token left empty resolves the Devin CLI's credentials.toml (`devin auth login`);
+# a profile patch may instead set token, baseUrl, proxy, forceHttp1,
+# defaultContextWindow, defaultMaxTokens, retryPolicy, or models. `models` defaults
+# to the catalog bundled in src/default-models.ts.
+- insert:
+    - id: devin-bridge
+      name: '@jacklika/dsh-devin-bridge'

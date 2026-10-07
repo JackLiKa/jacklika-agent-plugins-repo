@@ -1,0 +1,10 @@
+# The dsh-llm-qoder bundle patch: activates the Qoder CLI provider adapter as a
+# profile layer row over the profile root. The user's profile cordis.patch.yml
+# may address this row by id (`llm-qoder`) — the settings namespace this plugin
+# registers with is that row id, so renaming the row renames the namespace.
+#
+# The adapter rides the machine's own `qodercli` login; there is no token field.
+# Config fields (see README): maxSessions, modelCacheTtlSeconds.
+- insert:
+    - id: llm-qoder
+      name: '@jacklika/dsh-llm-qoder'

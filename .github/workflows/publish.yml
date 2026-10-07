@@ -115,6 +115,10 @@ jobs:
           }
 
           cd artifacts/packages
+          # Independent LLM provider adapters: they share no code with the memory
+          # chain, so their position here carries no ordering constraint.
+          publish jacklika-dsh-devin-bridge-*.tgz
+          publish jacklika-dsh-llm-qoder-*.tgz
           publish jacklika-dsh-memory-time-*.tgz
           publish jacklika-dsh-tool-memory-filesystem-*.tgz
           publish jacklika-dsh-tool-memory-vector-*.tgz

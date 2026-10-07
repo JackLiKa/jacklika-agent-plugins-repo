@@ -2,12 +2,14 @@ packages:
   - packages/*
 
 allowBuilds:
+  '@qoder-ai/qoder-agent-sdk': true
   esbuild: true
 
 autoInstallPeers: false
 
 minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-agent@0.2.0-rc.1'
+  - '@deepseek-ai/dsh-attachment@0.2.0-rc.1'
   - '@deepseek-ai/dsh-brand@0.2.0-rc.1'
   - '@deepseek-ai/dsh-fs@0.2.0-rc.1'
   - '@deepseek-ai/dsh-home-paths@0.2.0-rc.1'

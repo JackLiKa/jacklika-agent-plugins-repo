@@ -1,0 +1,54 @@
+{
+  "name": "@jacklika/dsh-devin-bridge",
+  "description": "Devin Connect as a dsh LLM provider: mounts the `devin` route with a bundled model catalog, credentials.toml or settings token resolution, proxy and HTTP/1.1 transport options, retry policy, and image input.",
+  "version": "0.1.0-alpha.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JackLiKa/jacklika-agent-plugins-repo.git",
+    "directory": "packages/devin-bridge"
+  },
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
+    "LICENSE",
+    "README.md",
+    "README.zh.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.14.0",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-node": "^2.1.2",
+    "@deepseek-ai/schemastery": "3.18.4",
+    "https-proxy-agent": "^9.1.0",
+    "socks-proxy-agent": "^10.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-attachment": ">=0.1.7-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1 <0.3.0-0"
+  }
+}
