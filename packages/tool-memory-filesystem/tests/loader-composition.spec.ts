@@ -449,6 +449,154 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(note.id).toBe('daily/2026-09-24.md')
   })
 
+  it('reports mtime and flags external modification via modifiedExternally', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const notePath = join(vault, 'concepts', 'RAG.md')
+    const read = (callId: string) => ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId(callId),
+      name: 'wiki_read',
+      arguments: { id: 'concepts/RAG.md' },
+    })
+
+    // First observation records the mtime and reports no external change.
+    const first = await read('mtime-first')
+    if (first.isError) throw new Error('expected wiki_read success')
+    const firstNote = JSON.parse(resultText(first)) as { mtime?: string; modifiedExternally?: boolean }
+    expect(firstNote.mtime).toMatch(/\+08:00$/)
+    expect(firstNote.modifiedExternally).toBe(false)
+
+    // A repeat read with no write stays clean.
+    const again = await read('mtime-again')
+    if (again.isError) throw new Error('expected wiki_read success')
+    expect(JSON.parse(resultText(again)).modifiedExternally).toBe(false)
+
+    // An uncoordinated writer (Obsidian) bumps mtime; the next read flags it.
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await writeFile(notePath, `${await readFile(notePath, 'utf8')}\nexternal edit\n`)
+    const flagged = await read('mtime-flagged')
+    if (flagged.isError) throw new Error('expected wiki_read success')
+    expect(JSON.parse(resultText(flagged)).modifiedExternally).toBe(true)
+  })
+
+  it('does not flag the plugin\'s own wiki_write as an external modification', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const read = (callId: string) => ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId(callId),
+      name: 'wiki_read',
+      arguments: { id: 'concepts/RAG.md' },
+    })
+
+    const first = await read('own-first')
+    if (first.isError) throw new Error('expected wiki_read success')
+
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('own-write'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/RAG.md', content: 'plugin-authored change' },
+    })
+    if (write.isError) throw new Error('expected wiki_write success')
+
+    // The write bumped mtime on disk, but the write itself re-recorded it, so
+    // the next read must not cry wolf.
+    const after = await read('own-after')
+    if (after.isError) throw new Error('expected wiki_read success')
+    expect(JSON.parse(resultText(after)).modifiedExternally).toBe(false)
+  })
+
+  it('scopes modifiedExternally per note, not per vault', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const ragRead = (callId: string) => ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId(callId),
+      name: 'wiki_read',
+      arguments: { id: 'concepts/RAG.md' },
+    })
+    const embeddingRead = (callId: string) => ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId(callId),
+      name: 'wiki_read',
+      arguments: { id: 'embedding.md' },
+    })
+
+    await ragRead('scope-rag-1')
+    await embeddingRead('scope-emb-1')
+
+    // A write to one note must not flag its neighbour.
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('scope-write'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/RAG.md', content: 'unrelated update' },
+    })
+    if (write.isError) throw new Error('expected wiki_write success')
+
+    const neighbour = await embeddingRead('scope-emb-2')
+    if (neighbour.isError) throw new Error('expected wiki_read success')
+    expect(JSON.parse(resultText(neighbour)).modifiedExternally).toBe(false)
+  })
+
+  it('normalizes created/updated to +08:00 on overwrite writes', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('norm-overwrite'),
+      name: 'wiki_write',
+      arguments: {
+        id: 'norm-target.md',
+        mode: 'overwrite',
+        content: '---\ncreated: \'2026-10-06T08:18:03.391Z\'\nupdated: \'2026-10-06T08:00:00+00:00\'\n---\n\n# Norm\n\nBody.\n',
+      },
+    })
+    if (result.isError) throw new Error('expected wiki_write success')
+    const text = await readFile(join(vault, 'norm-target.md'), 'utf8')
+    expect(text).toContain('2026-10-06T16:18:03+08:00')
+    expect(text).toContain('2026-10-06T16:00:00+08:00')
+    expect(text).not.toContain('Z\'')
+    expect(text).not.toContain('+00:00')
+
+    // Already-normalized second-precision +08:00 input passes through untouched.
+    const stable = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('norm-stable'),
+      name: 'wiki_write',
+      arguments: {
+        id: 'norm-stable.md',
+        mode: 'overwrite',
+        content: '---\ncreated: \'2026-10-06T16:18:03+08:00\'\n---\n\n# Stable\n',
+      },
+    })
+    if (stable.isError) throw new Error('expected wiki_write success')
+    const stableText = await readFile(join(vault, 'norm-stable.md'), 'utf8')
+    expect(stableText).toContain('created: \'2026-10-06T16:18:03+08:00\'')
+  })
+
+  it('normalizes timestamps on append and leaves unparseable values alone', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-memory-vault-norm-'))
+    await writeFile(
+      join(vault, 'a.md'),
+      '---\ncreated: \'2026-10-06T08:18:03.391Z\'\nupdated: not-a-date\n---\n\n# A\n',
+    )
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('norm-append'),
+      name: 'wiki_write',
+      arguments: { id: 'a.md', content: 'appended.' },
+    })
+    if (result.isError) throw new Error('expected wiki_write success')
+    const text = await readFile(join(vault, 'a.md'), 'utf8')
+    expect(text).toContain('2026-10-06T16:18:03+08:00')
+    expect(text).toContain('not-a-date')
+    expect(text).toContain('appended.')
+  })
+
   it('indexes .dsh notes only when indexHiddenDirs is enabled', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dsh-memory-hidden-'))
     const hidden = join(workspace, '.dsh', 'memory')

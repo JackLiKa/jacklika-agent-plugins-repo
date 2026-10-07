@@ -8,7 +8,7 @@
  *   --vault defaults to <cwd>/.plugins/memory/ to match the Bundle default.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
@@ -91,6 +91,45 @@ function splitFrontmatter(text) {
 
 function noteVersion(text) {
   return createHash('sha1').update(text).digest('hex')
+}
+
+// Mirrors the mtime tracking and timestamp normalization in
+// @jacklika/dsh-tool-memory-filesystem so MCP clients see the same
+// modifiedExternally flag and +08:00 write normalization as the dsh tools.
+const observedMtimes = new Map()
+const OBSERVED_MTIME_LIMIT = 256
+
+function recordMtime(path, mtimeMs) {
+  observedMtimes.delete(path)
+  observedMtimes.set(path, mtimeMs)
+  if (observedMtimes.size > OBSERVED_MTIME_LIMIT) {
+    const oldest = observedMtimes.keys().next().value
+    if (oldest !== undefined) observedMtimes.delete(oldest)
+  }
+}
+
+function detectExternalChange(path, mtimeMs) {
+  const seen = observedMtimes.get(path)
+  recordMtime(path, mtimeMs)
+  return seen !== undefined && seen !== mtimeMs
+}
+
+function normalizeNoteTimestamps(frontmatter) {
+  for (const key of ['created', 'updated']) {
+    const value = frontmatter[key]
+    if (typeof value !== 'string') continue
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) continue
+    const normalized = formatBeijingTime(parsed)
+    if (normalized !== value) frontmatter[key] = normalized
+  }
+}
+
+function normalizeTextTimestamps(text) {
+  const { frontmatter, body } = splitFrontmatter(text)
+  if (Object.keys(frontmatter).length === 0) return text
+  normalizeNoteTimestamps(frontmatter)
+  return `---\n${yaml.dump(frontmatter).trim()}\n---\n${body}`
 }
 
 function extractLinks(text) {
@@ -295,9 +334,10 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
   }
   let finalBody
   if (mode === 'overwrite') {
-    finalBody = content
+    finalBody = normalizeTextTimestamps(content)
   } else {
     const { frontmatter, body } = splitFrontmatter(existing ?? '')
+    normalizeNoteTimestamps(frontmatter)
     const fm = Object.keys(frontmatter).length > 0
       ? `---\n${yaml.dump(frontmatter).trimEnd()}\n---\n\n`
       : ''
@@ -311,6 +351,7 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
     await rm(tmp, { force: true }).catch(() => undefined)
     throw error
   }
+  recordMtime(absolutePath, (await stat(absolutePath)).mtimeMs)
   return { id: vaultRelativeId(absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
 }
 
@@ -360,7 +401,7 @@ async function buildGraph(id, depth = 1, maxNodes = 200) {
 const TOOLS = [
   {
     name: 'wiki_read',
-    description: 'Read one Markdown note from the wiki vault, following Obsidian-style [[link]] references up to the configured depth.',
+    description: 'Read one Markdown note from the wiki vault, following Obsidian-style [[link]] references up to the configured depth. Returns mtime and modifiedExternally alongside frontmatter, body, links, and version.',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'Vault-relative path of the note (e.g. "concepts/RAG.md").' } },
@@ -405,8 +446,16 @@ const TOOLS = [
 
 async function callTool(name, a = {}) {
   switch (name) {
-    case 'wiki_read':
-      return readNote(await containedPathReal(a.id), MAX_LINK_DEPTH)
+    case 'wiki_read': {
+      const absolutePath = await containedPathReal(a.id)
+      const note = await readNote(absolutePath, MAX_LINK_DEPTH)
+      const info = await stat(absolutePath)
+      return {
+        ...note,
+        mtime: formatBeijingTime(info.mtime),
+        modifiedExternally: detectExternalChange(absolutePath, info.mtimeMs),
+      }
+    }
     case 'wiki_search':
       return searchNotes(a.query ?? '')
     case 'wiki_write':

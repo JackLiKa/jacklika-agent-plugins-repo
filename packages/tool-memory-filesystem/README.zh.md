@@ -52,9 +52,9 @@ kind: "package-reference"
 
 ### 工具
 
-- `wiki_read(id)` — 按仓库相对路径读取笔记，返回 frontmatter、正文、链接、已解析的链接笔记，以及内容指纹 `version`。
+- `wiki_read(id)` — 按仓库相对路径读取笔记，返回 frontmatter、正文、链接、已解析的链接笔记、内容指纹 `version`、`+08:00` 格式的文件 `mtime`，以及 `modifiedExternally` 标志（文件自本插件上次观察以来在磁盘上被改动时为 `true`，例如 Obsidian 编辑）。插件按绝对路径维护一个 256 条上限的 LRU mtime 表；自身的 `wiki_write` 会刷新记录，因此插件写入永不误报。
 - `wiki_search(query)` — 按标题、id、正文关键词搜索；查询词采用 OR 匹配，并按字段加权的 BM25 式评分排序（标题/id 命中权重最高，稀有词权重更高），另有整段短语加分与被强命中笔记链接的图增强；挂载 `wiki_semantic_search` 时两路排序经 RRF 融合。结果包含分数与反向链接数量。
-- `wiki_write(id, content, mode?, baseVersion?)` — 创建或追加笔记。追加模式保留 frontmatter 并添加时间戳标题。把 `wiki_read` 返回的 `version` 作为 `baseVersion` 传入时，若笔记在读取后被其他写入方改动，写入会显式失败。
+- `wiki_write(id, content, mode?, baseVersion?)` — 创建或追加笔记。追加模式保留 frontmatter 并添加时间戳标题；两种写入模式都会把 `created`/`updated` frontmatter 值归一化为 `+08:00` 秒级精度（不可解析的值原样保留）。把 `wiki_read` 返回的 `version` 作为 `baseVersion` 传入时，若笔记在读取后被其他写入方改动，写入会显式失败。
 
 ### 安全
 
@@ -81,7 +81,7 @@ kind: "package-reference"
 ##### `wiki_read` 的完整描述
 
 ```markdown
-Read one Markdown note from the wiki vault, optionally following Obsidian-style [[link]] references up to the configured depth. Returns the note id, frontmatter, body, and linked notes.
+Read one Markdown note from the wiki vault, optionally following Obsidian-style [[link]] references up to the configured depth. Returns the note id, frontmatter, body, linked notes, mtime, and a modifiedExternally flag that is true when the file changed on disk since this tool last observed it.
 ```
 
 ##### `wiki_search` 的完整描述

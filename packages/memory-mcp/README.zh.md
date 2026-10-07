@@ -16,7 +16,7 @@ npx dsh-memory-mcp --vault /path/to/vault
 
 ## 暴露面
 
-工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph` —— 与 `@jacklika/dsh-tool-memory-filesystem` / `-graph` 的契约相同，写操作带 `baseVersion` 乐观并发控制。资源：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
+工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph` —— 与 `@jacklika/dsh-tool-memory-filesystem` / `-graph` 的契约相同，写操作带 `baseVersion` 乐观并发控制，读操作返回 `mtime` + `modifiedExternally`，写入归一化 `created`/`updated` 为 `+08:00`。资源：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
 
 ## 客户端配置
 

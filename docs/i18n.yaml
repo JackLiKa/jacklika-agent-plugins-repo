@@ -10,8 +10,8 @@ architecture.md: 03394dd36c44199508b2c09415b20b60c02fbba8
 architecture.zh.md: 9f3e1cebce14d48c7b315b15c375b3bed6a1c10d
 compatibility.md: 8011cb2843f78417c405e13db0f76f8e795e1e37
 compatibility.zh.md: 7baf6ba53ab45915585777d1430102aba82cd8d2
-mcp-server.md: ad0955451cccd80925f29a4f89b73fcdd1b58ecd
-mcp-server.zh.md: 229175517f5ab084e915524c1edbfade94ae9991
+mcp-server.md: 8cfa6b1c69be9cfe81ca7c4fb2ef43e102ca5a60
+mcp-server.zh.md: 71c1c9648b4f3658a7634264fbae243a8465cc12
 security.md: a1d5a395d578d9b4fe3d70ab4c89503ffbc66ded
 security.zh.md: 6a3f2f2ef9190af3374f53c01491a71879347a4c
 usage.md: 992928966e0c3343208328e3d3e0f3b31d197c4f

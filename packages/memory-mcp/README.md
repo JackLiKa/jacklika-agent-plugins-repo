@@ -16,7 +16,7 @@ npx dsh-memory-mcp --vault /path/to/vault
 
 ## Surface
 
-Tools: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` — same contract as `@jacklika/dsh-tool-memory-filesystem` / `-graph`, including `baseVersion` optimistic concurrency on writes. Resources: `note:///<id>` over `resources/list` / `resources/read`.
+Tools: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` — same contract as `@jacklika/dsh-tool-memory-filesystem` / `-graph`, including `baseVersion` optimistic concurrency on writes, `mtime` + `modifiedExternally` on reads, and `+08:00` `created`/`updated` normalization on writes. Resources: `note:///<id>` over `resources/list` / `resources/read`.
 
 ## Client configuration
 

@@ -108,8 +108,32 @@ async function runSmoke() {
       assert(escaped !== null, 'symlink escape must error')
     }
 
+    // wiki_read mtime/modifiedExternally parity with the dsh tool: the first
+    // observed read is clean, an external rewrite flags, a wiki_write doesn't.
+    const m1 = await Promise.race([call('tools/call', { name: 'wiki_read', arguments: { id: 'concepts/RAG.md' } }), earlyExit])
+    const m1Note = JSON.parse(m1.content[0].text)
+    assert(typeof m1Note.mtime === 'string' && m1Note.mtime.endsWith('+08:00'), `mtime ${m1Note.mtime}`)
+    assert(m1Note.modifiedExternally === false, 'first read must not flag')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await writeFile(join(vault, 'concepts', 'RAG.md'), `${await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8')}\nexternal edit\n`)
+    const m2 = await Promise.race([call('tools/call', { name: 'wiki_read', arguments: { id: 'concepts/RAG.md' } }), earlyExit])
+    assert(JSON.parse(m2.content[0].text).modifiedExternally === true, 'external edit must flag')
+
+    // Overwrite writes normalize frontmatter timestamps to +08:00 seconds.
+    await Promise.race([call('tools/call', {
+      name: 'wiki_write',
+      arguments: {
+        id: 'norm/mcp.md',
+        mode: 'overwrite',
+        content: "---\ncreated: '2026-10-06T08:18:03.391Z'\nupdated: not-a-date\n---\n\n# Norm\n",
+      },
+    }), earlyExit])
+    const normText = await readFile(join(vault, 'norm', 'mcp.md'), 'utf8')
+    assert(normText.includes('2026-10-06T16:18:03+08:00'), `normalized created: ${normText}`)
+    assert(normText.includes('not-a-date'), 'unparseable value preserved')
+
     const res = await Promise.race([call('resources/list'), earlyExit])
-    assert(res.resources.length === 1 && res.resources[0].uri === 'note:///concepts/RAG.md', 'resources/list')
+    assert(res.resources.some(r => r.uri === 'note:///concepts/RAG.md'), 'resources/list')
 
     const rr = await Promise.race([call('resources/read', { uri: 'note:///concepts/RAG.md' }), earlyExit])
     assert(rr.contents[0].text.includes('Retrieval'), 'resources/read')

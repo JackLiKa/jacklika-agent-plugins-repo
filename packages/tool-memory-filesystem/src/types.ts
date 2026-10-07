@@ -21,6 +21,17 @@ export interface Note {
    * note in between.
    */
   version: string
+  /**
+   * File modification time rendered as a `+08:00` timestamp. Only set on the
+   * top-level note returned by `wiki_read`.
+   */
+  mtime?: string
+  /**
+   * True when the file's `mtime` changed since this plugin last observed it —
+   * evidence that an external writer (e.g. Obsidian) touched the note. Only
+   * set on the top-level note returned by `wiki_read`.
+   */
+  modifiedExternally?: boolean
 }
 
 /** Result of a search across the vault. */

@@ -176,6 +176,68 @@ export function noteVersion(text: string): string {
 }
 
 /**
+ * Last `mtimeMs` observed per note path, keyed by absolute path so identical
+ * note ids in different vaults never collide. Bounded at 256 entries with
+ * LRU eviction: an unbounded map would grow with every note ever read in a
+ * long-running process, while a fixed cap keeps the newest observations —
+ * the only ones a `modifiedExternally` comparison can still act on.
+ */
+const observedMtimes = new Map<string, number>()
+const OBSERVED_MTIME_LIMIT = 256
+
+/**
+ * Record the freshest observed `mtimeMs` for a path, evicting the oldest
+ * entry when the cap is reached.
+ */
+function recordMtime(path: string, mtimeMs: number): void {
+  observedMtimes.delete(path)
+  observedMtimes.set(path, mtimeMs)
+  if (observedMtimes.size > OBSERVED_MTIME_LIMIT) {
+    const oldest = observedMtimes.keys().next().value
+    if (oldest !== undefined) observedMtimes.delete(oldest)
+  }
+}
+
+/**
+ * Whether the note changed on disk since this plugin last observed it.
+ * The first observation records and reports `false`; a successful
+ * `wiki_write` re-records so the plugin's own writes never flag.
+ */
+function detectExternalChange(path: string, mtimeMs: number): boolean {
+  const seen = observedMtimes.get(path)
+  recordMtime(path, mtimeMs)
+  return seen !== undefined && seen !== mtimeMs
+}
+
+/**
+ * Normalize `created`/`updated` frontmatter timestamps to the vault's
+ * `+08:00` second-precision convention. Parseable values in any other form
+ * (`Z`, `+00:00`, millisecond precision) are rewritten; unparseable values
+ * pass through untouched so a non-date string is never corrupted.
+ */
+export function normalizeNoteTimestamps(frontmatter: Record<string, unknown>): void {
+  for (const key of ['created', 'updated']) {
+    const value = frontmatter[key]
+    if (typeof value !== 'string') continue
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) continue
+    const normalized = formatBeijingTime(parsed)
+    if (normalized !== value) frontmatter[key] = normalized
+  }
+}
+
+/**
+ * Normalize timestamps inside a complete note text. Returns the text
+ * unchanged when there is no frontmatter to rewrite.
+ */
+function normalizeTextTimestamps(text: string): string {
+  const { frontmatter, body } = splitFrontmatter(text)
+  if (Object.keys(frontmatter).length === 0) return text
+  normalizeNoteTimestamps(frontmatter)
+  return `---\n${yaml.dump(frontmatter).trim()}\n---\n${body}`
+}
+
+/**
  * Find all Obsidian-style `[[link]]` references in note text. Aliases of the
  * form `[[link|alias]]` return the link target only.
  * @param text - note body.
@@ -562,7 +624,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_read',
-    description: 'Read one Markdown note from the wiki vault, optionally following Obsidian-style [[link]] references up to the configured depth. Returns the note id, frontmatter, body, and linked notes.',
+    description: 'Read one Markdown note from the wiki vault, optionally following Obsidian-style [[link]] references up to the configured depth. Returns the note id, frontmatter, body, linked notes, mtime, and a modifiedExternally flag that is true when the file changed on disk since this tool last observed it.',
     parameters: {
       id: {
         type: 'string',
@@ -582,7 +644,12 @@ export function apply(ctx: Context, config: Config): void {
           .map(path => vaultRelativeId(vaultRoot, path)),
       )
       const note = await readNote(vaultRoot, resolved.extensions, resolved.maxLinkDepth, absolutePath, new Set(), linkResolver)
-      return note as unknown as JsonValue
+      const info = await stat(absolutePath)
+      return {
+        ...note,
+        mtime: formatBeijingTime(info.mtime),
+        modifiedExternally: detectExternalChange(absolutePath, info.mtimeMs),
+      } as unknown as JsonValue
     },
   })))
 
@@ -713,9 +780,10 @@ export function apply(ctx: Context, config: Config): void {
       }
       let finalBody: string
       if (mode === 'overwrite') {
-        finalBody = args.content
+        finalBody = normalizeTextTimestamps(args.content)
       } else {
         const { frontmatter, body } = splitFrontmatter(existing ?? '')
+        normalizeNoteTimestamps(frontmatter)
         const frontmatterText = Object.keys(frontmatter).length > 0
           ? `---\n${yaml.dump(frontmatter).trim()}\n---\n\n`
           : ''
@@ -724,6 +792,8 @@ export function apply(ctx: Context, config: Config): void {
       }
       exec.signal.throwIfAborted()
       await writeAtomic(absolutePath, finalBody)
+      const info = await stat(absolutePath)
+      recordMtime(absolutePath, info.mtimeMs)
       return { id: vaultRelativeId(vaultRoot, absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
     },
   })))

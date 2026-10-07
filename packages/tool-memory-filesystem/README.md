@@ -52,9 +52,9 @@ A relative `vaultRoot` resolves against the calling session's workspace.
 
 ### Tools
 
-- `wiki_read(id)` — read one note by vault-relative path and return its frontmatter, body, links, linked notes, and a `version` content fingerprint.
+- `wiki_read(id)` — read one note by vault-relative path and return its frontmatter, body, links, linked notes, a `version` content fingerprint, the file's `mtime` as a `+08:00` timestamp, and a `modifiedExternally` flag that is `true` when the file changed on disk since this plugin last observed it (e.g. an Obsidian edit). The plugin keeps a bounded 256-entry LRU of observed mtimes keyed by absolute path; its own `wiki_write` re-records the mtime so plugin writes never flag.
 - `wiki_search(query)` — keyword search across note titles, ids, and bodies; query terms are OR-matched and ranked by field-weighted BM25-style scoring (title/id hits weigh most, rare terms weigh more) plus a verbatim-phrase bonus and a link-graph boost; when `wiki_semantic_search` is mounted the two rankings fuse via reciprocal rank fusion. Results include the score and backlink counts.
-- `wiki_write(id, content, mode?, baseVersion?)` — create or append to a note. Append mode preserves frontmatter and adds a timestamp header. Passing a `version` from `wiki_read` as `baseVersion` makes the write fail loudly when another writer changed the note in between.
+- `wiki_write(id, content, mode?, baseVersion?)` — create or append to a note. Append mode preserves frontmatter and adds a timestamp header; both write modes normalize `created`/`updated` frontmatter values to `+08:00` second precision (unparseable values pass through). Passing a `version` from `wiki_read` as `baseVersion` makes the write fail loudly when another writer changed the note in between.
 
 ### Security
 
@@ -81,7 +81,7 @@ The model sees the generated `wiki_read`, `wiki_search`, and `wiki_write` schema
 ##### Verbatim description for `wiki_read`
 
 ```markdown
-Read one Markdown note from the wiki vault, optionally following Obsidian-style [[link]] references up to the configured depth. Returns the note id, frontmatter, body, and linked notes.
+Read one Markdown note from the wiki vault, optionally following Obsidian-style [[link]] references up to the configured depth. Returns the note id, frontmatter, body, linked notes, mtime, and a modifiedExternally flag that is true when the file changed on disk since this tool last observed it.
 ```
 
 ##### Verbatim description for `wiki_search`
