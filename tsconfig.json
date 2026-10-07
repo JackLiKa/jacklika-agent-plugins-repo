@@ -10,6 +10,7 @@
     { "path": "packages/tool-memory-filesystem" },
     { "path": "packages/tool-memory-graph" },
     { "path": "packages/tool-memory-vector" },
-    { "path": "packages/todo-anchor" }
+    { "path": "packages/todo-anchor" },
+    { "path": "packages/memory-anchor" }
   ]
 }

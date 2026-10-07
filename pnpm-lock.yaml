@@ -114,6 +114,12 @@ importers:
         specifier: workspace:*
         version: link:../tool-memory-vector
 
+  packages/memory-anchor:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.4
+        version: 3.18.4
+
   packages/memory-curator:
     dependencies:
       '@deepseek-ai/schemastery':
