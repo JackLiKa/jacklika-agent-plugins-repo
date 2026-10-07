@@ -7,17 +7,47 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import SystemPrompt, { renderContextSnapshot } from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import * as MemoryAnchor from '@jacklika/dsh-memory-anchor'
 
 /**
- * Arguments the `wiki_write` stub recorded during a test.
+ * Writes the `wiki_write` stub observed during a test, together with the run
+ * context the registry pipeline supplied.
  */
-const writeCalls: { id: string; content: string; mode?: string }[] = []
+const writeCalls: {
+  id: string
+  content: string
+  mode?: string
+  agent: unknown
+  callId: unknown
+}[] = []
 
 /**
- * Stand-in for a vault write tool; the anchor only checks registration and,
- * for auto-capture, calls `execute`.
+ * Every `tools/execute` dispatch a test observed, standing in for the memory
+ * suite's scope/queue/git layers: a write the anchor performs without landing
+ * here never reached the registry pipeline.
+ */
+const dispatches: { name: string; agent: unknown; callId: unknown }[] = []
+
+/** Live agents by session id, as the Harness `agents` service resolves them. */
+const agents = new Map<string, object>()
+
+/**
+ * Register one session's live agent stand-in and return it. The anchor must
+ * take the dispatch scope from the `agents` service, not from the session.
+ * @param id - the shared session/agent identity.
+ * @returns the agent stand-in registered for that id.
+ */
+function liveAgent(id: string): object {
+  const agent = { id, session: { id } }
+  agents.set(id, agent)
+  return agent
+}
+
+/**
+ * Stand-in for a vault write tool. The run-context parameter is load-bearing:
+ * the anchor must dispatch through the registry, so a caller that invokes this
+ * definition directly arrives without a context and fails loudly here.
  */
 const WikiWriteStub = {
   name: 'memory-anchor-test-stub',
@@ -31,8 +61,11 @@ const WikiWriteStub = {
         schema: { type: 'json' },
         render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
       },
-      async execute(args: { id: string; content: string; mode?: string }) {
-        writeCalls.push(args)
+      async execute(args: { id: string; content: string; mode?: string }, exec: ToolRunContext) {
+        if (exec === undefined) {
+          throw new Error('wiki_write stub ran without a run context: the caller bypassed ctx.tools.execute')
+        }
+        writeCalls.push({ ...args, agent: exec.agent, callId: exec.callId })
         return { written: true } as never
       },
     })))
@@ -46,6 +79,8 @@ afterEach(async () => {
   await context?.fiber.dispose()
   context = undefined
   writeCalls.length = 0
+  dispatches.length = 0
+  agents.clear()
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
 })
@@ -69,6 +104,14 @@ async function boot(anchorConfig = '', vaultTool = false): Promise<Context> {
 
   const ctx = new Context()
   context = ctx
+  // Stand in for the Harness `agents` service and for the memory suite's
+  // `tools/execute` layers: the anchor resolves its dispatch scope through the
+  // first, and the second only observes a write that re-enters the pipeline.
+  ctx.provide('agents', { get: (id: unknown) => agents.get(String(id)) })
+  ctx.on('tools/execute', (exec, next) => {
+    dispatches.push({ name: exec.name, agent: exec.agent, callId: exec.callId })
+    return next()
+  })
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
@@ -180,6 +223,7 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
   it('appends a turn summary through wiki_write on turn/end', async () => {
     const ctx = await boot('', true)
     const session = { id: 'sess:abc/1' }
+    const agent = liveAgent('sess:abc/1')
     emitSessionEvent(ctx, session, 'turn/start', { turn: 3 })
     emitSessionEvent(ctx, session, 'tool/call', { turn: 3, step: 1, name: 'wiki_search' })
     emitSessionEvent(ctx, session, 'tool/result', { turn: 3, step: 1 })
@@ -195,11 +239,36 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
     expect(writeCalls[0].content).toContain('turn 3 (completed)')
     expect(writeCalls[0].content).toContain('wiki_search')
     expect(writeCalls[0].content).toContain('Answer recorded.')
+
+    // The write re-entered the registry carrying the session's own agent —
+    // that is what lets the memory suite's scope, queue, and git layers see an
+    // automatic capture exactly as they see a model-issued one.
+    expect(dispatches).toHaveLength(1)
+    expect(dispatches[0].name).toBe('wiki_write')
+    expect(dispatches[0].agent).toBe(agent)
+    expect(writeCalls[0].agent).toBe(agent)
+    expect(String(writeCalls[0].callId)).not.toBe('')
+  })
+
+  it('writes nothing when the session has no live agent to dispatch as', async () => {
+    // An agentless root call has no scope to resolve a relative vault root
+    // against, so the anchor declines rather than writing outside the Vault.
+    const ctx = await boot('', true)
+    const session = { id: 'orphan' }
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'wiki_search' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
+    await flush()
+
+    expect(dispatches).toHaveLength(0)
+    expect(writeCalls).toHaveLength(0)
   })
 
   it('skips a turn that did no observable work', async () => {
     const ctx = await boot('', true)
     const session = { id: 'idle' }
+    liveAgent('idle')
     emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
     emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
     await flush()
@@ -209,6 +278,7 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
   it('writes nothing when autoCapture is configured off', async () => {
     const ctx = await boot('  config:\n    autoCapture: false\n', true)
     const session = { id: 'off' }
+    liveAgent('off')
     emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
     emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'wiki_search' })
     emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })
@@ -220,6 +290,7 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
   it('writes nothing when no vault write tool is mounted', async () => {
     const ctx = await boot()
     const session = { id: 'novault' }
+    liveAgent('novault')
     emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
     emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'wiki_search' })
     emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })
@@ -232,6 +303,8 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
     const ctx = await boot('', true)
     const a = { id: 'a' }
     const b = { id: 'b' }
+    liveAgent('a')
+    liveAgent('b')
     emitSessionEvent(ctx, a, 'turn/start', { turn: 1 })
     emitSessionEvent(ctx, b, 'turn/start', { turn: 1 })
     emitSessionEvent(ctx, a, 'tool/call', { turn: 1, step: 1, name: 'only_a' })
@@ -252,6 +325,7 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
     await entry.fiber.dispose()
 
     const session = { id: 'late' }
+    liveAgent('late')
     emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
     emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'wiki_search' })
     emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })

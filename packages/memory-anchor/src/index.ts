@@ -13,16 +13,20 @@
  * `tool/result`, `assistant/message`, and `turn/end`), which is exactly how
  * `dsh-workspace-changes` snapshots turns. With `autoCapture` enabled this
  * plugin tracks each session's open turn and, on `turn/end`, appends a
- * heuristic summary through the `wiki_write` tool. That is real automation,
- * not a reminder — but it is a mechanical summary (tool names, excerpts),
- * not a model-curated note; durable conclusions still deserve an explicit
- * `memory_capture`/`wiki_write` call.
+ * heuristic summary by dispatching `wiki_write` through the tool registry on
+ * behalf of the session's own agent, so the memory suite's scope, queue, and
+ * git layers observe the write exactly as they observe a model-issued one.
+ * That is real automation, not a reminder — but it is a mechanical summary
+ * (tool names, excerpts), not a model-curated note; durable conclusions still
+ * deserve an explicit `memory_capture`/`wiki_write` call.
  * @module @jacklika/dsh-memory-anchor
  */
 
+import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import type {} from '@deepseek-ai/dsh-tools'
+import type { ToolExecutionInput } from '@deepseek-ai/dsh-tools'
 import { formatBeijingTime } from '@jacklika/dsh-memory-time'
 import z from '@deepseek-ai/schemastery'
 
@@ -232,19 +236,39 @@ export function apply(ctx: Context, config: Config): void {
   })
 }
 
-/** The tool shape needed to append a note; `wiki_write` takes `{id, content, mode}`. */
-interface VaultWriteTool {
-  execute: (args: { id: string; content: string; mode?: string }) => Promise<unknown> | unknown
+/** The live agent a call runs on behalf of, taken from the peer contract. */
+type AgentRef = NonNullable<ToolExecutionInput['agent']>
+
+/**
+ * Resolve the mounted `wiki_write` tool as one agent sees it, or `undefined`
+ * when the memory vault is not mounted in this profile. Only the registered
+ * definition is read here: the write must be dispatched through
+ * `ctx.tools.execute`, because calling the definition's `execute` directly
+ * would bypass the memory suite's scope, queue, and git layers.
+ * @param ctx - registrant context carrying the tool registry.
+ * @param scope - the viewing agent; omitted = the global view.
+ * @returns the registered tool definition, or `undefined`.
+ */
+function vaultWriteTool(ctx: Context, scope?: AgentRef): { name: string } | undefined {
+  return ctx.tools.get('wiki_write', scope)
 }
 
 /**
- * Resolve the mounted `wiki_write` tool, or `undefined` when the memory vault
- * is not mounted in this profile.
- * @param ctx - registrant context carrying the tool registry.
- * @returns the tool, or `undefined`.
+ * Resolve the live agent a session belongs to. The Harness agent registry is
+ * keyed by the shared agent/session identity, so the session id finds its own
+ * agent. The lookup is soft — an agentless composition still loads this plugin
+ * — and auto-capture is skipped there rather than attempted, because a
+ * relative vault root would otherwise resolve against the calling process cwd
+ * and scatter notes outside the configured Vault.
+ * @param ctx - registrant context.
+ * @param session - the session whose turn ended (only `id` is read).
+ * @returns the live agent, or `undefined`.
  */
-function vaultWriteTool(ctx: Context): VaultWriteTool | undefined {
-  return ctx.tools.get('wiki_write') as VaultWriteTool | undefined
+function agentFor(ctx: Context, session: unknown): AgentRef | undefined {
+  const registry = ctx.get('agents') as { get?: (id: unknown) => unknown } | undefined
+  const id = (session as { id?: unknown } | undefined)?.id
+  if (typeof registry?.get !== 'function' || id === undefined) return undefined
+  return registry.get(id) as AgentRef | undefined
 }
 
 /**
@@ -260,10 +284,12 @@ function sessionNoteId(session: unknown): string {
 }
 
 /**
- * Append the closed turn's mechanical summary through `wiki_write`. Skips
- * turns that did no observable work (no tool activity and no messages) and
- * deployments without a vault write tool; write failures are logged, never
- * thrown into the session feed.
+ * Append the closed turn's mechanical summary by dispatching `wiki_write` for
+ * the session's own agent. Skips turns that did no observable work (no tool
+ * activity and no messages) and sessions whose agent is no longer live — the
+ * registry lookup is what supplies the dispatch scope, and a missing scope
+ * would let a relative vault root resolve against the calling process cwd.
+ * Failures are logged, never thrown into the session feed.
  * @param ctx - registrant context.
  * @param resolved - resolved plugin configuration.
  * @param session - the session whose turn ended.
@@ -277,10 +303,20 @@ async function captureTurn(
   activity: TurnActivity,
   reason: string,
 ): Promise<void> {
-  const write = vaultWriteTool(ctx)
   const didWork = activity.toolNames.length > 0 || activity.toolResults > 0
     || activity.lastAssistant !== '' || activity.userExcerpt !== ''
-  if (write === undefined || !didWork) return
+  if (!didWork) return
+  const agent = agentFor(ctx, session)
+  if (agent === undefined) {
+    ctx.logger?.debug(`memory-anchor: turn ${activity.turn} skipped: no live agent for this session`)
+    return
+  }
+  const write = vaultWriteTool(ctx, agent)
+  if (write === undefined) {
+    ctx.logger?.debug(`memory-anchor: turn ${activity.turn} skipped: wiki_write not reachable from the agent scope`)
+    return
+  }
+  const noteId = `${resolved.captureNotePrefix}-${sessionNoteId(session)}.md`
   const lines = [
     `## ${formatBeijingTime(new Date())} — turn ${activity.turn} (${reason})`,
     '',
@@ -291,12 +327,30 @@ async function captureTurn(
     activity.lastAssistant === '' ? '' : `- Last assistant: "${activity.lastAssistant}"`,
   ].filter(line => line !== '')
   try {
-    await write.execute({
-      id: `${resolved.captureNotePrefix}-${sessionNoteId(session)}.md`,
-      mode: 'append',
-      content: lines.join('\n'),
+    const result = await ctx.tools.execute({
+      callId: ToolCallId(randomUUID()),
+      name: write.name,
+      arguments: {
+        id: noteId,
+        mode: 'append',
+        content: lines.join('\n'),
+      },
+      agent,
+      // The turn is already closed and the registry's timeout policy bounds
+      // this call, so an unaborted caller signal is the honest contract.
+      signal: new AbortController().signal,
     })
+    if (!result.isError) {
+      ctx.logger?.debug(`memory-anchor: auto-captured turn ${activity.turn} to ${noteId}`)
+      return
+    }
+    // A name this agent cannot reach is a deployment statement, not a fault —
+    // a scope that hides `wiki_write`, or a `ptc` deployment where only
+    // `run_code` is directly callable — so it logs below the warning level.
+    const line = `memory-anchor: auto-capture of turn ${activity.turn} failed: ${result.error.message}`
+    if (result.error.info?.code === 'UNKNOWN_TOOL') ctx.logger?.debug(line)
+    else ctx.logger?.warn(line)
   } catch (error) {
-    ctx.logger?.warn(`memory-anchor: auto-capture of turn ${activity.turn} failed: ${String(error)}`)
+    ctx.logger?.warn(`memory-anchor: auto-capture of turn ${activity.turn} threw: ${String(error)}`)
   }
 }

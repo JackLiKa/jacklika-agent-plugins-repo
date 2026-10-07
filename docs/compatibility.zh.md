@@ -23,7 +23,7 @@ Harness 在 registry 安装前和 Profile 组合前都会检查所有 `@deepseek
 | queue 与 git | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布 |
 | filesystem、graph、vector、curator | `@deepseek-ai/dsh-tools` 的 `defineTool` / `ToolRunContext`；filesystem、graph、curator 也使用 `@deepseek-ai/dsh-util-values` 的 `JsonValue` |
 | todo-anchor | `@deepseek-ai/dsh-tools` 的 `ToolExecutionResult` 与 `tools/execute` 瀑布；`@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context` |
-| memory-anchor | `@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context`；`@jacklika/dsh-memory-time` 的 `formatBeijingTime`；Cordis 的 `session/event` 事件流（无 import —— 普通 `ctx.on`） |
+| memory-anchor | `@deepseek-ai/dsh-system-prompt` 的 `ctx.systemPrompt.context`；`@deepseek-ai/dsh-llm` 的 `ToolCallId`；`@deepseek-ai/dsh-tools` 的 `ToolExecutionInput`、`ctx.tools.get` 与 `ctx.tools.execute`；`@jacklika/dsh-memory-time` 的 `formatBeijingTime`；Cordis 的 `session/event` 事件流（无 import —— 普通 `ctx.on`） |
 | devin-bridge、llm-qoder | `@deepseek-ai/dsh-llm` 的 `LlmAdapter`、`LlmError`、`ToolCallId`、`ReasoningEffortId` 及注册接缝（`ctx.llm.registerAdapter`、`registerConfigurableProviders`、`registerModelDiscovery`）；`@deepseek-ai/dsh-attachment` 的 `attachments` 服务 |
 
 Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。两个 provider 适配器是独立包：各自自带 `cordis.patch.yml`，直接挂载，从不经过 Bundle。
@@ -32,7 +32,7 @@ Bundle 本身只包含 Cordis patch 与对成员包的运行时依赖。两个 p
 
 | 接缝 | 使用方 | 所依赖的契约 |
 |---|---|---|
-| `tools/execute` 瀑布 | scope、queue、git、todo-anchor | 监听器调用 `next()`，之后可读 `exec.name` / `exec.arguments`。todo-anchor 把错误结果视为“未写入”，绝不锚定它。 |
+| `tools/execute` 瀑布 | scope、queue、git、todo-anchor；memory-anchor（作为调用方） | 监听器调用 `next()`，之后可读 `exec.name` / `exec.arguments`。todo-anchor 把错误结果视为“未写入”，绝不锚定它。memory-anchor 的自动入库会重新进入该流水线，并携带会话自己的 agent，因此 scope、queue、git 三层观察到的自动写入与模型发起的写入完全一致；插件发起的调用没有 `parent` token，在 `mode: 'ptc'` 下会折叠为 `UNKNOWN_TOOL`，此时 anchor 把该回合记为未写入，而不是告警。 |
 | `ctx.systemPrompt.context` | todo-anchor | 注册有序的动态运行时上下文。`text` 可以是函数，在**每次提示词组装**时求值；结果长度为 0 则被丢弃。渲染出的快照被标注为取代此前的运行时上下文快照——这正是注入值能比压缩摘要活得更久的原因。 |
 | `todo/write` 会话事件 | Harness，非本套件 | `todo_write` 把 `{content, status}[]` 作为会话事件持久化。本套件把它记录为**所依赖的事实**，而绝不作为自己调用的 API。 |
 | `ctx.llm` 注册接缝 | devin-bridge、llm-qoder | 适配器把路由、可配置 provider 目录条目、以及以 settings 命名空间为键的模型发现作为三个独立句柄注册，各自随 fiber 释放。两个适配器都依赖目录条目提供选择界面渲染的显示名，也都不指望 `registerAdapter` 的 disposer 去关闭适配器自己持有的东西——子进程、HTTP 客户端与常驻 CLI 会话需要各自的 `ctx.effect` 释放路径。 |
