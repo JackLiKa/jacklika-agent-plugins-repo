@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-anchor",
   "description": "Keeps the memory-recall/capture discipline in front of the model for every prompt, and appends a mechanical per-turn summary to the vault on turn/end via the session/event feed.",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "publishConfig": {
     "access": "public"
   },
