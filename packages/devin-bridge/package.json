@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-devin-bridge",
   "description": "Devin Connect as a dsh LLM provider: mounts the `devin` route with a bundled model catalog, credentials.toml or settings token resolution, proxy and HTTP/1.1 transport options, retry policy, and image input.",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "publishConfig": {
     "access": "public"
   },
@@ -48,7 +48,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
-    "@deepseek-ai/dsh-attachment": ">=0.1.7-rc.1 <0.3.0-0",
-    "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1 <0.3.0-0"
+    "@deepseek-ai/dsh-attachment": ">=0.1.7-rc.1 <0.3.0-0 || >=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1 <0.3.0-0 || >=0.2.0-rc.1 <0.3.0-0"
   }
 }

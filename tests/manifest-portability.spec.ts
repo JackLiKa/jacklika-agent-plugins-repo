@@ -14,8 +14,17 @@ const packageRoot = join(root, 'packages')
  * into a load-time refusal even when the plugin is compatible. A release joins
  * the window only after the full compatibility matrix passes on it, and the
  * range keeps the next release line refused before code loads.
+ *
+ * The window is spelled as two branches because the string serves two
+ * consumers with different semver semantics. The Harness runtime validates it
+ * with `includePrerelease: true`, under which the first branch alone covers
+ * every 0.1.x/0.2.x prerelease. npm and pnpm resolve peers under default
+ * semantics, where a prerelease can only match when some comparator carries a
+ * prerelease at the same major.minor.patch — so the second branch exists
+ * solely for package-manager resolution and must gain a sibling with the same
+ * tuple whenever the verified line moves (e.g. `>=0.2.1-rc.1 <0.3.0-0`).
  */
-const HARNESS_PEER_WINDOW = '>=0.1.7-rc.1 <0.3.0-0'
+const HARNESS_PEER_WINDOW = '>=0.1.7-rc.1 <0.3.0-0 || >=0.2.0-rc.1 <0.3.0-0'
 
 /**
  * Reduce a declared or remote Git URL to `host/owner/repo` so the spellings npm
@@ -144,6 +153,20 @@ describe('published package manifests', () => {
     }
     for (const version of rejects) {
       expect(satisfies(version, HARNESS_PEER_WINDOW, { includePrerelease: true })).toBe(false)
+    }
+  })
+
+  it('accepts the verified lines under package-manager default semantics', () => {
+    // npm and pnpm resolve peers WITHOUT includePrerelease: a prerelease only
+    // matches a range containing a comparator with a prerelease at the same
+    // major.minor.patch. Passing the runtime gate is therefore not proof the
+    // package can be installed — a single-branch window silently excluded the
+    // entire 0.2.x line and npm ERESOLVEd against dsh-llm@0.2.0-rc.2.
+    for (const version of ['0.1.7-rc.2', '0.2.0-rc.2']) {
+      expect(satisfies(version, HARNESS_PEER_WINDOW)).toBe(true)
+    }
+    for (const version of ['0.3.0-rc.1', '0.3.0']) {
+      expect(satisfies(version, HARNESS_PEER_WINDOW)).toBe(false)
     }
   })
 })
