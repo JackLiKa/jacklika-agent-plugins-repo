@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-tool-memory-filesystem",
   "description": "Model-facing wiki/memory tools over a local Markdown vault: read, search, and write notes with Obsidian-style links and YAML frontmatter.",
-  "version": "0.1.3-alpha.5",
+  "version": "0.1.3-alpha.6",
   "publishConfig": {
     "access": "public"
   },

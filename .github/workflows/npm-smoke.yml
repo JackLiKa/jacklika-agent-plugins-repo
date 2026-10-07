@@ -10,7 +10,7 @@ on:
       bundle_version:
         description: '@jacklika/dsh-memory version to test'
         required: true
-        default: '0.1.7-rc.11'
+        default: '0.1.7-rc.12'
       dsh_version:
         description: '@deepseek-ai/dsh runtime version to install'
         required: true
@@ -80,7 +80,7 @@ jobs:
         shell: bash
         run: |
           cd /tmp/dsh-smoke
-          pnpm exec dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.11' }}"
+          pnpm exec dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.12' }}"
 
       - name: Verify profile dump-config
         shell: bash

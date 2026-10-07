@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-mcp",
   "description": "MCP stdio server exposing the memory vault to any MCP client — one process owns all writes.",
-  "version": "0.1.4-alpha.0",
+  "version": "0.1.4-alpha.1",
   "publishConfig": {
     "access": "public"
   },
