@@ -81,6 +81,38 @@ function agentKey(exec: ToolDispatchExecution, configured: string): string {
 }
 
 /**
+ * Decide whether an id is a clean vault-relative path. Anything else — leading
+ * `/` or `\`, a Windows drive letter, a `..` or `.` segment, or any backslash —
+ * is rejected outright: prefix tests like `shared/../evil.md` or
+ * `agents/<key>/../evil.md` would otherwise pass the passthrough checks and
+ * escape the namespace after downstream normalization.
+ * @param id - the raw id argument.
+ * @returns `true` when the id is safe to route.
+ */
+function isSafeNoteId(id: string): boolean {
+  if (id === '' || id.startsWith('/') || id.startsWith('\\') || /^[A-Za-z]:/.test(id)) return false
+  if (id.includes('\\')) return false
+  return !id.split('/').some(segment => segment === '..' || segment === '.')
+}
+
+/**
+ * A rejected-id execution result, shaped like the registry's own failures
+ * (`Error:`-prefixed text content plus structured `error.info`).
+ * @param message - human-readable failure message.
+ * @returns the ToolExecutionResult to return in place of dispatch.
+ */
+function invalidIdResult(message: string): ToolExecutionResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text: `Error: ${message}` }],
+    error: {
+      message,
+      info: { name: 'ToolInputError', code: 'INVALID_ARGS' },
+    },
+  }
+}
+
+/**
  * Register a `tools/execute` waterfall listener that re-dispatches matching
  * calls with a namespaced id. Re-dispatch is required because parsed arguments
  * are deep-frozen before wrappers run; the nested execution keeps `rootCallId`
@@ -119,6 +151,9 @@ export function apply(ctx: Context, config: Config): void {
     if (args === null || typeof args !== 'object') return next()
     const id = (args as Record<string, unknown>)[resolved.idArgument]
     if (typeof id !== 'string') return next()
+    if (!isSafeNoteId(id)) {
+      return invalidIdResult(`memory-scope: invalid note id ${JSON.stringify(id)}: ids must be vault-relative paths without '..', '.', backslashes, leading slashes, or drive letters`)
+    }
     if (shared.some(prefix => id.startsWith(prefix))) return next()
     const key = agentKey(exec, resolved.agentKey)
     if (key === '') return next()

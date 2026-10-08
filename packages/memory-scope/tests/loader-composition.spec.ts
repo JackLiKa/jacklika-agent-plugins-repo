@@ -154,4 +154,24 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     if (result.isError) throw new Error('expected curator wiki_write success')
     expect((JSON.parse(resultText(result)) as { id: string }).id).toBe('shared/summary.md')
   })
+
+  it('rejects traversal and absolute ids instead of silently remapping them', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
+    const ctx = await boot(vault)
+
+    // Each of these previously passed a prefix check and landed somewhere the
+    // caller never named — outside the agent namespace, or after downstream
+    // normalization, outside the matched directory entirely.
+    for (const bad of ['../escape.md', '/tmp/escape.md', 'shared/../evil.md', 'agents/agent-1/../evil.md', 'C:/x.md', '..\\..\\x.md']) {
+      const result = await write(ctx, `bad-${bad}`, bad, 'agent-1', vault)
+      expect(result.isError, `id ${bad} must be rejected`).toBe(true)
+      if (result.isError) expect(result.error.info?.code).toBe('INVALID_ARGS')
+    }
+
+    // Legitimate relative ids keep working unchanged.
+    for (const good of ['shared/notes/ok.md', 'sub/dir.md']) {
+      const result = await write(ctx, `ok-${good}`, good, 'agent-1', vault)
+      expect(result.isError, `id ${good} must succeed`).toBe(false)
+    }
+  })
 })
