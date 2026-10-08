@@ -118,10 +118,16 @@ describe('memory-git real Loader composition through cordis.yml', () => {
     expect(private_.isError).toBe(false)
     const shared = await write(ctx, 'w2', 'shared/summary.md')
     expect(shared.isError).toBe(false)
+    const loose = await write(ctx, 'w3', 'loose/note.md')
+    expect(loose.isError).toBe(false)
 
     const log = await gitLog(vault)
     expect(log).toContain('wiki_write: shared/summary.md')
-    expect(log).not.toContain('agents/agent-1/notes/x.md')
+    // The default prefixes cover shared/ and agents/: agents/ writes are
+    // versioned because the namespace split is collision avoidance, not
+    // privacy — but an id outside both prefixes is still left uncommitted.
+    expect(log).toContain('wiki_write: agents/agent-1/notes/x.md')
+    expect(log).not.toContain('loose/note.md')
   })
 
   it('creates an own .git inside a nested vault instead of joining the parent repo', async () => {

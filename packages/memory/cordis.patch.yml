@@ -20,7 +20,7 @@
       name: '@jacklika/dsh-memory-git'
       config:
         vaultRoot: '.plugins/memory'
-        prefixes: ['shared/']
+        prefixes: ['shared/', 'agents/']
         nestedRepo: init
 
     - id: tool-memory-filesystem

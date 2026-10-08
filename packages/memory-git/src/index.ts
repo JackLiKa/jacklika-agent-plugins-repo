@@ -69,7 +69,7 @@ export const Config: z<Config> = z.object({
   toolNames: z.array(z.string()).default(['wiki_write']),
   idArgument: z.string().default('id'),
   vaultRoot: z.string().default(''),
-  prefixes: z.array(z.string()).default(['shared/']),
+  prefixes: z.array(z.string()).default(['shared/', 'agents/']),
   nestedRepo: z.union(['init', 'inherit', 'own']).default('init'),
   autoInit: z.boolean().default(true),
   authorName: z.string().default('dsh-memory-git'),

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-memory-git` turns matching tool writes — `wiki_write` by default — into git commits through the `tools/execute` waterfall. Each successful write is staged and committed inside the vault, so the memory store gains version history, rollback, and per-write audit without changing `dsh-tool-memory-filesystem`. Commits are limited to configured id prefixes — `shared/` by default — so curated knowledge is versioned while per-agent namespaces stay unversioned. The plugin registers no tools of its own and requires a `git` binary on `PATH`.
+`dsh-memory-git` turns matching tool writes — `wiki_write` by default — into git commits through the `tools/execute` waterfall. Each successful write is staged and committed inside the vault, so the memory store gains version history, rollback, and per-write audit without changing `dsh-tool-memory-filesystem`. Commits are limited to configured id prefixes — `shared/` and `agents/` by default — so both curated knowledge and per-agent namespaces are versioned; the namespace split is a write-collision boundary, not a privacy boundary, since every agent reads the whole vault. The plugin registers no tools of its own and requires a `git` binary on `PATH`.
 
 ## Table of Contents
 
@@ -41,7 +41,7 @@ Mount after `dsh-memory-queue` so commits run inside the vault lock:
 | `toolNames` | `string[]` | `['wiki_write']` | Tool names whose successful dispatches are committed. |
 | `idArgument` | `string` | `'id'` | Argument carrying the vault-relative note id. |
 | `vaultRoot` | `string` | `''` → `<session cwd>/.dsh/memory/` | Repository working tree; same per-call resolution as the memory tools. |
-| `prefixes` | `string[]` | `['shared/']` | Only ids under these prefixes are committed; `[]` commits every write. |
+| `prefixes` | `string[]` | `['shared/', 'agents/']` | Only ids under these prefixes are committed; `[]` commits every write. |
 | `nestedRepo` | `'init' \| 'inherit' \| 'own'` | `'init'` | `init`: vault owns its `.git`, never joining an enclosing repo. `inherit`: join the nearest enclosing repo (init only when none exists). `own`: require an existing `<vault>/.git`, fail otherwise. |
 | `autoInit` | `boolean` | `true` | Permit `git init` when the selected `nestedRepo` mode allows it. |
 | `authorName` / `authorEmail` | `string` | `dsh-memory-git` / `dsh-memory-git@localhost` | Commit identity passed via `git -c`. |

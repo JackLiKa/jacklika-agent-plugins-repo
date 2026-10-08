@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-memory-git` 通过 `tools/execute` waterfall 把指定工具写入（默认 `wiki_write`）变成 git commit。每次成功写入都会在仓库内 stage 并提交，使记忆库获得版本历史、回滚与逐次写入审计能力，且**不需要修改** `dsh-tool-memory-filesystem`。提交限定在配置的 id 前缀内（默认 `shared/`），因此公共知识有版本而各 agent 命名空间不入版本。本插件不注册任何工具，并要求 `PATH` 上存在 `git` 可执行文件。
+`dsh-memory-git` 通过 `tools/execute` waterfall 把指定工具写入（默认 `wiki_write`）变成 git commit。每次成功写入都会在仓库内 stage 并提交，使记忆库获得版本历史、回滚与逐次写入审计能力，且**不需要修改** `dsh-tool-memory-filesystem`。提交限定在配置的 id 前缀内（默认 `shared/` 与 `agents/`），因此公共知识与各 agent 命名空间都有版本历史——命名空间是防写碰撞边界而非隐私边界，因为每个 agent 都能读整个 vault。本插件不注册任何工具，并要求 `PATH` 上存在 `git` 可执行文件。
 
 ## 目录
 
@@ -41,7 +41,7 @@ kind: "package-reference"
 | `toolNames` | `string[]` | `['wiki_write']` | 成功派发后需要提交的工具名列表。 |
 | `idArgument` | `string` | `'id'` | 携带仓库相对笔记 id 的参数名。 |
 | `vaultRoot` | `string` | `''` → `<session cwd>/.dsh/memory/` | git 工作树；与记忆工具相同的按调用解析规则。 |
-| `prefixes` | `string[]` | `['shared/']` | 仅此前缀下的 id 会被提交；`[]` 表示提交所有写入。 |
+| `prefixes` | `string[]` | `['shared/', 'agents/']` | 仅此前缀下的 id 会被提交；`[]` 表示提交所有写入。 |
 | `nestedRepo` | `'init' \| 'inherit' \| 'own'` | `'init'` | `init`：vault 拥有自己的 `.git`，不并入外层仓库；`inherit`：并入最近的外层仓库（找不到时才 init）；`own`：要求 `<vault>/.git` 已存在，否则报错。 |
 | `autoInit` | `boolean` | `true` | 在所选 `nestedRepo` 模式允许时执行 `git init`。 |
 | `authorName` / `authorEmail` | `string` | `dsh-memory-git` / `dsh-memory-git@localhost` | 经 `git -c` 传入的提交身份。 |

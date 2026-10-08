@@ -14,8 +14,8 @@
  *   - queue keys its cross-process lock by the id scope already rewrote, so two
  *     agents writing the same private id never contend for one lock,
  *   - queue releases its lock when the filesystem write finishes,
- *   - git commits the `shared/` write that survived scope and never the
- *     `agents/<key>/` namespace scope created,
+ *   - git commits both the `shared/` write that survived scope and the
+ *     `agents/<key>/` namespace write scope created,
  *   - every row resolves the same default vault from one session workspace.
  *
  * The lane test fails if scope stops namespacing private writes (or if queue
@@ -213,7 +213,7 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     expect(await heldLocks(vault)).toEqual([])
   })
 
-  it('scopes private ids per agent while git commits only the shared prefix', async () => {
+  it('scopes private ids per agent while git commits both prefixes', async () => {
     const workspace = await temp('dsh-chain-ws-')
     const ctx = await boot()
     const vault = vaultOf(workspace)
@@ -233,7 +233,10 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
 
     const log = await gitLog(vault)
     expect(log).toContain('wiki_write: shared/team.md')
-    expect(log).not.toContain('agents/agent-1/notes/private.md')
+    // agents/ is write-isolated for collision avoidance, not privacy — every
+    // agent still reads the whole vault — so the namespace write is versioned
+    // for history and rollback exactly like a shared write.
+    expect(log).toContain('wiki_write: agents/agent-1/notes/private.md')
   })
 
   it('keys the cross-process lock lane by the scoped id, so two agents never contend', async () => {
