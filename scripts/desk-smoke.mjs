@@ -4,7 +4,8 @@
  *
  * Extracts the `dsh` CLI from the installed desk app.asar, creates a temporary
  * profile, installs the Bundle, and verifies `--dump-config` contains the
- * expected plugin ids.
+ * plugin ids that Bundle's own patch enables: a local Bundle path supplies its
+ * patch, a registry spec needs `--patch` to name one.
  *
  * macOS is fully supported and tested. Windows paths can be supplied via the
  * DSH_DESK_NODE, DSH_DESK_NODE_BIN, and DSH_DESK_PNPM environment variables.
@@ -15,10 +16,17 @@
  *     --bundle "/Users/user/Dev/github/jacklika-agent-plugins-repo/packages/memory" \
  *     --profile desk-smoke
  *
+ * Example (adapter bundle):
+ *   node scripts/desk-smoke.mjs \
+ *     --desk-app "/Applications/DeepSeek Harness.app" \
+ *     --bundle "/Users/user/Dev/github/jacklika-agent-plugins-repo/packages/devin-bridge" \
+ *     --profile desk-smoke-devin
+ *
  * Example (npm bundle):
  *   node scripts/desk-smoke.mjs \
  *     --desk-app "/Applications/DeepSeek Harness.app" \
  *     --bundle "@jacklika/dsh-memory@0.1.7-rc.10" \
+ *     --patch "/Users/user/Dev/github/jacklika-agent-plugins-repo/packages/memory/cordis.patch.yml" \
  *     --profile desk-smoke
  */
 
@@ -42,6 +50,7 @@ function flag(name) {
 
 const deskApp = arg('--desk-app', process.env.DSH_DESK_APP) ?? defaultDeskApp()
 const bundleSpec = arg('--bundle', process.env.DSH_BUNDLE_SPEC) ?? defaultBundlePath()
+const patchSpec = arg('--patch', process.env.DSH_PATCH)
 const profileName = arg('--profile', process.env.DSH_PROFILE_NAME) ?? 'desk-smoke'
 const keep = flag('--keep') || process.env.DSH_KEEP_TEMP === '1'
 
@@ -56,19 +65,35 @@ function defaultBundlePath() {
   return join(root, 'packages', 'memory')
 }
 
-function patchRoot() {
-  return resolve(import.meta.dirname, '..')
+/**
+ * Locate the patch whose insert rows define the expected plugin ids. A local
+ * Bundle directory carries its own patch; a registry spec cannot be inspected
+ * before installation, so it must be named with `--patch`.
+ */
+async function resolvePatchPath() {
+  if (patchSpec !== undefined) return resolve(patchSpec)
+  const candidate = join(resolve(bundleSpec), 'cordis.patch.yml')
+  try {
+    await readFile(candidate, 'utf8')
+  } catch {
+    fail(`--bundle ${bundleSpec} is not a local Bundle directory; pass --patch <cordis.patch.yml>`)
+  }
+  return candidate
 }
 
 /**
- * Read the Bundle patch and return the ordered list of enabled plugin ids it
- * inserts. Keeps verification scripts in sync with the patch so a newly-added
- * row cannot silently disappear from the strongest end-to-end checks.
+ * Read a Bundle patch and return the plugin ids it inserts, in patch order.
+ * `enabled` drops rows marked `disabled: true`; `all` keeps them, because a
+ * disabled row must still reach the effective config so the profile layer can
+ * re-enable it. Reading the ids from the patch under test keeps this script in
+ * sync with every Bundle, so a newly-added row cannot silently disappear from
+ * the strongest end-to-end check.
  */
-async function expectedEnabledPluginIds(patchPath) {
+async function patchPluginIds(patchPath) {
   const text = await readFile(patchPath, 'utf8')
   const lines = text.split(/\r?\n/)
-  const ids = []
+  const enabled = []
+  const all = []
   let inInsert = false
   let insertIndent = -1
   for (let i = 0; i < lines.length; i += 1) {
@@ -99,10 +124,11 @@ async function expectedEnabledPluginIds(patchPath) {
           break
         }
       }
-      if (!disabled) ids.push(id)
+      all.push(id)
+      if (!disabled) enabled.push(id)
     }
   }
-  return ids
+  return { enabled, all }
 }
 
 function fail(message) {
@@ -221,19 +247,18 @@ try {
 
   // Verify dump-config.
   const dumped = dshRunner(['--profile', profileName, '--dump-config'])
-  const expectedIds = await expectedEnabledPluginIds(join(patchRoot(), 'packages', 'memory', 'cordis.patch.yml'))
-  for (const id of expectedIds) {
+  const { enabled, all } = await patchPluginIds(await resolvePatchPath())
+  for (const id of all) {
     if (!dumped.includes(`id: ${id}`)) fail(`dump-config missing ${id}`)
   }
   // The patch order is part of the waterfall contract; verify it is preserved.
-  const positions = expectedIds.map(id => dumped.indexOf(`id: ${id}`))
+  const positions = enabled.map(id => dumped.indexOf(`id: ${id}`))
   for (let i = 1; i < positions.length; i += 1) {
-    if (positions[i] <= positions[i - 1]) fail(`dump-config order wrong for ${expectedIds[i]}`)
+    if (positions[i] <= positions[i - 1]) fail(`dump-config order wrong for ${enabled[i]}`)
   }
-  if (!dumped.includes('id: tool-memory-vector')) fail('dump-config missing tool-memory-vector')
   if (dumped.toLowerCase().includes('incompatible')) fail('compatibility warning found in dump-config')
 
-  process.stdout.write(`desk smoke test passed on ${process.platform}\n`)
+  process.stdout.write(`desk smoke test passed on ${process.platform} for ${bundleSpec}\n`)
 } finally {
   if (!keep) {
     await rm(scratch, { recursive: true, force: true })
