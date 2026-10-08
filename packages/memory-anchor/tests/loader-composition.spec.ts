@@ -230,9 +230,10 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
     emitSessionEvent(ctx, session, 'assistant/message', {
       turn: 3, step: 1, message: { content: [{ type: 'text', text: 'Answer recorded.' }] },
     })
-    // The feed may wrap the reason in an object; the note must render the
-    // string, never `[object Object]`.
-    emitSessionEvent(ctx, session, 'turn/end', { turn: 3, reason: { reason: 'completed' } })
+    // The feed carries the reason as a `kind`-discriminated object (the host
+    // reads `reason.kind`); the note must render that kind, never
+    // `[object Object]`.
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 3, reason: { kind: 'completed' } })
     await flush()
 
     expect(writeCalls).toHaveLength(1)

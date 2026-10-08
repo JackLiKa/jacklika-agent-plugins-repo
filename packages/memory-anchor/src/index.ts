@@ -284,15 +284,16 @@ function sessionNoteId(session: unknown): string {
 }
 
 /**
- * Normalize the `turn/end` reason: the feed may carry it as a bare string or
- * wrapped in an object, and interpolating the object renders `[object Object]`.
+ * Normalize the `turn/end` reason: the feed carries it as a bare string or as
+ * an object discriminated by `kind` (the host itself reads `reason.kind`), and
+ * interpolating the object renders `[object Object]`.
  * @param reason - the raw `data.reason` field.
- * @returns the reason string.
+ * @returns the reason kind, or `unknown` for an unrecognized shape.
  */
 function turnEndReason(reason: unknown): string {
   if (typeof reason === 'string') return reason
-  const nested = (reason as { reason?: unknown } | undefined)?.reason
-  return typeof nested === 'string' ? nested : 'unknown'
+  const kind = (reason as { kind?: unknown } | undefined)?.kind
+  return typeof kind === 'string' ? kind : 'unknown'
 }
 
 /**
