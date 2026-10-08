@@ -333,6 +333,39 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(note.frontmatter.tags).toEqual(['llm', 'architecture'])
   })
 
+  it('stamps created on a new note, updated on append, and skips the time header for headed content', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    // New note whose content opens with its own heading: frontmatter gains
+    // `created`, and no bare `## <time>` header is inserted above it.
+    const create = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('create-headed'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/headed.md', content: '# Headed\n\nFirst body.' },
+    })
+    expect(create.isError).toBe(false)
+    let raw = await readFile(join(vault, 'concepts', 'headed.md'), 'utf8')
+    expect(raw).toMatch(/^---\n[\s\S]*created: '?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
+    expect(raw).not.toMatch(/## \d{4}-\d{2}-\d{2}T/)
+    expect(raw).toContain('# Headed\n\nFirst body.')
+
+    // A later append refreshes `updated` while `created` stays put, and plain
+    // text still earns the timestamped section header curators rely on.
+    const append = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('append-plain'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/headed.md', content: 'Plain tail.' },
+    })
+    expect(append.isError).toBe(false)
+    raw = await readFile(join(vault, 'concepts', 'headed.md'), 'utf8')
+    expect(raw).toMatch(/created: '?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
+    expect(raw).toMatch(/updated: '?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
+    expect(raw).toMatch(/## \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00\n\nPlain tail\./)
+  })
+
   it('fails wiki_write with a stale baseVersion instead of silently overwriting', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)
@@ -581,7 +614,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     const vault = await mkdtemp(join(tmpdir(), 'dsh-memory-vault-norm-'))
     await writeFile(
       join(vault, 'a.md'),
-      '---\ncreated: \'2026-10-06T08:18:03.391Z\'\nupdated: not-a-date\n---\n\n# A\n',
+      '---\ncreated: \'2026-10-06T08:18:03.391Z\'\ncustom: not-a-date\n---\n\n# A\n',
     )
     const ctx = await boot(vault)
     const result = await ctx.tools.execute({
@@ -593,6 +626,8 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     if (result.isError) throw new Error('expected wiki_write success')
     const text = await readFile(join(vault, 'a.md'), 'utf8')
     expect(text).toContain('2026-10-06T16:18:03+08:00')
+    // `updated` is managed: every append stamps the current +08:00 time.
+    expect(text).toMatch(/updated: '?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
     expect(text).toContain('not-a-date')
     expect(text).toContain('appended.')
   })

@@ -784,11 +784,22 @@ export function apply(ctx: Context, config: Config): void {
       } else {
         const { frontmatter, body } = splitFrontmatter(existing ?? '')
         normalizeNoteTimestamps(frontmatter)
+        const timestamp = formatBeijingTime(new Date())
+        // Track note lifetime the way memory_capture does: `created` on the
+        // first write, `updated` on every append thereafter.
+        if (existing === undefined) {
+          frontmatter.created ??= timestamp
+        } else {
+          frontmatter.updated = timestamp
+        }
         const frontmatterText = Object.keys(frontmatter).length > 0
           ? `---\n${yaml.dump(frontmatter).trim()}\n---\n\n`
           : ''
-        const timestamp = formatBeijingTime(new Date())
-        finalBody = `${frontmatterText}${body}\n\n## ${timestamp}\n\n${args.content}\n`
+        // Content that opens with its own heading supplies the section
+        // header, so a bare `## <time>` above it would duplicate it.
+        const header = args.content.trimStart().startsWith('#') ? '' : `## ${timestamp}\n\n`
+        const base = `${frontmatterText}${body}`.replace(/\s+$/, '')
+        finalBody = base === '' ? `${header}${args.content}\n` : `${base}\n\n${header}${args.content}\n`
       }
       exec.signal.throwIfAborted()
       await writeAtomic(absolutePath, finalBody)
