@@ -212,7 +212,7 @@ export function apply(ctx: Context, config: Config): void {
       } else if (event.type === 'user/message' && activity.userExcerpt === '') {
         activity.userExcerpt = messageText(data, resolved.excerptChars)
       } else if (event.type === 'turn/end') {
-        void captureTurn(ctx, resolved, session, activity, String(data.reason ?? 'unknown'))
+        void captureTurn(ctx, resolved, session, activity, turnEndReason(data.reason))
       }
     })
   }
@@ -281,6 +281,18 @@ function sessionNoteId(session: unknown): string {
   const raw = (session as { id?: unknown } | undefined)?.id
   const safe = String(raw ?? '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
   return safe === '' ? 'unknown' : safe
+}
+
+/**
+ * Normalize the `turn/end` reason: the feed may carry it as a bare string or
+ * wrapped in an object, and interpolating the object renders `[object Object]`.
+ * @param reason - the raw `data.reason` field.
+ * @returns the reason string.
+ */
+function turnEndReason(reason: unknown): string {
+  if (typeof reason === 'string') return reason
+  const nested = (reason as { reason?: unknown } | undefined)?.reason
+  return typeof nested === 'string' ? nested : 'unknown'
 }
 
 /**
