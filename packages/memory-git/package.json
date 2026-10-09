@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-git",
   "description": "Commits successful memory-tool writes to git through the tools/execute waterfall — opt-in version history, rollback, and audit for the vault.",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "publishConfig": {
     "access": "public"
   },

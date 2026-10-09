@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-tool-memory-graph",
   "description": "Model-facing link-graph tool over a Markdown memory vault: returns note nodes and [[link]] edges, or the subgraph reachable from one note.",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "publishConfig": {
     "access": "public"
   },
