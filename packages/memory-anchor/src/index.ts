@@ -212,6 +212,9 @@ export function apply(ctx: Context, config: Config): void {
       } else if (event.type === 'user/message' && activity.userExcerpt === '') {
         activity.userExcerpt = messageText(data, resolved.excerptChars)
       } else if (event.type === 'turn/end') {
+        // Retire the turn before dispatching: a duplicated `turn/end` — a host
+        // retry or a replayed feed — must not append the same summary twice.
+        turns.delete(session)
         void captureTurn(ctx, resolved, session, activity, turnEndReason(data.reason))
       }
     })

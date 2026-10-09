@@ -302,6 +302,44 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
     expect(writeCalls).toHaveLength(0)
   })
 
+  it('captures a duplicated turn/end only once', async () => {
+    // A host retry or a replayed feed can publish the same `turn/end` twice;
+    // the appended section would otherwise land in the note twice.
+    const ctx = await boot('', true)
+    const session = { id: 'dup' }
+    liveAgent('dup')
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 7 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 7, step: 1, name: 'wiki_search' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 7, step: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 7, reason: 'completed' })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 7, reason: 'completed' })
+    await flush()
+
+    expect(writeCalls).toHaveLength(1)
+    expect(writeCalls[0].content).toContain('turn 7 (completed)')
+  })
+
+  it('captures the next turn normally after a duplicated turn/end was dropped', async () => {
+    const ctx = await boot('', true)
+    const session = { id: 'dup-next' }
+    liveAgent('dup-next')
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 1 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 1, step: 1, name: 'first_turn' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 1, step: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 1, reason: 'completed' })
+    emitSessionEvent(ctx, session, 'turn/start', { turn: 2 })
+    emitSessionEvent(ctx, session, 'tool/call', { turn: 2, step: 1, name: 'second_turn' })
+    emitSessionEvent(ctx, session, 'tool/result', { turn: 2, step: 1 })
+    emitSessionEvent(ctx, session, 'turn/end', { turn: 2, reason: 'completed' })
+    await flush()
+
+    expect(writeCalls).toHaveLength(2)
+    expect(writeCalls[0].content).toContain('first_turn')
+    expect(writeCalls[1].content).toContain('turn 2 (completed)')
+    expect(writeCalls[1].content).not.toContain('first_turn')
+  })
+
   it('keeps per-session activity isolated', async () => {
     const ctx = await boot('', true)
     const a = { id: 'a' }

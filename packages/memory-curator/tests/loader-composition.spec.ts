@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -26,7 +26,7 @@ function resultText(result: { content: { type: string; text?: string }[] }): str
   return result.content.filter(block => block.type === 'text').map(block => block.text).join('')
 }
 
-async function boot(vaultRoot: string): Promise<Context> {
+async function boot(vaultRoot: string, approval?: { request: () => Promise<string> }): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-curator-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
@@ -41,6 +41,9 @@ async function boot(vaultRoot: string): Promise<Context> {
 
   const ctx = new Context()
   context = ctx
+  // Stand in for the Harness approval seam: an overwrite of an existing note is
+  // a detected conflict, so reaching that write path needs an approver.
+  if (approval !== undefined) ctx.provide('approval', approval)
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
@@ -228,6 +231,65 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect((JSON.parse(resultText(second)) as { id: string }).id).toBe(firstId)
     expect((await readdir(join(vault, 'shared', 'notes'))).map(name => name.normalize('NFC')))
       .toEqual(['caf\u00E9-layout.md'])
+  })
+
+  it('keeps unknown frontmatter fields and the original created when overwriting a note', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'deploy-runbook.md'), [
+      '---',
+      'title: Deploy runbook',
+      'tags:',
+      '  - stale',
+      'created: 2020-01-02T03:04:05+08:00',
+      'owner: agent-7',
+      'review: quarterly',
+      '---',
+      '',
+      '# Deploy runbook',
+      '',
+      'Old procedure.',
+      '',
+    ].join('\n'))
+    // Overwriting a note the search finds is a conflict, so the write path is
+    // only reachable through an approved request.
+    const ctx = await boot(vault, { request: async () => 'allowed-once' })
+
+    const result = await capture(ctx, 'ow1', 'Deploy runbook', 'Restart the queue before the web tier.', 'agent-1', vault, {
+      mode: 'overwrite',
+      tags: ['deploy'],
+    })
+    expect(result.isError).toBe(false)
+    const out = JSON.parse(resultText(result)) as { written: boolean; id: string; mode: string; conflict: boolean }
+    expect(out).toMatchObject({ written: true, id: 'shared/notes/deploy-runbook.md', mode: 'overwrite', conflict: true })
+
+    const read = await readNote(ctx, 'ow1-read', out.id, 'agent-1', vault)
+    expect(read.isError).toBe(false)
+    const note = JSON.parse(resultText(read)) as { frontmatter: Record<string, unknown>; body: string }
+    expect(note.frontmatter.owner).toBe('agent-7')
+    expect(note.frontmatter.review).toBe('quarterly')
+    expect(note.frontmatter.created).toBe('2020-01-02T03:04:05+08:00')
+    // This call owns title and tags.
+    expect(note.frontmatter.title).toBe('Deploy runbook')
+    expect(note.frontmatter.tags).toEqual(['deploy'])
+    expect(String(note.frontmatter.updated)).toMatch(/\+08:00$/)
+    expect(note.body).toContain('Restart the queue before the web tier.')
+    expect(note.body).not.toContain('Old procedure.')
+  })
+
+  it('records no updated field on a first capture', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
+    const ctx = await boot(vault)
+
+    const result = await capture(ctx, 'fresh', 'Fresh note', 'Nothing existed before.', 'agent-1', vault)
+    expect(result.isError).toBe(false)
+    const out = JSON.parse(resultText(result)) as { id: string; mode: string }
+    expect(out.mode).toBe('overwrite')
+
+    const read = await readNote(ctx, 'fresh-read', out.id, 'agent-1', vault)
+    const { frontmatter } = JSON.parse(resultText(read)) as { frontmatter: Record<string, unknown> }
+    expect(frontmatter).not.toHaveProperty('updated')
+    expect(String(frontmatter.created)).toMatch(/\+08:00$/)
   })
 
   it('withdraws its tools when the Loader fiber unloads', async () => {

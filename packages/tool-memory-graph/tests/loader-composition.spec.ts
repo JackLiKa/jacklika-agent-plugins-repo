@@ -30,7 +30,7 @@ function resultText(result: { content: { type: string; text?: string }[] }): str
  * @param vaultRoot - absolute path to the vault root.
  * @returns the booted context.
  */
-async function boot(vaultRoot: string): Promise<Context> {
+async function boot(vaultRoot: string, extraConfig: string[] = []): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-graph-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
@@ -39,6 +39,7 @@ async function boot(vaultRoot: string): Promise<Context> {
     "- name: '@jacklika/dsh-tool-memory-graph'",
     '  config:',
     `    vaultRoot: ${vaultRoot}`,
+    ...extraConfig,
     '',
   ].join('\n'))
 
@@ -72,6 +73,37 @@ async function makeVault(): Promise<string> {
   await writeFile(join(vaultRoot, 'embedding.md'), '# Embedding\n\nAn embedding is a dense vector. See also [[concepts/RAG]].\n')
   await writeFile(join(vaultRoot, 'island.md'), '# Island\n\nNo links here.\n')
   return vaultRoot
+}
+
+/** The parsed `wiki_graph` payload. */
+interface Graph {
+  nodes: { id: string; title: string }[]
+  edges: { from: string; to: string }[]
+  truncated: boolean
+}
+
+async function graphAll(ctx: Context, callId: string): Promise<Graph> {
+  const result = await ctx.tools.execute({
+    signal: new AbortController().signal,
+    callId: ToolCallId(callId),
+    name: 'wiki_graph',
+    arguments: {},
+  })
+  expect(result.isError).toBe(false)
+  if (result.isError) throw new Error('expected wiki_graph success')
+  return JSON.parse(resultText(result)) as Graph
+}
+
+async function graphFrom(ctx: Context, callId: string, id: string, depth: number): Promise<Graph> {
+  const result = await ctx.tools.execute({
+    signal: new AbortController().signal,
+    callId: ToolCallId(callId),
+    name: 'wiki_graph',
+    arguments: { id, depth },
+  })
+  expect(result.isError).toBe(false)
+  if (result.isError) throw new Error('expected wiki_graph success')
+  return JSON.parse(resultText(result)) as Graph
 }
 
 describe('tool-memory-graph real Loader composition through cordis.yml', () => {
@@ -133,5 +165,40 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     expect(graph.nodes.map(n => n.id).sort()).toEqual(['concepts/RAG.md', 'embedding.md'])
     expect(graph.nodes.some(n => n.id === 'island.md')).toBe(false)
     expect(graph.edges).toContainEqual({ from: 'embedding.md', to: 'concepts/RAG.md' })
+  })
+
+  it('truncates the vault graph to the lowest ids, not to readdir order', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-graph-vault-'))
+    // `listNotePaths` walks depth-first, so it yields `notes/*` before the root
+    // file `notes-x.md` even though `-` sorts before `/`: a cap over traversal
+    // order keeps a different subset than a cap over id order.
+    await mkdir(join(vault, 'notes'))
+    await writeFile(join(vault, 'notes', 'zzz.md'), '# Zzz\n')
+    await writeFile(join(vault, 'notes', 'mmm.md'), '# Mmm\n')
+    await writeFile(join(vault, 'notes-x.md'), '# Notes X\n')
+    const ctx = await boot(vault, ['    maxNodes: 2'])
+
+    const graph = await graphAll(ctx, 'graph-cap')
+    expect(graph.truncated).toBe(true)
+    expect(graph.nodes.map(node => node.id)).toEqual(['notes-x.md', 'notes/mmm.md'])
+  })
+
+  it('truncates a subgraph by distance from the center, keeping the center and its nearest notes', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-graph-vault-'))
+    await writeFile(join(vault, 'center.md'), '# Center\n\nSee [[zeta]].\n')
+    await writeFile(join(vault, 'zeta.md'), '# Zeta\n\nSee [[alpha]].\n')
+    await writeFile(join(vault, 'alpha.md'), '# Alpha\n')
+    const ctx = await boot(vault, ['    maxNodes: 2'])
+
+    const graph = await graphFrom(ctx, 'graph-sub-cap', 'center.md', 2)
+    expect(graph.truncated).toBe(true)
+    // The two-hop note sorts first by id, but the cap keeps the neighborhood:
+    // dropping the direct link target would leave the center unconnected.
+    expect(graph.nodes.map(node => node.id)).toEqual(['center.md', 'zeta.md'])
+    expect(graph.edges).toEqual([{ from: 'center.md', to: 'zeta.md' }])
+    for (const edge of graph.edges) {
+      expect(graph.nodes.some(node => node.id === edge.from)).toBe(true)
+      expect(graph.nodes.some(node => node.id === edge.to)).toBe(true)
+    }
   })
 })

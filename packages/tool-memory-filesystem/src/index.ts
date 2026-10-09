@@ -23,6 +23,13 @@ import type { IndexedNote, Note } from './types.ts'
 export type * from './types.ts'
 
 /**
+ * Locale-independent note-id ordering, re-exported so sibling packages that
+ * truncate or tie-break id lists sort by the same rule instead of a copy that
+ * can drift.
+ */
+export { codeUnitCompare }
+
+/**
  * Compute a vault-relative note id from an absolute path. The result always
  * uses POSIX separators so note ids are stable across Windows, macOS, and Linux.
  */

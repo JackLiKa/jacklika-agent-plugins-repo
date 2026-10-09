@@ -12,7 +12,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
-  containedPathReal, createLinkResolver, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter, vaultRelativeId,
+  codeUnitCompare, containedPathReal, createLinkResolver, extractLinks, listNotePaths, resolveLinkTarget, resolveMemoryVaultRoot, splitFrontmatter, vaultRelativeId,
 } from '@jacklika/dsh-tool-memory-filesystem'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -103,7 +103,9 @@ async function buildGraph(root: string, resolved: ResolvedConfig): Promise<Memor
   const linkResolver = createLinkResolver(entries.map(([id]) => id))
 
   const truncated = entries.length > resolved.maxNodes
-  const capped = entries.slice(0, resolved.maxNodes)
+  // `listNotePaths` follows readdir order, so the node cap would otherwise keep
+  // a filesystem-dependent subset of the vault.
+  const capped = [...entries].sort((a, b) => codeUnitCompare(a[0], b[0])).slice(0, resolved.maxNodes)
   const nodes: GraphNode[] = []
   for (const [id, path] of capped) nodes.push({ id, title: await noteTitle(path, id) })
 
@@ -142,6 +144,7 @@ async function buildSubgraph(
       .map(path => vaultRelativeId(root, path)),
   )
   const visited = new Map<string, string>([[vaultRelativeId(root, startPath), startPath]])
+  const levels = new Map<string, number>([[vaultRelativeId(root, startPath), 0]])
   let frontier = [startPath]
 
   for (let level = 0; level < depth && frontier.length > 0; level += 1) {
@@ -154,6 +157,7 @@ async function buildSubgraph(
         const toId = vaultRelativeId(root, targetPath)
         if (!visited.has(toId)) {
           visited.set(toId, targetPath)
+          levels.set(toId, level + 1)
           next.push(targetPath)
         }
       }
@@ -162,7 +166,12 @@ async function buildSubgraph(
   }
 
   const truncated = visited.size > resolved.maxNodes
-  const ids = [...visited.keys()].slice(0, resolved.maxNodes)
+  // Truncate by distance from the center, then by id: the neighborhood closest
+  // to the requested note survives the cap, and which notes those are does not
+  // depend on readdir or link order.
+  const ids = [...visited.keys()]
+    .sort((a, b) => (levels.get(a) ?? 0) - (levels.get(b) ?? 0) || codeUnitCompare(a, b))
+    .slice(0, resolved.maxNodes)
   const idSet = new Set(ids)
   const edges: GraphEdge[] = []
   const nodes: GraphNode[] = []

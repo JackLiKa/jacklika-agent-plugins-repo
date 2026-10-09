@@ -153,6 +153,43 @@ function dedupeHits(hits: SearchHit[]): SearchHit[] {
 }
 
 /**
+ * Frontmatter for a capture that overwrites `id`. `wiki_write` overwrite
+ * replaces the whole file, so the note's existing fields have to be carried
+ * over here or an update silently drops whatever another writer recorded and
+ * resets `created` to the update time.
+ * @param ctx - registrant context carrying the tool registry.
+ * @param exec - the run context the nested read is dispatched under.
+ * @param id - vault-relative note id about to be overwritten.
+ * @param title - title from this capture; it wins over any stored one.
+ * @param tags - tags from this capture; they win over any stored ones.
+ * @param now - Beijing-time timestamp used for `created`/`updated`.
+ * @returns the merged frontmatter to serialize.
+ */
+async function overwriteFrontmatter(
+  ctx: Context,
+  exec: ToolRunContext,
+  id: string,
+  title: string,
+  tags: string[],
+  now: string,
+): Promise<Record<string, unknown>> {
+  let existing: Record<string, unknown> | undefined
+  try {
+    const note = await callTool<{ frontmatter?: unknown }>(ctx, exec, 'wiki_read', { id })
+    if (note !== null && typeof note === 'object' && note.frontmatter !== null && typeof note.frontmatter === 'object') {
+      existing = note.frontmatter as Record<string, unknown>
+    }
+  } catch {
+    // No readable note at this id: the ordinary first capture of a new note.
+  }
+  const frontmatter: Record<string, unknown> = { ...existing, title, tags }
+  const created = existing?.created
+  frontmatter.created = typeof created === 'string' && created !== '' ? created : now
+  if (existing !== undefined) frontmatter.updated = now
+  return frontmatter
+}
+
+/**
  * Register `memory_recall` and `memory_capture` on the tool registry.
  * @param ctx - registrant context carrying the tool registry.
  * @param config - deployment's explicit curator configuration.
@@ -297,16 +334,13 @@ export function apply(ctx: Context, config: Config): void {
       const now = formatBeijingTime(new Date())
       const detailsText = args.details ? `\n\n## Details\n\n${args.details}` : ''
       const appendContent = `${args.summary}${detailsText}\n`
-      const frontmatter = {
-        title: args.title,
-        tags,
-        created: now,
-      }
-      const newNoteContent = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
 
       const appending = conflictExists && mode === 'append'
-      const content = appending ? appendContent : newNoteContent
       const writeMode: 'append' | 'overwrite' = appending ? 'append' : 'overwrite'
+      const frontmatter = appending ? undefined : await overwriteFrontmatter(ctx, exec, finalId, args.title, tags, now)
+      const content = appending
+        ? appendContent
+        : `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
 
       await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: finalId,

@@ -53,7 +53,7 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-插件安装一个 `ctx.on('tools/execute', …)` waterfall 监听器：先执行 `next()`，仅在成功时提交。仓库选择遵循 `nestedRepo`：`init`（默认）直接检查 `<vault>/.git` 并在 `autoInit` 下创建，使 git 管理工作区内的 vault 不会把提交泄漏进外层项目；`inherit` 用 `rev-parse --git-dir` 向上解析并入最近外层仓库；`own` 在 `<vault>/.git` 缺失时报错。提交序列为 `status --porcelain -- <id>`（干净则跳过，避免空提交）→ `add -- <id>` → `commit -m "<commitPrefix>: <id>" -- <id>`，pathspec 把记录限定在被写笔记内。所有 git 调用经一条进程内链串行，且只对被占用的 `index.lock` 重试。提交失败会让该次派发返回错误，尽管笔记已写入——分叉被显式暴露而非隐藏。
+插件安装一个 `ctx.on('tools/execute', …)` waterfall 监听器：先执行 `next()`，仅在成功时提交。仓库选择遵循 `nestedRepo`：`init`（默认）直接检查 `<vault>/.git` 并在 `autoInit` 下创建，使 git 管理工作区内的 vault 不会把提交泄漏进外层项目；`inherit` 用 `rev-parse --git-dir` 向上解析并入最近外层仓库；`own` 在 `<vault>/.git` 缺失时报错。提交序列为 `status --porcelain -- <id>`（干净则跳过，避免空提交）→ `add -- <id>` → `commit -m "<commitPrefix>: <id>" -- <id>`，pathspec 把记录限定在被写笔记内。所有 git 调用经一条进程内链串行，且只对被占用的 `index.lock` 重试。提交失败会让该次派发返回错误，尽管笔记已写入——分叉被显式暴露而非隐藏；错误信息会指明该笔记"已写入但未提交"，并要求调用方先用 `wiki_read` 重新读取、把返回的 version 作为 `baseVersion` 传入后再写——不重新读取就重复同一次 append，会把该小节追加第二遍。
 
 -----
 

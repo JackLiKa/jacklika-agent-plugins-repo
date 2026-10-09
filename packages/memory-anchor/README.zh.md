@@ -11,6 +11,7 @@
 - 空闲回合（无工具调用、无消息）不写；
 - 未挂载 `wiki_write` 的部署不写；会话没有可派发的活 agent 时同样不写；
 - 笔记 id 经过清洗（`sess:abc/1` → `auto-capture-sess-abc-1`）；
+- 重复的 `turn/end`（宿主重试或事件流重放）只会入库一次：回合在派发摘要前就被注销；下一次 `turn/start` 照常开启新回合；
 - 写入会带着该 agent 重新走 `ctx.tools.execute`，因此 `memory-scope` 的命名空间、`memory-queue` 的串行化、`memory-git` 的自动提交都能看到它；
 - 注册表拒绝的 `wiki_write`（`mode: 'ptc'` 下插件发起的调用没有 `parent` token，会折叠成 `UNKNOWN_TOOL`）按 debug 记录，视为部署事实而非故障；其他失败记 warn，且绝不抛进会话事件流。
 

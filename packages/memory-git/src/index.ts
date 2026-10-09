@@ -163,7 +163,8 @@ async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, 
  * contention is serialized away; mounted without it, git calls serialize on an
  * in-process chain and `index.lock` errors retry briefly. A failed commit
  * fails the dispatch result even though the note was written — the divergence
- * is surfaced, not hidden.
+ * is surfaced, not hidden, and the reported error states that the note is on
+ * disk uncommitted plus how to retry without duplicating an append.
  * @param ctx - registrant context carrying the tool registry events.
  * @param config - deployment's explicit git configuration.
  */
@@ -200,7 +201,20 @@ export function apply(ctx: Context, config: Config): void {
     }
     const vault = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
     exec.signal.throwIfAborted()
-    await enqueue(() => commitWrite(vault, id, resolved, exec.signal))
+    try {
+      await enqueue(() => commitWrite(vault, id, resolved, exec.signal))
+    } catch (error) {
+      // `next()` already put the note on disk, so a commit failure leaves the
+      // vault and its history diverged. Say what state the caller is in and how
+      // to retry safely: a blind repeat of the same append duplicates it.
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `memory-git: note ${id} was written to the vault but not committed, so it is on disk outside git history. `
+        + 'Re-read it with wiki_read and pass the returned version as baseVersion before writing again; '
+        + `repeating the same append without that read duplicates the appended section. Commit failure: ${reason}`,
+        { cause: error },
+      )
+    }
     return result
   })
 }
