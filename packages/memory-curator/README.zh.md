@@ -4,7 +4,7 @@ DSH 记忆库的策展工具。本包是 `@jacklika/dsh-memory` Bundle 的成员
 
 ## 工具
 
-- `memory_recall(query)` — 在任务开始前搜索知识库中的相关笔记。
+- `memory_recall(query)` — 在任务开始前搜索知识库中的相关笔记。返回 `{ query, hits, total }`，其中 `total` 是从 `wiki_search` 透传的全库命中数，在搜索层截断结果时可能大于 `hits.length`——调用方因此能区分“这就是全部命中”与“还有更多”。
 - `memory_capture(title, summary, ...)` — 在有意义的任务结束后持久化知识，支持冲突检测与可选的用户审批。
 
 ## 笔记 id

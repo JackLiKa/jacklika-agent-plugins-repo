@@ -190,7 +190,7 @@ If you previously installed Bundle versions `0.1.7-rc.5` or older, the default v
 
 The Bundle includes `memory-curator`, which exposes two high-level tools. They register automatically, but the model will not call them on its own unless the `memory-vault` skill is mounted (see [Mount the Skill separately](#mount-the-skill-separately)).
 
-- `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context.
+- `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context. Its `total` reports every vault-wide match even when the returned hit list is capped, so the model knows when to narrow a query.
 - `memory_capture(title, summary, ...)` — Call this at the end of a significant task. It derives a stable note id from the title, checks for conflicting notes, asks for your approval if one exists, and writes the captured knowledge to the shared curated zone.
 
 `memory_capture` defaults to `scope: shared`, which lands under `shared/notes/` and is committed by `memory-git`. Use `scope: private` when the note should stay inside the current agent namespace (`agents/<key>/`).
@@ -259,7 +259,7 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 | Write a note `shared/notes/x.md` | `<workspace>/.plugins/memory/shared/notes/x.md` exists, and `git -C <vault> log --oneline` shows a `wiki_write` commit authored by `dsh-memory-git` |
 | Write a private note `daily/x.md` | Lands under `<vault>/agents/<session id>/daily/x.md` with **no** Git commit |
 | Read the note and follow its `[[links]]` | `wiki_read` returns the linked notes in `linkedNotes` |
-| Search the vault / show the link graph | `wiki_search` returns hits; `wiki_graph` returns nodes and edges |
+| Search the vault / show the link graph | `wiki_search` returns a capped hit list plus `total` (every match, capped or not); `wiki_graph` returns nodes and edges |
 
 `<vault>` defaults to `<session workspace>/.plugins/memory/`. Mount `skills/memory-vault` separately (`customSkillDirs`) or the model will not know the read-before-write and `baseVersion` conventions.
 

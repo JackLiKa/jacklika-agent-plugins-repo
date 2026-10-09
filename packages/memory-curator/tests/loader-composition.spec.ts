@@ -14,19 +14,28 @@ import * as ToolMemoryFilesystem from '@jacklika/dsh-tool-memory-filesystem'
 
 let root: string | undefined
 let context: Context | undefined
+const vaults: string[] = []
 
 afterEach(async () => {
   await context?.fiber.dispose()
   context = undefined
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
+  await Promise.all(vaults.splice(0).map(vault => rm(vault, { recursive: true, force: true })))
 })
 
 function resultText(result: { content: { type: string; text?: string }[] }): string {
   return result.content.filter(block => block.type === 'text').map(block => block.text).join('')
 }
 
-async function boot(vaultRoot: string, approval?: { request: () => Promise<string> }): Promise<Context> {
+/** A temporary vault this spec cleans up after itself. */
+async function vaultDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
+  vaults.push(dir)
+  return dir
+}
+
+async function boot(vaultRoot: string, approval?: { request: () => Promise<string> }, filesystemConfig: string[] = []): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-curator-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
@@ -36,6 +45,7 @@ async function boot(vaultRoot: string, approval?: { request: () => Promise<strin
     "- name: '@jacklika/dsh-tool-memory-filesystem'",
     '  config:',
     `    vaultRoot: ${vaultRoot}`,
+    ...filesystemConfig,
     '',
   ].join('\n'))
 
@@ -139,6 +149,26 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     const out2 = JSON.parse(resultText(r2)) as { query: string; hits: { id: string; title: string; backlinks: string[] }[]; total: number }
     expect(out2.total).toBeGreaterThan(0)
     expect(out2.hits.some(hit => hit.id === 'shared/notes/project-conventions.md')).toBe(true)
+  })
+
+  it('passes the vault-wide match count through memory_recall even when the search layer caps hits', async () => {
+    const vault = await vaultDir()
+    const notes = join(vault, 'shared', 'notes')
+    await mkdir(notes, { recursive: true })
+    for (const [index, name] of ['alpha', 'beta', 'gamma'].entries()) {
+      await writeFile(join(notes, `${name}.md`), `# ${name}\n\nCarries ${'zephyr-token '.repeat(index + 1).trim()}.\n`)
+    }
+    const ctx = await boot(vault, undefined, ['    maxSearchResults: 2'])
+
+    const result = await recall(ctx, 'recall-capped', 'zephyr-token', 'agent-1', vault)
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected memory_recall success')
+    const out = JSON.parse(resultText(result)) as { hits: { id: string }[]; total: number }
+    // Three notes match but the search layer returns two. Restating the capped
+    // length as `total` would tell the model the vault holds only what it saw,
+    // which is the under-reporting this passthrough exists to prevent.
+    expect(out.hits).toHaveLength(2)
+    expect(out.total).toBe(3)
   })
 
   it('appends to an existing note when the same title is captured again with conflictPolicy=skip', async () => {

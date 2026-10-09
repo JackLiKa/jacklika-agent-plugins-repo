@@ -53,8 +53,8 @@ kind: "package-reference"
 ### 工具
 
 - `wiki_read(id)` — 按仓库相对路径读取笔记，返回 frontmatter、正文、链接、已解析的链接笔记、内容指纹 `version`、`+08:00` 格式的文件 `mtime`，以及 `modifiedExternally` 标志（文件自本插件上次观察以来在磁盘上被改动时为 `true`，例如 Obsidian 编辑）。插件按绝对路径维护一个 256 条上限的 LRU mtime 表；自身的 `wiki_write` 会刷新记录，因此插件写入永不误报。
-- `wiki_search(query)` — 按标题、id、正文关键词搜索；查询词采用 OR 匹配，并按字段加权的 BM25 式评分排序（标题/id 命中权重最高，稀有词权重更高），另有整段短语加分与被强命中笔记链接的图增强；挂载 `wiki_semantic_search` 时两路排序经 RRF 融合。结果包含分数与反向链接数量。
-- `wiki_write(id, content, mode?, baseVersion?)` — 创建或追加笔记。追加模式保留 frontmatter 并添加时间戳标题；两种写入模式都会把 `created`/`updated` frontmatter 值归一化为 `+08:00` 秒级精度（不可解析的值原样保留）。把 `wiki_read` 返回的 `version` 作为 `baseVersion` 传入时，若笔记在读取后被其他写入方改动，写入会显式失败。
+- `wiki_search(query)` — 按标题、id、正文关键词搜索；查询词采用 OR 匹配，并按字段加权的 BM25 式评分排序（标题/id 命中权重最高，稀有词权重更高），另有整段短语加分与被强命中笔记链接的图增强；挂载 `wiki_semantic_search` 时两路排序经 RRF 融合。返回 `{ hits, total, truncated }` 分页结构：每条命中含笔记 id、标题、分数与反向链接；`total` 是 `maxSearchResults` 截断**之前**的全部命中数；`truncated` 为 `true` 表示结果被该上限截断，调用方因此能区分“结果完整”与“还有更多”，而不会误以为仓库里只有这些。
+- `wiki_write(id, content, mode?, baseVersion?)` — 创建或追加笔记。追加模式保留 frontmatter 并添加时间戳标题；两种写入模式都会把 `created`/`updated` frontmatter 值归一化为 `+08:00` 秒级精度（不可解析的值原样保留）。把 `wiki_read` 返回的 `version` 作为 `baseVersion` 传入时，若笔记在读取后被其他写入方改动，写入会显式失败。返回值为 `{ id, mode, bytes, version }`，其中 `version` 就是刚发布内容的指纹——可直接作为下一次写入的 `baseVersion`，无需再 `wiki_read` 一次即可串联乐观并发校验。
 
 ### 安全
 
@@ -87,18 +87,18 @@ Read one Markdown note from the wiki vault, optionally following Obsidian-style 
 ##### `wiki_search` 的完整描述
 
 ```markdown
-Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns matching note ids, titles, scores, and backlink counts. Use this before asking the user which note to read.
+Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns { hits, total, truncated }: each hit carries the note id, title, score, and backlinks, total counts every match before the result cap, and truncated is true when that cap cut the list. Use this before asking the user which note to read.
 ```
 
 ##### `wiki_write` 的完整描述
 
 ```markdown
-Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header.
+Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header. Returns { id, mode, bytes, version }, where version fingerprints the written content and can be passed as baseVersion on the next write without reading the note again.
 ```
 
 #### Token 影响
 
-`wiki_read` 返回请求笔记的完整正文，以及 `maxLinkDepth` 范围内所有可达链接笔记的正文。长笔记或密集链接图可能显著增加下次请求的 token 数。`wiki_search` 只返回有限的结果元数据。
+`wiki_read` 返回请求笔记的完整正文，以及 `maxLinkDepth` 范围内所有可达链接笔记的正文。长笔记或密集链接图可能显著增加下次请求的 token 数。`wiki_search` 只返回有限的结果元数据；其 `total` 会告知被上限截断而未返回的命中数量。
 
 #### KV Cache 影响
 

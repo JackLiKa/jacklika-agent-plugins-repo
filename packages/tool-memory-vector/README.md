@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tool-memory-vector` adds semantic retrieval to the Markdown memory vault as an optional companion to [`dsh-tool-memory-filesystem`](../tool-memory-filesystem/README.md). The model sees `wiki_semantic_search`, which embeds notes through a configurable OpenAI-compatible embeddings endpoint and ranks them by cosine similarity. Per-note embeddings are cached by file mtime in `.vector-index.json` under the resolved vault root, so repeated searches only re-embed changed notes. Keyword search (`wiki_search`) remains available in the filesystem package; this tool complements it and never replaces it.
+`dsh-tool-memory-vector` adds semantic retrieval to the Markdown memory vault as an optional companion to [`dsh-tool-memory-filesystem`](../tool-memory-filesystem/README.md). The model sees `wiki_semantic_search`, which embeds notes through a configurable OpenAI-compatible embeddings endpoint and ranks them by cosine similarity. Per-note embeddings are cached by file mtime in `.vector-index.json` under the resolved vault root, so repeated searches only re-embed changed notes. The cache also records a fingerprint of the cache schema, endpoint, and model, because vectors from a different embedding space are not comparable with the query vector: switching any of the three discards the whole cache and re-embeds every note instead of reusing entries whose mtime still matches. Keyword search (`wiki_search`) remains available in the filesystem package; this tool complements it and never replaces it.
 
 ## Table of Contents
 
@@ -60,7 +60,7 @@ Mount the plugin in a profile or patch file with an endpoint and model:
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The package is a single Cordis function plugin that registers `wiki_semantic_search` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper and lists notes through `listNotePaths`. `refreshIndex` drops index entries for deleted files, embeds notes whose mtime differs from the cached record (in `batchSize` batches of at most `maxCharsPerNote` characters each), and persists `.vector-index.json` only when something changed. Query embedding is requested per call; note vectors come from the cache. Scores are cosine similarities; zero-norm vectors score 0. Endpoint errors, malformed responses, and empty vectors fail the tool call loudly.
+The package is a single Cordis function plugin that registers `wiki_semantic_search` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper and lists notes through `listNotePaths`. `refreshIndex` drops index entries for deleted files, embeds notes whose mtime differs from the cached record (in `batchSize` batches of at most `maxCharsPerNote` characters each), and persists `.vector-index.json` only when something changed. The persisted file is an envelope — `{ schemaVersion, fingerprint, notes }`, with `fingerprint` the sha1 of `{ schemaVersion, endpoint, model }` — and a cache that is missing, corrupt, or written under another schema, endpoint, or model is discarded before reuse, so the next search re-embeds the vault under the current embedding space. Query embedding is requested per call; note vectors come from the cache. Scores are cosine similarities; zero-norm vectors score 0. Endpoint errors, malformed responses, and empty vectors fail the tool call loudly.
 
 -----
 
@@ -92,8 +92,8 @@ Independent. The plugin only supplies tool results; it does not change the reque
 <a id="known-limitations-and-deferred-work"></a>
 
 - **External endpoint required** — there is no local embedding fallback; the tool fails when the endpoint is unreachable.
-- **Index is per vault, per plugin config** — `.vector-index.json` lives inside the vault; different endpoints or models overwrite each other's entries without invalidation.
-- **No atomic index write** — the JSON index is written directly; a crash mid-write can corrupt the cache (next call re-embeds everything).
+- **One cache slot per vault** — `.vector-index.json` lives inside the vault and holds a single fingerprint, so two deployments that share a vault but configure different models or endpoints invalidate each other on every switch and re-embed the vault each time. The cache is correct in that situation, just wasteful.
+- **Re-embed cost on switch** — changing `endpoint`, `model`, or the cache schema version throws away every cached vector by design; the first search afterwards pays for a full re-embed.
 - **Note bodies are not returned** — consumers must call `wiki_read` for content; a combined retrieval tool is deferred.
 
 <a id="dev-note"></a>

@@ -63,11 +63,19 @@ interface SearchHit {
   backlinks: string[]
 }
 
+/** The `wiki_search` envelope: one page of hits plus the pre-cap match count. */
+interface SearchPage {
+  hits: SearchHit[]
+  total: number
+  truncated: boolean
+}
+
 /** Result of a nested tool call after parsing its JSON text content. */
 interface WriteResult {
   id: string
   mode: string
   bytes: number
+  version: string
 }
 
 /**
@@ -206,7 +214,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_recall',
-    description: 'Search the memory vault for prior notes related to the current task or topic. Call this at the start of a development task to avoid asking the user to repeat context that is already captured. Query terms are OR-matched and ranked by field-weighted relevance, so partial matches still return. Returns matching note ids, titles, scores, and backlink counts.',
+    description: 'Search the memory vault for prior notes related to the current task or topic. Call this at the start of a development task to avoid asking the user to repeat context that is already captured. Query terms are OR-matched and ranked by field-weighted relevance, so partial matches still return. Returns the matching note ids, titles, scores, and backlinks, plus total — how many notes matched before the result cap, so a total above the returned hit count means the list was truncated.',
     parameters: {
       query: {
         type: 'string',
@@ -219,11 +227,13 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const hits = await callTool<SearchHit[]>(ctx, exec, 'wiki_search', { query: args.query })
+      const search = await callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.query })
       return {
         query: args.query,
-        hits: hits.slice(0, 20),
-        total: hits.length,
+        hits: search.hits.slice(0, 20),
+        // Forward the ranking's own count: `hits` is already capped upstream, so
+        // its length would understate how much actually matched.
+        total: search.total,
       } as unknown as JsonValue
     },
   })))
@@ -282,12 +292,12 @@ export function apply(ctx: Context, config: Config): void {
       const mode = args.mode ?? 'append'
       const tags = Array.isArray(args.tags) ? args.tags.map(String) : []
 
-      const [titleHits, idHits] = await Promise.all([
-        callTool<SearchHit[]>(ctx, exec, 'wiki_search', { query: args.title }),
-        callTool<SearchHit[]>(ctx, exec, 'wiki_search', { query: targetId }),
+      const [titleSearch, idSearch] = await Promise.all([
+        callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.title }),
+        callTool<SearchPage>(ctx, exec, 'wiki_search', { query: targetId }),
       ])
 
-      const conflicts = dedupeHits(findConflicts(targetId, args.title, [...titleHits, ...idHits]))
+      const conflicts = dedupeHits(findConflicts(targetId, args.title, [...titleSearch.hits, ...idSearch.hits]))
       const conflictExists = conflicts.length > 0
       const finalId = conflicts[0]?.id ?? targetId
 

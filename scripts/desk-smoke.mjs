@@ -35,6 +35,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, resolve, relative, sep } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
+import { assertProfileResolution } from './profile-resolution.mjs'
 
 const argv = process.argv.slice(2)
 
@@ -257,6 +258,18 @@ try {
     if (positions[i] <= positions[i - 1]) fail(`dump-config order wrong for ${enabled[i]}`)
   }
   if (dumped.toLowerCase().includes('incompatible')) fail('compatibility warning found in dump-config')
+
+  // dump-config proves the plugins registered; this proves which copy of each
+  // package they registered from, and that the desk install kept exactly one.
+  const profileDir = join(homeDir, 'profiles', profileName)
+  try {
+    const resolution = assertProfileResolution(profileDir, paths.nodeWrapper, [], {
+      DSH_DESKTOP_NODE_EXECUTABLE: paths.nodeBin,
+    })
+    process.stdout.write(`resolved ${resolution.checked.length} @jacklika packages: ${Object.entries(resolution.versions).map(([name, version]) => `${name}@${version}`).join(', ')}\n`)
+  } catch (error) {
+    fail(`resolution check failed: ${error?.message ?? error}`)
+  }
 
   process.stdout.write(`desk smoke test passed on ${process.platform} for ${bundleSpec}\n`)
 } finally {

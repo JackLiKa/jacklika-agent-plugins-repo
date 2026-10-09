@@ -28,7 +28,7 @@ wiki_write("notes/x.md")
   → memory-scope   rewrites id to agents/<key>/notes/x.md (structural conflict prevention;
                    shared/ passes through, role: curator bypasses)
   → memory-queue   FIFO lane + optional cross-process mkdir lock with heartbeat liveness
-  → memory-git     commits the note into the vault's own git repo (prefixes: ['shared/'])
+  → memory-git     commits the note into the vault's own git repo (prefixes: ['shared/', 'agents/'])
   → wiki_write     baseVersion optimistic check + atomic temp-file rename
 ```
 

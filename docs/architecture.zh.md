@@ -28,7 +28,7 @@ wiki_write("notes/x.md")
   → memory-scope   把 id 重写为 agents/<key>/notes/x.md（结构性防冲突；
                    shared/ 直通，role: curator 旁路）
   → memory-queue   FIFO lane + 可选跨进程 mkdir 锁 + 心跳判活
-  → memory-git     把笔记提交进 vault 自己的 git 仓库（prefixes: ['shared/']）
+  → memory-git     把笔记提交进 vault 自己的 git 仓库（prefixes: ['shared/', 'agents/']）
   → wiki_write     baseVersion 乐观并发校验 + 临时文件原子 rename
 ```
 

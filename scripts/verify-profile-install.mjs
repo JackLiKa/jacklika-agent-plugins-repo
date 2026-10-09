@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
+import { assertProfileResolution, jacklikaClosure } from './profile-resolution.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const scratch = await mkdtemp(join(tmpdir(), 'dsh-profile-'))
@@ -129,10 +130,13 @@ try {
 
   const files = (await readdir(tarballs)).filter(file => file.endsWith('.tgz'))
   const packageSpecs = new Map()
+  const manifests = new Map()
   for (const file of files) {
     const path = join(tarballs, file)
     const result = run(tar, ['-xOf', tarPath(path), 'package/package.json'], root)
-    packageSpecs.set(JSON.parse(result).name, `file:${path}`)
+    const manifest = JSON.parse(result)
+    packageSpecs.set(manifest.name, `file:${path}`)
+    manifests.set(manifest.name, manifest)
   }
   const profileDir = join(home, 'profiles', profile)
   const overrides = [...packageSpecs].map(([name, spec]) => `  '${name}': '${spec.replaceAll("'", "''")}'`).join('\n')
@@ -162,6 +166,14 @@ try {
     if (positions[i] <= positions[i - 1]) throw new Error(`dump-config order wrong for ${expectedIds[i]}`)
   }
 
+  // dump-config proves every plugin registered; this proves which copy of each
+  // package it registered from. A duplicated or stale member would still load.
+  const resolution = assertProfileResolution(
+    profileDir,
+    process.execPath,
+    jacklikaClosure(manifests, '@jacklika/dsh-memory'),
+  )
+
   installed.dsh.profile.bundles = bundles.filter(name => name !== '@jacklika/dsh-memory')
   await writeFile(manifestPath, JSON.stringify(installed, undefined, 2) + '\n')
   const disabled = runShell(dsh, ['--profile', profile, '--dump-config'], workspace)
@@ -179,7 +191,8 @@ try {
   if (removed.dependencies?.['@jacklika/dsh-memory'] !== undefined) throw new Error('bundle dependency remains after uninstall')
   if ((removed.dsh?.profile?.bundles ?? []).includes('@jacklika/dsh-memory')) throw new Error('bundle remains enabled after uninstall')
   await readFile(join(vault, 'preserved.md'), 'utf8')
-  process.stdout.write('profile install, dump-config, disable, re-enable, uninstall, and vault preservation verified\n')
+  process.stdout.write(`resolved ${resolution.checked.length} @jacklika packages: ${Object.entries(resolution.versions).map(([name, version]) => `${name}@${version}`).join(', ')}\n`)
+  process.stdout.write('profile install, dump-config, resolution, disable, re-enable, uninstall, and vault preservation verified\n')
 } finally {
   await rm(scratch, { recursive: true, force: true })
 }

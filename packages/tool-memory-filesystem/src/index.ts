@@ -662,7 +662,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_search',
-    description: 'Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns matching note ids, titles, scores, and backlink counts. Use this before asking the user which note to read.',
+    description: 'Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns { hits, total, truncated }: each hit carries the note id, title, score, and backlinks, total counts every match before the result cap, and truncated is true when that cap cut the list. Use this before asking the user which note to read.',
     parameters: {
       query: {
         type: 'string',
@@ -672,16 +672,24 @@ export function apply(ctx: Context, config: Config): void {
     },
     output: {
       schema: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            id: { type: 'string' },
-            title: { type: 'string' },
-            score: { type: 'number' },
-            backlinks: { type: 'array', items: { type: 'string' } },
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          hits: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string' },
+                title: { type: 'string' },
+                score: { type: 'number' },
+                backlinks: { type: 'array', items: { type: 'string' } },
+              },
+            },
           },
+          total: { type: 'integer' },
+          truncated: { type: 'boolean' },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
@@ -724,13 +732,14 @@ export function apply(ctx: Context, config: Config): void {
           ctx.logger?.warn('tool-memory-filesystem: semantic fusion skipped: wiki_semantic_search returned an error')
         }
       }
-      return hits.slice(0, resolved.maxSearchResults)
+      const capped = hits.slice(0, resolved.maxSearchResults)
+      return { hits: capped, total: hits.length, truncated: capped.length < hits.length }
     },
   })))
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_write',
-    description: 'Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header.',
+    description: 'Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header. Returns { id, mode, bytes, version }, where version fingerprints the written content and can be passed as baseVersion on the next write without reading the note again.',
     parameters: {
       id: {
         type: 'string',
@@ -749,7 +758,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       baseVersion: {
         type: 'string',
-        description: 'Optional version returned by wiki_read. When provided, the write fails if the note changed since that read.',
+        description: 'Optional version returned by wiki_read or by an earlier wiki_write. When provided, the write fails if the note changed since that version.',
       },
     },
     output: {
@@ -760,6 +769,7 @@ export function apply(ctx: Context, config: Config): void {
           id: { type: 'string' },
           mode: { type: 'string' },
           bytes: { type: 'integer' },
+          version: { type: 'string' },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
@@ -812,7 +822,14 @@ export function apply(ctx: Context, config: Config): void {
       await writeAtomic(absolutePath, finalBody)
       const info = await stat(absolutePath)
       recordMtime(absolutePath, info.mtimeMs)
-      return { id: vaultRelativeId(vaultRoot, absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
+      return {
+        id: vaultRelativeId(vaultRoot, absolutePath),
+        mode,
+        bytes: Buffer.byteLength(finalBody, 'utf8'),
+        // `writeAtomic` publishes `finalBody` verbatim, so this is the same
+        // fingerprint `wiki_read` would report — without a second read.
+        version: noteVersion(finalBody),
+      }
     },
   })))
 }

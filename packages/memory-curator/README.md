@@ -4,7 +4,7 @@ Curator tools for the DSH memory vault. This package is a member of the `@jackli
 
 ## Tools
 
-- `memory_recall(query)` — Search the vault for prior notes before starting a task.
+- `memory_recall(query)` — Search the vault for prior notes before starting a task. Returns `{ query, hits, total }`, where `total` is the vault-wide match count passed through from `wiki_search` and can exceed `hits.length` when the search layer caps its results — so a caller can tell "these are all the matches" from "there are more".
 - `memory_capture(title, summary, ...)` — Persist durable knowledge after significant work, with conflict detection and optional user approval.
 
 ## Note ids

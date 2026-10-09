@@ -48,23 +48,52 @@ function runPnpm(args, cwd) {
   return run('pnpm', args, cwd)
 }
 
+/** Every workspace member's manifest, keyed by package name. */
+async function workspaceMembers() {
+  const members = new Map()
+  for (const dir of (await readdir(join(root, 'packages'))).sort()) {
+    const manifest = JSON.parse(await readFile(join(root, 'packages', dir, 'package.json'), 'utf8'))
+    members.set(manifest.name, manifest)
+  }
+  return members
+}
+
+/**
+ * The spec pnpm must write into a packed manifest for a `workspace:` range: a
+ * bare or `*` protocol pins the member's exact current version, `^`/`~` keep
+ * their modifier, and anything else is carried through verbatim.
+ * @param {string} range - source specifier starting with `workspace:`.
+ * @param {string} version - the referenced member's current version.
+ * @returns {string} the portable spec the tarball has to carry.
+ */
+function expectedWorkspaceSpec(range, version) {
+  const suffix = range.slice('workspace:'.length)
+  if (suffix === '' || suffix === '*') return version
+  if (suffix === '^' || suffix === '~') return `${suffix}${version}`
+  return suffix
+}
+
+const DEPENDENCY_FIELDS = ['dependencies', 'peerDependencies', 'optionalDependencies']
+
 try {
   await mkdir(tarballs)
   run(process.execPath, [join(root, 'scripts', 'pack-all.mjs'), tarballs], root)
   const files = (await readdir(tarballs)).filter(file => file.endsWith('.tgz')).sort()
-  // Derive the expectation from the same source pack-all.mjs packs, so adding a
-  // workspace package cannot silently leave this check asserting a stale count.
-  const expected = (await readdir(join(root, 'packages'))).length
-  if (files.length !== expected) throw new Error(`expected ${expected} tarballs, found ${files.length}`)
+  // Derive every expectation from the same source pack-all.mjs packs, so adding
+  // or renaming a workspace package cannot leave these checks asserting a stale
+  // count or a hardcoded bundle filename.
+  const members = await workspaceMembers()
+  const bundleManifest = JSON.parse(await readFile(join(root, 'packages', 'memory', 'package.json'), 'utf8'))
+  const bundleName = bundleManifest.name
+  if (!members.has(bundleName)) throw new Error(`bundle ${bundleName} is not a workspace member`)
+  if (files.length !== members.size) throw new Error(`expected ${members.size} tarballs, found ${files.length}`)
 
   const packageSpecs = new Map()
+  let sawBundle = false
   for (const file of files) {
     const path = join(tarballs, file)
     const entries = run(tar, ['-tf', tarPath(path)], root).split(/\r?\n/).filter(Boolean)
     if (!entries.includes('package/package.json')) throw new Error(`${file}: package.json missing`)
-    if (file.includes('dsh-memory-0.1.7')) {
-      if (!entries.includes('package/cordis.patch.yml')) throw new Error(`${file}: cordis.patch.yml missing`)
-    }
     if (entries.some(entry => entry.includes('node_modules') || entry.includes('.env'))) {
       throw new Error(`${file}: forbidden package content`)
     }
@@ -72,6 +101,30 @@ try {
     const manifestText = run(tar, ['-xOf', tarPath(path), 'package/package.json'], root)
     if (/workspace:|link:|\/Users\/[^/]+\/|[A-Za-z]:\\/.test(manifestText)) throw new Error(`${file}: non-portable dependency spec`)
     const manifest = JSON.parse(manifestText)
+    const source = members.get(manifest.name)
+    if (source === undefined) throw new Error(`${file}: packed unknown workspace member ${manifest.name}`)
+    if (manifest.version !== source.version) {
+      throw new Error(`${file}: packed version ${manifest.version} does not match the workspace's ${source.version}`)
+    }
+    if (manifest.name === bundleName) {
+      sawBundle = true
+      if (!entries.includes('package/cordis.patch.yml')) throw new Error(`${file}: cordis.patch.yml missing`)
+    }
+    // A `workspace:` range only becomes portable if pnpm rewrote it against the
+    // version that member actually has right now; a leftover float or a stale
+    // pin installs something other than this checkout.
+    for (const field of DEPENDENCY_FIELDS) {
+      for (const [dependency, range] of Object.entries(source[field] ?? {})) {
+        if (typeof range !== 'string' || !range.startsWith('workspace:')) continue
+        const member = members.get(dependency)
+        if (member === undefined) throw new Error(`${file}: ${field}.${dependency} is a workspace range but not a member`)
+        const expectedSpec = expectedWorkspaceSpec(range, member.version)
+        const packedSpec = manifest[field]?.[dependency]
+        if (packedSpec !== expectedSpec) {
+          throw new Error(`${file}: ${field}.${dependency} packed as ${JSON.stringify(packedSpec)}, expected ${JSON.stringify(expectedSpec)} from ${range}`)
+        }
+      }
+    }
     for (const field of ['main', 'types']) {
       if (typeof manifest[field] === 'string' && !entries.includes(`package/${manifest[field].replace(/^\.\//, '')}`)) {
         throw new Error(`${file}: ${field} target missing`)
@@ -79,6 +132,7 @@ try {
     }
     packageSpecs.set(manifest.name, spec)
   }
+  if (!sawBundle) throw new Error(`no tarball carried the bundle manifest ${bundleName}`)
 
   await mkdir(install)
   await writeFile(join(install, 'package.json'), JSON.stringify({ name: 'memory-pack-smoke', private: true }, undefined, 2) + '\n')

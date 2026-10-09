@@ -53,8 +53,8 @@ A relative `vaultRoot` resolves against the calling session's workspace.
 ### Tools
 
 - `wiki_read(id)` — read one note by vault-relative path and return its frontmatter, body, links, linked notes, a `version` content fingerprint, the file's `mtime` as a `+08:00` timestamp, and a `modifiedExternally` flag that is `true` when the file changed on disk since this plugin last observed it (e.g. an Obsidian edit). The plugin keeps a bounded 256-entry LRU of observed mtimes keyed by absolute path; its own `wiki_write` re-records the mtime so plugin writes never flag.
-- `wiki_search(query)` — keyword search across note titles, ids, and bodies; query terms are OR-matched and ranked by field-weighted BM25-style scoring (title/id hits weigh most, rare terms weigh more) plus a verbatim-phrase bonus and a link-graph boost; when `wiki_semantic_search` is mounted the two rankings fuse via reciprocal rank fusion. Results include the score and backlink counts.
-- `wiki_write(id, content, mode?, baseVersion?)` — create or append to a note. Append mode preserves frontmatter and adds a timestamp header; both write modes normalize `created`/`updated` frontmatter values to `+08:00` second precision (unparseable values pass through). Passing a `version` from `wiki_read` as `baseVersion` makes the write fail loudly when another writer changed the note in between.
+- `wiki_search(query)` — keyword search across note titles, ids, and bodies; query terms are OR-matched and ranked by field-weighted BM25-style scoring (title/id hits weigh most, rare terms weigh more) plus a verbatim-phrase bonus and a link-graph boost; when `wiki_semantic_search` is mounted the two rankings fuse via reciprocal rank fusion. Returns a `{ hits, total, truncated }` page: each hit carries the note id, title, score, and backlinks; `total` counts every match *before* the `maxSearchResults` cap; `truncated` is `true` when that cap cut the list, so a caller can tell a complete result set from a partial one instead of assuming the vault holds nothing else.
+- `wiki_write(id, content, mode?, baseVersion?)` — create or append to a note. Append mode preserves frontmatter and adds a timestamp header; both write modes normalize `created`/`updated` frontmatter values to `+08:00` second precision (unparseable values pass through). Passing a `version` from `wiki_read` as `baseVersion` makes the write fail loudly when another writer changed the note in between. The result is `{ id, mode, bytes, version }`, where `version` fingerprints the bytes just published — feed it straight back as `baseVersion` on the next write to chain optimistic-concurrency checks without a `wiki_read` round-trip.
 
 ### Security
 
@@ -87,18 +87,18 @@ Read one Markdown note from the wiki vault, optionally following Obsidian-style 
 ##### Verbatim description for `wiki_search`
 
 ```markdown
-Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns matching note ids, titles, scores, and backlink counts. Use this before asking the user which note to read.
+Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns { hits, total, truncated }: each hit carries the note id, title, score, and backlinks, total counts every match before the result cap, and truncated is true when that cap cut the list. Use this before asking the user which note to read.
 ```
 
 ##### Verbatim description for `wiki_write`
 
 ```markdown
-Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header.
+Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header. Returns { id, mode, bytes, version }, where version fingerprints the written content and can be passed as baseVersion on the next write without reading the note again.
 ```
 
 #### Token effect
 
-`wiki_read` returns the full body of the requested note plus every linked note reachable within `maxLinkDepth`. Long notes or dense link graphs can add many tokens to the next request. `wiki_search` returns a bounded list of result metadata only.
+`wiki_read` returns the full body of the requested note plus every linked note reachable within `maxLinkDepth`. Long notes or dense link graphs can add many tokens to the next request. `wiki_search` returns a bounded list of result metadata only; its `total` reports matches beyond the cap without returning them.
 
 #### KV Cache effect
 

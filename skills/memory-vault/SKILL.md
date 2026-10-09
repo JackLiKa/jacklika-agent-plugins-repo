@@ -11,7 +11,7 @@ The vault is an Obsidian-compatible Markdown store under `.plugins/memory/` of t
 
 - Call `memory_recall(query)` with the user's task or the domain concepts involved.
 - If it returns relevant notes, read the most relevant ones with `wiki_read` and incorporate the context into your plan.
-- `memory_recall` is a thin wrapper over `wiki_search` and returns note ids, titles, scores, and backlink counts. Query terms are OR-matched and ranked by field-weighted relevance (title/id hits and rare terms weigh more, with phrase and link-graph bonuses), so a long query still returns partial matches — read the top hits first.
+- `memory_recall` is a thin wrapper over `wiki_search` and returns note ids, titles, scores, and backlink counts, plus `total`: how many notes matched vault-wide before the result cap. When `total` is larger than the hit list you received, the list was truncated — narrow the query rather than concluding the vault holds nothing more. Query terms are OR-matched and ranked by field-weighted relevance (title/id hits and rare terms weigh more, with phrase and link-graph bonuses), so a long query still returns partial matches — read the top hits first.
 
 ## Task-end capture
 
@@ -46,7 +46,8 @@ Use `wiki_read`, `wiki_search`, `wiki_write`, and `wiki_graph` directly only whe
 1. `wiki_read(id)` — note the returned `version`.
 2. Compose the change.
 3. `wiki_write(id, content, baseVersion: <version>)` — if the note changed since your read, the write fails; re-read and redo instead of overwriting blindly.
-4. Appending adds a timestamped section; `mode: overwrite` replaces the whole body — use it only for full rewrites.
+4. The write returns the new `version` for the bytes it just published, so a second consecutive write can pass that as `baseVersion` without a `wiki_read` in between.
+5. Appending adds a timestamped section; `mode: overwrite` replaces the whole body — use it only for full rewrites.
 
 ## Linking convention
 

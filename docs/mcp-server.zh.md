@@ -25,7 +25,7 @@ node packages/memory-mcp/src/server.mjs --vault /path/to/vault [--max-link-depth
 
 ## 暴露面
 
-- 工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph`——与 dsh 工具同名，含 `baseVersion` 冲突报错，但有一处有意差异：MCP 版 `wiki_search` 是朴素的 AND 关键词匹配、按笔记 id 排序、只返回 `{id, title}`（无相关性 `score`、无 `backlinks`、无分层排序）。分层 BM25/短语/图/语义排序只在 `@jacklika/dsh-tool-memory-filesystem` 中实现；MCP server 保持零依赖。`wiki_read` 与 dsh 工具一样返回 `mtime` + `modifiedExternally` 字段，`wiki_write` 同样把 `created`/`updated` frontmatter 时间戳归一化为 `+08:00`。`wiki_read`/`wiki_graph` 解析 `[[link]]` 目标与 dsh 工具使用相同的 Obsidian 语义：先精确仓库相对路径，再路径后缀，最后 basename 匹配，多重命中时优先路径段最少者、仍并列取码点序最小的 id。
+- 工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph`——与 dsh 工具同名，含 `baseVersion` 冲突报错，但有一处有意差异：MCP 版 `wiki_search` 是朴素的 AND 关键词匹配、按笔记 id 排序，返回的是 `{id, title}` 裸数组（无相关性 `score`、无 `backlinks`、无分层排序，也没有 `{ hits, total, truncated }` 信封结构，因此拿不到全库命中数——dsh 工具返回该信封）。MCP 版 `wiki_write` 同样只返回 `{id, mode, bytes}`，不含 dsh 工具新增的 `version` 字段，因此想串联 `baseVersion` 写入的调用方需从 `wiki_read` 取版本。分层 BM25/短语/图/语义排序只在 `@jacklika/dsh-tool-memory-filesystem` 中实现；MCP server 保持零依赖。`wiki_read` 与 dsh 工具一样返回 `mtime` + `modifiedExternally` 字段，`wiki_write` 同样把 `created`/`updated` frontmatter 时间戳归一化为 `+08:00`。`wiki_read`/`wiki_graph` 解析 `[[link]]` 目标与 dsh 工具使用相同的 Obsidian 语义：先精确仓库相对路径，再路径后缀，最后 basename 匹配，多重命中时优先路径段最少者、仍并列取码点序最小的 id。
 - Resources：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
 
 ## 能保证什么、不能保证什么

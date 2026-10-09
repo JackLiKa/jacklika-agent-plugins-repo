@@ -13,16 +13,23 @@ import * as ToolMemory from '@jacklika/dsh-tool-memory-filesystem'
 
 let root: string | undefined
 let context: Context | undefined
+const vaults: string[] = []
 
 afterEach(async () => {
   await context?.fiber.dispose()
   context = undefined
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
+  await Promise.all(vaults.splice(0).map(vault => rm(vault, { recursive: true, force: true })))
 })
 
 function resultText(result: { content: { type: string; text?: string }[] }): string {
   return result.content.filter(block => block.type === 'text').map(block => block.text).join('')
+}
+
+/** Parse a `wiki_search` result into its `{ hits, total, truncated }` envelope. */
+function searchPage<T>(result: { content: { type: string; text?: string }[] }): { hits: T[]; total: number; truncated: boolean } {
+  return JSON.parse(resultText(result)) as { hits: T[]; total: number; truncated: boolean }
 }
 
 /**
@@ -31,20 +38,22 @@ function resultText(result: { content: { type: string; text?: string }[] }): str
  * per tool call from the session workspace.
  * @param vaultRoot - absolute path to the vault root, or undefined for
  *   session-workspace defaulting.
+ * @param maxSearchResults - optional `wiki_search` result cap override.
  * @returns the booted context.
  */
-async function boot(vaultRoot?: string, indexHiddenDirs = false): Promise<Context> {
+async function boot(vaultRoot?: string, indexHiddenDirs = false, maxSearchResults?: number): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-memory-loader-'))
   const configPath = join(root, 'cordis.yml')
   const configLines = [
     "- name: '@deepseek-ai/dsh-system-prompt'",
     "- name: '@deepseek-ai/dsh-tools'",
     "- name: '@jacklika/dsh-tool-memory-filesystem'",
-    ...vaultRoot !== undefined || indexHiddenDirs
+    ...vaultRoot !== undefined || indexHiddenDirs || maxSearchResults !== undefined
       ? [
         '  config:',
         ...vaultRoot !== undefined ? [`    vaultRoot: ${vaultRoot}`] : [],
         ...indexHiddenDirs ? ['    indexHiddenDirs: true'] : [],
+        ...maxSearchResults !== undefined ? [`    maxSearchResults: ${maxSearchResults}`] : [],
       ]
       : [],
     '',
@@ -80,6 +89,7 @@ async function boot(vaultRoot?: string, indexHiddenDirs = false): Promise<Contex
  */
 async function makeNestedVault(): Promise<string> {
   const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-memory-vault-nested-'))
+  vaults.push(vaultRoot)
   const dir = join(vaultRoot, 'shared', 'notes')
   await mkdir(dir, { recursive: true })
   await writeFile(join(dir, 'a.md'), '# Alpha\n\nAlpha body mentions zephyr-token. See [[b]].\n')
@@ -89,10 +99,27 @@ async function makeNestedVault(): Promise<string> {
 
 async function makeVault(): Promise<string> {
   const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-memory-vault-'))
+  vaults.push(vaultRoot)
   const concepts = join(vaultRoot, 'concepts')
   await mkdir(concepts)
   await writeFile(join(concepts, 'RAG.md'), '---\ntags: [llm, architecture]\n---\n\n# Retrieval-Augmented Generation\n\nRAG combines [[embedding]] retrieval with LLM generation.\n')
   await writeFile(join(vaultRoot, 'embedding.md'), '---\ntags: [llm]\n---\n\n# Embedding\n\nAn embedding is a dense vector. See also [[concepts/RAG]].\n')
+  return vaultRoot
+}
+
+/**
+ * A vault whose notes all match one term but rank differently, so which notes
+ * survive a `maxSearchResults` cap is observable in `hits`, `total`, and
+ * `truncated` without depending on directory-listing order.
+ * @param noteCount - how many matching notes to write.
+ */
+async function makeWideVault(noteCount: number): Promise<string> {
+  const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-memory-vault-wide-'))
+  vaults.push(vaultRoot)
+  for (let i = 0; i < noteCount; i += 1) {
+    const name = `note-${String(i).padStart(2, '0')}.md`
+    await writeFile(join(vaultRoot, name), `# Note ${i}\n\nBody carries ${'zephyr-token '.repeat(i + 1).trim()}.\n`)
+  }
   return vaultRoot
 }
 
@@ -145,7 +172,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     })
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected wiki_search success')
-    const hits = JSON.parse(resultText(result)) as { id: string }[]
+    const hits = searchPage<{ id: string }>(result).hits
     expect(hits.some(h => h.id === 'concepts/RAG.md')).toBe(true)
     expect(hits.some(h => h.id === 'embedding.md')).toBe(true)
   })
@@ -161,7 +188,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     })
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected wiki_search success')
-    const hits = JSON.parse(resultText(result)) as { id: string; title: string }[]
+    const hits = searchPage<{ id: string; title: string }>(result).hits
     expect(hits.some(h => h.id === 'embedding.md')).toBe(true)
     expect(hits.every(h => !Object.hasOwn(h, 'body'))).toBe(true)
   })
@@ -179,7 +206,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { query: 'retrieval absent-xyzzy' },
     })
     if (partial.isError) throw new Error('expected wiki_search success')
-    const partialHits = JSON.parse(resultText(partial)) as { id: string; score: number }[]
+    const partialHits = searchPage<{ id: string; score: number }>(partial).hits
     // RAG.md matches 'retrieval' lexically; embedding.md matches nothing but
     // is linked from RAG.md, so the graph boost surfaces it second.
     expect(partialHits.map(h => h.id)).toEqual(['concepts/RAG.md', 'embedding.md'])
@@ -195,7 +222,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { query: 'rag vector' },
     })
     if (ranked.isError) throw new Error('expected wiki_search success')
-    const rankedHits = JSON.parse(resultText(ranked)) as { id: string; score: number }[]
+    const rankedHits = searchPage<{ id: string; score: number }>(ranked).hits
     expect(rankedHits[0].id).toBe('embedding.md')
     expect(rankedHits.map(h => h.id)).toContain('concepts/RAG.md')
     expect(rankedHits.every(h => typeof h.score === 'number' && h.score > 0)).toBe(true)
@@ -209,8 +236,41 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { query: 'embedding' },
     })
     if (fielded.isError) throw new Error('expected wiki_search success')
-    const fieldedHits = JSON.parse(resultText(fielded)) as { id: string }[]
+    const fieldedHits = searchPage<{ id: string }>(fielded).hits
     expect(fieldedHits[0].id).toBe('embedding.md')
+  })
+
+  it('reports the pre-cap match count and whether the cap cut the list', async () => {
+    const vault = await makeWideVault(3)
+    const ctx = await boot(vault, false, 2)
+
+    const capped = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-capped'),
+      name: 'wiki_search',
+      arguments: { query: 'zephyr-token' },
+    })
+    if (capped.isError) throw new Error('expected wiki_search success')
+    const page = searchPage<{ id: string; score: number }>(capped)
+    // All three notes match, but only the two best-ranked come back. `total`
+    // has to say three, or a caller cannot tell a capped list from a complete
+    // one and will stop reading too early.
+    expect(page.hits.map(hit => hit.id)).toEqual(['note-02.md', 'note-01.md'])
+    expect(page.total).toBe(3)
+    expect(page.truncated).toBe(true)
+    expect(page.hits[0].score).toBeGreaterThan(page.hits[1].score)
+
+    const complete = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-complete'),
+      name: 'wiki_search',
+      arguments: { query: 'note-00' },
+    })
+    if (complete.isError) throw new Error('expected wiki_search success')
+    const single = searchPage<{ id: string }>(complete)
+    expect(single.hits.map(hit => hit.id)).toEqual(['note-00.md'])
+    expect(single.total).toBe(1)
+    expect(single.truncated).toBe(false)
   })
 
   it('fails wiki_search when the semantic layer returns malformed output', async () => {
@@ -262,7 +322,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     })
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected wiki_search success')
-    const hits = JSON.parse(resultText(result)) as { id: string }[]
+    const hits = searchPage<{ id: string }>(result).hits
     expect(hits.map(h => h.id)).toContain('concepts/RAG.md')
   })
 
@@ -290,7 +350,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { query: 'beta' },
     })
     if (search.isError) throw new Error('expected wiki_search success')
-    const hits = JSON.parse(resultText(search)) as { id: string; backlinks: string[] }[]
+    const hits = searchPage<{ id: string; backlinks: string[] }>(search).hits
     const beta = hits.find(h => h.id === 'shared/notes/b.md')
     expect(beta?.backlinks).toContain('shared/notes/a.md')
 
@@ -303,7 +363,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { query: 'zephyr-token' },
     })
     if (boosted.isError) throw new Error('expected wiki_search success')
-    const boostedHits = JSON.parse(resultText(boosted)) as { id: string }[]
+    const boostedHits = searchPage<{ id: string }>(boosted).hits
     expect(boostedHits.map(h => h.id)).toEqual(['shared/notes/a.md', 'shared/notes/b.md'])
   })
 
@@ -410,6 +470,58 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { id: 'concepts/RAG.md', content: 'after external change', baseVersion: current.version },
     })
     expect(matching.isError).toBe(false)
+  })
+
+  it('returns the written version so a caller can chain writes without re-reading', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    const first = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-version-first'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/RAG.md', content: 'First insight.' },
+    })
+    if (first.isError) throw new Error('expected wiki_write success')
+    const written = JSON.parse(resultText(first)) as { id: string; mode: string; bytes: number; version: string }
+    expect(written.id).toBe('concepts/RAG.md')
+    expect(written.mode).toBe('append')
+    expect(written.version).toMatch(/^[0-9a-f]{40}$/)
+
+    // The fingerprint is the one `wiki_read` reports for the same bytes, so it
+    // is replayable as `baseVersion` — that equivalence is the whole point of
+    // returning it here instead of forcing a read round-trip.
+    const read = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('read-after-versioned-write'),
+      name: 'wiki_read',
+      arguments: { id: 'concepts/RAG.md' },
+    })
+    if (read.isError) throw new Error('expected wiki_read success')
+    expect((JSON.parse(resultText(read)) as { version: string }).version).toBe(written.version)
+
+    const chained = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-version-chained'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/RAG.md', content: 'Overwritten body.', mode: 'overwrite', baseVersion: written.version },
+    })
+    expect(chained.isError).toBe(false)
+    if (chained.isError) throw new Error('expected chained wiki_write success')
+    const next = JSON.parse(resultText(chained)) as { mode: string; bytes: number; version: string }
+    expect(next.mode).toBe('overwrite')
+    expect(next.bytes).toBe(Buffer.byteLength(await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8'), 'utf8'))
+    expect(next.version).not.toBe(written.version)
+
+    const stale = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-version-stale'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/RAG.md', content: 'Lost update.', baseVersion: written.version },
+    })
+    expect(stale.isError).toBe(true)
+    if (!stale.isError) throw new Error('expected stale wiki_write failure')
+    expect(stale.error.message).toContain('changed since it was read')
   })
 
   it('rejects paths outside the vault root', async () => {
@@ -647,7 +759,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     })
     expect(missResult.isError).toBe(false)
     if (missResult.isError) throw new Error('expected wiki_search success')
-    expect(JSON.parse(resultText(missResult))).toEqual([])
+    expect(JSON.parse(resultText(missResult))).toEqual({ hits: [], total: 0, truncated: false })
 
     await offCtx.fiber.dispose()
     context = undefined
@@ -661,7 +773,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     })
     expect(hitResult.isError).toBe(false)
     if (hitResult.isError) throw new Error('expected wiki_search success')
-    const hits = JSON.parse(resultText(hitResult)) as { id: string }[]
+    const hits = searchPage<{ id: string }>(hitResult).hits
     expect(hits.some(h => h.id === '.dsh/memory/secret.md')).toBe(true)
   })
 })

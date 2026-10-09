@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -12,19 +12,18 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as ToolMemoryVector from '@jacklika/dsh-tool-memory-vector'
 
-let root: string | undefined
 let context: Context | undefined
-let server: Server | undefined
+const roots: string[] = []
+const vaults: string[] = []
+const servers: Server[] = []
 let requestCount = 0
 let authorization: string | undefined
 
 afterEach(async () => {
   await context?.fiber.dispose()
   context = undefined
-  if (server !== undefined) await new Promise<void>(resolve => server!.close(() => { resolve() }))
-  server = undefined
-  if (root !== undefined) await rm(root, { recursive: true, force: true })
-  root = undefined
+  await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => { resolve() }))))
+  await Promise.all([...roots.splice(0), ...vaults.splice(0)].map(dir => rm(dir, { recursive: true, force: true })))
   requestCount = 0
   authorization = undefined
 })
@@ -39,7 +38,7 @@ function embeddingOf(text: string): number[] {
 
 /** Start a fake OpenAI-compatible embeddings endpoint on an ephemeral port. */
 async function fakeEmbeddingsEndpoint(): Promise<string> {
-  server = createServer((req, res) => {
+  const server = createServer((req, res) => {
     let body = ''
     req.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
     req.on('end', () => {
@@ -51,7 +50,8 @@ async function fakeEmbeddingsEndpoint(): Promise<string> {
       res.end(JSON.stringify({ data: inputs.map(text => ({ embedding: embeddingOf(text) })) }))
     })
   })
-  await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve))
+  servers.push(server)
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   if (address === null || typeof address === 'string') throw new Error('no address')
   return `http://127.0.0.1:${address.port}/v1/embeddings`
@@ -61,14 +61,38 @@ function resultText(result: { content: { type: string; text?: string }[] }): str
   return result.content.filter(block => block.type === 'text').map(block => block.text).join('')
 }
 
+/** The persisted cache envelope, as `.vector-index.json` holds it. */
+interface IndexEnvelope {
+  schemaVersion: number
+  fingerprint: string
+  notes: Record<string, { mtimeMs: number; embedding: number[] }>
+}
+
+async function readIndex(vaultRoot: string): Promise<IndexEnvelope> {
+  return JSON.parse(await readFile(join(vaultRoot, '.vector-index.json'), 'utf8')) as IndexEnvelope
+}
+
+async function search(ctx: Context, callId: string, query: string): Promise<{ id: string; score: number }[]> {
+  const result = await ctx.tools.execute({
+    signal: new AbortController().signal,
+    callId: ToolCallId(callId),
+    name: 'wiki_semantic_search',
+    arguments: { query },
+  })
+  if (result.isError) throw new Error(`expected wiki_semantic_search success: ${result.error.message}`)
+  return JSON.parse(resultText(result)) as { id: string; score: number }[]
+}
+
 /**
  * Boot a cordis.yml carrying the vector memory tool and a fake endpoint.
  * @param vaultRoot - absolute path to the vault root.
  * @param endpoint - fake embeddings endpoint URL.
+ * @param model - embedding model name the deployment configures.
  * @returns the booted context.
  */
-async function boot(vaultRoot: string, endpoint: string, extraConfig: string[] = []): Promise<Context> {
-  root = await mkdtemp(join(tmpdir(), 'dsh-vector-loader-'))
+async function boot(vaultRoot: string, endpoint: string, extraConfig: string[] = [], model = 'fake-embed'): Promise<Context> {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-vector-loader-'))
+  roots.push(root)
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-system-prompt'",
@@ -77,7 +101,7 @@ async function boot(vaultRoot: string, endpoint: string, extraConfig: string[] =
     '  config:',
     `    vaultRoot: ${vaultRoot}`,
     `    endpoint: ${endpoint}`,
-    '    model: fake-embed',
+    `    model: ${model}`,
     ...extraConfig,
     '',
   ].join('\n'))
@@ -106,6 +130,7 @@ async function boot(vaultRoot: string, endpoint: string, extraConfig: string[] =
 
 async function makeVault(): Promise<string> {
   const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-vector-vault-'))
+  vaults.push(vaultRoot)
   const concepts = join(vaultRoot, 'concepts')
   await mkdir(concepts)
   await writeFile(join(concepts, 'RAG.md'), '# Retrieval-Augmented Generation\n\nRAG combines retrieval with LLM generation.\n')
@@ -154,8 +179,8 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
       })
       expect(result.isError).toBe(false)
       expect(authorization).toBe('Bearer test-secret-value')
-      const index = await readFile(join(vault, '.vector-index.json'), 'utf8')
-      expect(index).not.toContain('test-secret-value')
+      const indexText = await readFile(join(vault, '.vector-index.json'), 'utf8')
+      expect(indexText).not.toContain('test-secret-value')
     } finally {
       if (original === undefined) delete process.env.MEMORY_VECTOR_TEST_KEY
       else process.env.MEMORY_VECTOR_TEST_KEY = original
@@ -179,8 +204,10 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
     expect(hits[0]?.id).toBe('concepts/RAG.md')
     expect(hits[0]!.score).toBeGreaterThan(hits[1]?.score ?? 0)
 
-    const indexText = await readFile(join(vault, '.vector-index.json'), 'utf8')
-    expect(indexText).toContain('concepts/RAG.md')
+    const envelope = await readIndex(vault)
+    expect(envelope.schemaVersion).toBe(1)
+    expect(envelope.fingerprint).toMatch(/^[0-9a-f]{40}$/)
+    expect(Object.keys(envelope.notes)).toContain('concepts/RAG.md')
 
     const callsBefore = requestCount
     const second = await ctx.tools.execute({
@@ -192,5 +219,66 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
     expect(second.isError).toBe(false)
     // Only the query embedding is requested; note embeddings are cached by mtime.
     expect(requestCount).toBe(callsBefore + 1)
+  })
+
+  it('discards the cached index when the embedding model changes, even though mtimes match', async () => {
+    const endpoint = await fakeEmbeddingsEndpoint()
+    const vault = await makeVault()
+    const first = await boot(vault, endpoint)
+
+    await search(first, 'semantic-model-a', 'rag retrieval')
+    const before = await readIndex(vault)
+    const callsBefore = requestCount
+
+    // Same vault, same files, same endpoint — only the model name differs.
+    // Cached vectors are meaningless once the model that produced them is gone,
+    // so reusing them by mtime alone would rank against incompatible spaces.
+    await first.fiber.dispose()
+    const second = await boot(vault, endpoint, ['    batchSize: 1'], 'fake-embed-v2')
+    await search(second, 'semantic-model-b', 'rag retrieval')
+
+    const after = await readIndex(vault)
+    expect(after.fingerprint).not.toBe(before.fingerprint)
+    // batchSize 1 makes each note its own call: 2 notes + 1 query is a full
+    // re-embed, not an mtime-satisfied cache read.
+    expect(requestCount).toBe(callsBefore + 3)
+  })
+
+  it('keeps the cached index when the same model and endpoint boot again', async () => {
+    const endpoint = await fakeEmbeddingsEndpoint()
+    const vault = await makeVault()
+    const first = await boot(vault, endpoint)
+    await search(first, 'semantic-reuse-1', 'rag retrieval')
+    const before = await readIndex(vault)
+    const callsBefore = requestCount
+
+    await first.fiber.dispose()
+    const second = await boot(vault, endpoint)
+    await search(second, 'semantic-reuse-2', 'rag retrieval')
+
+    const after = await readIndex(vault)
+    expect(after.fingerprint).toBe(before.fingerprint)
+    expect(requestCount).toBe(callsBefore + 1)
+  })
+
+  it('rebuilds a legacy index file written before the fingerprint envelope', async () => {
+    const endpoint = await fakeEmbeddingsEndpoint()
+    const vault = await makeVault()
+    // Pre-envelope caches were a bare note map; nothing in them identifies the
+    // model, so they must be treated as unusable rather than silently trusted.
+    await writeFile(join(vault, '.vector-index.json'), JSON.stringify({
+      'concepts/RAG.md': { mtimeMs: (await stat(join(vault, 'concepts', 'RAG.md'))).mtimeMs, embedding: embeddingOf('rag') },
+      'island.md': { mtimeMs: (await stat(join(vault, 'island.md'))).mtimeMs, embedding: embeddingOf('cook rice') },
+    }))
+
+    const ctx = await boot(vault, endpoint, ['    batchSize: 1'])
+    const hits = await search(ctx, 'semantic-legacy', 'rag retrieval')
+    expect(hits[0]?.id).toBe('concepts/RAG.md')
+
+    const after = await readIndex(vault)
+    expect(after.schemaVersion).toBe(1)
+    // batchSize 1: 2 notes re-embedded + 1 query, so the legacy entries were
+    // not reused.
+    expect(requestCount).toBe(3)
   })
 })

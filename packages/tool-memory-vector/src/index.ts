@@ -3,11 +3,14 @@
  * registers `wiki_semantic_search`, which embeds notes through a configurable
  * OpenAI-compatible embeddings endpoint and ranks them by cosine similarity.
  * Embeddings are cached per note under `<vault>/.vector-index.json`, keyed by
- * file mtime so unchanged notes are not re-embedded.
+ * file mtime so unchanged notes are not re-embedded. The cache also carries a
+ * fingerprint of the embedding model, endpoint, and cache schema: vectors from
+ * a different embedding space are not comparable with the query vector, so any
+ * change there invalidates the whole cache instead of reusing entries by mtime.
  * @module @jacklika/dsh-tool-memory-vector
  */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -23,6 +26,9 @@ export const inject = ['tools']
 
 /** File storing the per-vault embedding cache. */
 const INDEX_FILE = '.vector-index.json'
+
+/** On-disk cache layout version; bump it when the envelope shape changes. */
+const INDEX_SCHEMA_VERSION = 1
 
 /** Plugin configuration. */
 export interface Config {
@@ -80,6 +86,29 @@ interface IndexEntry {
 
 /** The on-disk index: vault-relative note id to its embedding record. */
 type VectorIndex = Record<string, IndexEntry>
+
+/** What `.vector-index.json` holds: the fingerprint plus the cached notes. */
+interface IndexEnvelope {
+  schemaVersion: number
+  fingerprint: string
+  notes: VectorIndex
+}
+
+/**
+ * Identify the embedding space a cache was built in. Two caches with different
+ * fingerprints hold vectors that cannot be compared against each other or
+ * against a query vector, so the fingerprint — not mtime — decides reuse.
+ * @param resolved - applied plugin configuration.
+ * @returns a stable hash of the cache schema, endpoint, and model.
+ */
+function indexFingerprint(resolved: ResolvedConfig): string {
+  const identity = JSON.stringify({
+    schemaVersion: INDEX_SCHEMA_VERSION,
+    endpoint: resolved.endpoint,
+    model: resolved.model,
+  })
+  return createHash('sha1').update(identity, 'utf8').digest('hex')
+}
 
 function assertPositiveInteger(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 1) {
@@ -141,28 +170,43 @@ function cosine(a: number[], b: number[]): number {
   return na > 0 && nb > 0 ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0
 }
 
-async function loadIndex(root: string): Promise<VectorIndex> {
+/**
+ * Read the cached index when it was built for `fingerprint`.
+ * @param root - vault root.
+ * @param fingerprint - current embedding-space fingerprint.
+ * @returns the cached notes, or `undefined` when the cache is missing, corrupt,
+ *   or was written under another schema, endpoint, or model.
+ */
+async function loadIndex(root: string, fingerprint: string): Promise<VectorIndex | undefined> {
   try {
     const text = await readFile(join(root, INDEX_FILE), 'utf8')
-    const parsed = JSON.parse(text) as unknown
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    return parsed as VectorIndex
+    const parsed = JSON.parse(text) as Partial<IndexEnvelope> | null
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+    if (parsed.schemaVersion !== INDEX_SCHEMA_VERSION || parsed.fingerprint !== fingerprint) return undefined
+    const notes = parsed.notes
+    if (typeof notes !== 'object' || notes === null || Array.isArray(notes)) return undefined
+    return notes
   } catch {
-    return {}
+    return undefined
   }
 }
 
 /**
  * Refresh the embedding index for the current vault contents: embed every
  * note whose file is new or whose mtime changed since the cached record, drop
- * deleted notes, and persist the result.
+ * deleted notes, and persist the result. A cache whose fingerprint no longer
+ * matches the configured model and endpoint is discarded first, so every note
+ * is re-embedded under the current embedding space.
  * @param root - vault root.
  * @param resolved - applied plugin configuration.
  * @returns the up-to-date index.
  */
 async function refreshIndex(root: string, resolved: ResolvedConfig, signal: AbortSignal): Promise<VectorIndex> {
   const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
-  const loaded = await loadIndex(root)
+  const fingerprint = indexFingerprint(resolved)
+  const cached = await loadIndex(root, fingerprint)
+  const loaded = cached ?? {}
+  const rebuilt = cached === undefined
   const alive = new Set(paths.map(path => vaultRelativeId(root, path)))
 
   let removed = 0
@@ -199,12 +243,13 @@ async function refreshIndex(root: string, resolved: ResolvedConfig, signal: Abor
     })
   }
 
-  if (stale.length > 0 || removed > 0) {
+  if (stale.length > 0 || removed > 0 || rebuilt) {
     signal.throwIfAborted()
     const indexPath = join(root, INDEX_FILE)
     const temporary = `${indexPath}.tmp-${process.pid}-${randomUUID()}`
     try {
-      await writeFile(temporary, JSON.stringify(index), 'utf8')
+      const envelope: IndexEnvelope = { schemaVersion: INDEX_SCHEMA_VERSION, fingerprint, notes: index }
+      await writeFile(temporary, JSON.stringify(envelope), 'utf8')
       await rename(temporary, indexPath)
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => undefined)
