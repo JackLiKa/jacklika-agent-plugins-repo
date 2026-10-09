@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-scope",
   "description": "Partitions memory-tool write ids into per-agent namespaces through the tools/execute waterfall so agents cannot collide on the same note by construction.",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "publishConfig": {
     "access": "public"
   },
