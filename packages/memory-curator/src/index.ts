@@ -8,7 +8,7 @@
  * @module @jacklika/dsh-memory-curator
  */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -70,12 +70,22 @@ interface WriteResult {
   bytes: number
 }
 
-function normalizeTitle(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+/**
+ * Fold a title to its comparison form: NFC, case-insensitive, every run of
+ * characters that are neither Unicode letters nor digits collapsed to one
+ * space. Keeping `\p{L}` means CJK and other non-Latin titles stay distinct
+ * instead of folding to the empty string they would all share.
+ */
+function foldTitle(title: string): string {
+  return title.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
 }
 
 function slugify(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const slug = foldTitle(title).replace(/ /g, '-')
+  // Emoji-only and punctuation-only titles fold to nothing; a stable content
+  // hash keeps them addressable and separate rather than sharing a bare ".md".
+  if (slug === '') return `note-${createHash('sha256').update(title.normalize('NFC')).digest('hex').slice(0, 12)}`
+  return slug
 }
 
 function ensureMdExtension(id: string): string {
@@ -128,10 +138,13 @@ async function callTool<T>(
 }
 
 function findConflicts(targetId: string, title: string, hits: SearchHit[]): SearchHit[] {
-  const normalized = normalizeTitle(title)
+  const normalized = foldTitle(title)
+  const target = targetId.normalize('NFC').toLowerCase()
   return hits.filter(hit => {
-    if (hit.id.toLowerCase() === targetId.toLowerCase()) return true
-    return normalizeTitle(hit.title) === normalized
+    if (hit.id.normalize('NFC').toLowerCase() === target) return true
+    // A title that folds to nothing carries no identity; matching it would make
+    // every untitled note a conflict with every other one.
+    return normalized !== '' && foldTitle(hit.title) === normalized
   })
 }
 

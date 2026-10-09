@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -157,6 +157,77 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     const text = await readFile(join(vault, 'shared', 'notes', 'bug-fix.md'), 'utf8')
     expect(text).toContain('Fixed off-by-one in loop.')
     expect(text).not.toContain('Added regression test.')
+  })
+
+  it('derives distinct readable ids for non-Latin and mixed-script titles', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
+    const ctx = await boot(vault)
+
+    const titles = ['数据库迁移方案', '用户偏好', 'データベース設計', 'Database Migration 方案']
+    const ids: string[] = []
+    for (const [index, title] of titles.entries()) {
+      const result = await capture(ctx, `cjk-${index}`, title, `Knowledge for ${title}.`, 'agent-1', vault)
+      expect(result.isError).toBe(false)
+      const out = JSON.parse(resultText(result)) as { written: boolean; id: string; conflict: boolean }
+      expect(out.written).toBe(true)
+      expect(out.conflict).toBe(false)
+      ids.push(out.id)
+    }
+
+    expect(ids).toEqual([
+      'shared/notes/数据库迁移方案.md',
+      'shared/notes/用户偏好.md',
+      'shared/notes/データベース設計.md',
+      'shared/notes/database-migration-方案.md',
+    ])
+
+    const notes = await readdir(join(vault, 'shared', 'notes'))
+    expect(notes).not.toContain('.md')
+    expect(notes.sort()).toEqual(ids.map(id => id.slice('shared/notes/'.length)).sort())
+    for (const id of ids) {
+      expect(await readFile(join(vault, id), 'utf8')).toContain('Knowledge for')
+    }
+  })
+
+  it('gives symbol-only titles a stable hashed id instead of one shared bare ".md"', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
+    const ctx = await boot(vault)
+
+    const captured: { written: boolean; id: string; conflict: boolean }[] = []
+    for (const [index, title] of ['🚀🎉', '???'].entries()) {
+      const result = await capture(ctx, `sym-${index}`, title, `Note ${index}.`, 'agent-1', vault)
+      expect(result.isError).toBe(false)
+      captured.push(JSON.parse(resultText(result)) as { written: boolean; id: string; conflict: boolean })
+    }
+    for (const out of captured) {
+      expect(out.written).toBe(true)
+      expect(out.conflict).toBe(false)
+      expect(out.id).toMatch(/^shared\/notes\/note-[0-9a-f]{12}\.md$/)
+    }
+    expect(captured[0].id).not.toBe(captured[1].id)
+
+    // The hash is content-stable, so recapturing the same title targets the same note.
+    const again = await capture(ctx, 'sym-2', '🚀🎉', 'Note 0 again.', 'agent-1', vault, { conflictPolicy: 'skip' })
+    expect((JSON.parse(resultText(again)) as { id: string }).id).toBe(captured[0].id)
+  })
+
+  it('folds NFC and NFD spellings of one title onto one note', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
+    const ctx = await boot(vault)
+    const nfc = 'Caf\u00E9 layout'
+    const nfd = 'Cafe\u0301 layout'
+    expect(nfc).not.toBe(nfd)
+
+    const first = await capture(ctx, 'nfc', nfc, 'The grid uses 12 columns.', 'agent-1', vault)
+    const second = await capture(ctx, 'nfd', nfd, 'The grid uses 12 columns.', 'agent-1', vault, { conflictPolicy: 'skip' })
+    expect(first.isError).toBe(false)
+    expect(second.isError).toBe(false)
+
+    const firstId = (JSON.parse(resultText(first)) as { id: string }).id
+    expect(firstId).toBe('shared/notes/caf\u00E9-layout.md')
+    expect((JSON.parse(resultText(second)) as { id: string }).id).toBe(firstId)
+    expect((await readdir(join(vault, 'shared', 'notes'))).map(name => name.normalize('NFC')))
+      .toEqual(['caf\u00E9-layout.md'])
   })
 
   it('withdraws its tools when the Loader fiber unloads', async () => {

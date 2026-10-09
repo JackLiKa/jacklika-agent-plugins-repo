@@ -16,6 +16,8 @@
  *   - queue releases its lock when the filesystem write finishes,
  *   - git commits both the `shared/` write that survived scope and the
  *     `agents/<key>/` namespace write scope created,
+ *   - curator's `memory_capture` reaches the vault through a nested dispatch,
+ *     so a captured note is queued, written, and committed like any other,
  *   - every row resolves the same default vault from one session workspace.
  *
  * The lane test fails if scope stops namespacing private writes (or if queue
@@ -38,6 +40,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as MemoryCurator from '@jacklika/dsh-memory-curator'
 import * as MemoryGit from '@jacklika/dsh-memory-git'
 import * as MemoryQueue from '@jacklika/dsh-memory-queue'
 import * as MemoryScope from '@jacklika/dsh-memory-scope'
@@ -124,6 +127,7 @@ async function boot(queueTiming = false): Promise<Context> {
     ['@jacklika/dsh-memory-queue', MemoryQueue],
     ['@jacklika/dsh-memory-git', MemoryGit],
     ['@jacklika/dsh-tool-memory-filesystem', ToolMemoryFilesystem],
+    ['@jacklika/dsh-memory-curator', MemoryCurator],
     ['@jacklika/dsh-tool-memory-graph', ToolMemoryGraph],
     ['@jacklika/dsh-tool-memory-vector', ToolMemoryVector],
   ])
@@ -136,7 +140,31 @@ async function boot(queueTiming = false): Promise<Context> {
   } as unknown as NonNullable<typeof ctx.loader.internal>
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
+  await expectRowsActive(ctx, rows)
   return ctx
+}
+
+/**
+ * Fail when a shipped row never activated.
+ *
+ * `Entry._init()` catches an import failure, reports it through
+ * `ctx.logger.error`, and leaves `fiber` undefined, so a resolved
+ * `loader.await()` on its own says nothing about whether every enabled row is
+ * actually running. Without this check a row can drop out of the bundle —
+ * package renamed, module missing from the map, `apply` throwing — and the
+ * whole-chain spec still reports green.
+ */
+async function expectRowsActive(ctx: Context, rows: ShippedRow[]): Promise<void> {
+  const entries = [...ctx.loader.entries()]
+  for (const row of rows) {
+    if (row.disabled === true) continue
+    const key = row.id ?? row.name
+    const entry = entries.find(candidate => candidate.options.id === key)
+    expect(entry, `shipped row ${key} is missing from the Loader tree`).toBeDefined()
+    expect(entry?.fiber, `shipped row ${key} never activated`).toBeDefined()
+    // Rethrows the config-validation or plugin-startup error, if any.
+    await entry?.fiber?.await()
+  }
 }
 
 function resultText(result: { content: { type: string; text?: string }[] }): string {
@@ -170,6 +198,33 @@ function write(
   })
 }
 
+function capture(
+  ctx: Context,
+  callId: string,
+  workspace: string,
+  title: string,
+  summary: string,
+  agentId = 'agent-1',
+) {
+  return ctx.tools.execute({
+    signal: new AbortController().signal,
+    callId: ToolCallId(callId),
+    name: 'memory_capture',
+    arguments: { title, summary },
+    agent: agent(agentId, workspace),
+  })
+}
+
+function recall(ctx: Context, callId: string, workspace: string, query: string, agentId = 'agent-1') {
+  return ctx.tools.execute({
+    signal: new AbortController().signal,
+    callId: ToolCallId(callId),
+    name: 'memory_recall',
+    arguments: { query },
+    agent: agent(agentId, workspace),
+  })
+}
+
 async function gitLog(vault: string): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', vault, 'log', '--format=%s', '--name-only'])
   return stdout
@@ -196,6 +251,8 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     expect(names).toContain('wiki_search')
     expect(names).toContain('wiki_write')
     expect(names).toContain('wiki_graph')
+    expect(names).toContain('memory_capture')
+    expect(names).toContain('memory_recall')
     // The shipped patch disables the vector row, so its tool never registers.
     expect(names).not.toContain('wiki_semantic_search')
 
@@ -307,5 +364,53 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     }
     expect(parsed.nodes.map(node => node.id).sort()).toEqual(['shared/a.md', 'shared/b.md'])
     expect(parsed.edges).toContainEqual({ from: 'shared/a.md', to: 'shared/b.md' })
+  })
+
+  it('keeps distinct non-Latin titles in distinct notes across the whole ladder', async () => {
+    const workspace = await temp('dsh-chain-ws-')
+    const ctx = await boot()
+    const vault = vaultOf(workspace)
+
+    // An ASCII-only slug used to fold both of these to "", so every pure-CJK
+    // capture shared the single id `shared/notes/.md` and the second one landed
+    // on the first as a "conflict".
+    const migration = await capture(ctx, 'capture-cjk-1', workspace, '数据库迁移方案', 'Use pg_dump before the cutover.')
+    const preferences = await capture(ctx, 'capture-cjk-2', workspace, '用户偏好', 'Dark theme, Beijing timestamps.')
+    expect(migration.isError).toBe(false)
+    expect(preferences.isError).toBe(false)
+    if (migration.isError || preferences.isError) throw new Error('expected chain memory_capture success')
+
+    const first = JSON.parse(resultText(migration)) as { written: boolean; id: string; conflict: boolean }
+    const second = JSON.parse(resultText(preferences)) as { written: boolean; id: string; conflict: boolean }
+    expect(first).toMatchObject({ written: true, id: 'shared/notes/数据库迁移方案.md', conflict: false })
+    expect(second).toMatchObject({ written: true, id: 'shared/notes/用户偏好.md', conflict: false })
+
+    expect(await readFile(join(vault, 'shared', 'notes', '数据库迁移方案.md'), 'utf8'))
+      .toContain('Use pg_dump before the cutover.')
+    expect(await readFile(join(vault, 'shared', 'notes', '用户偏好.md'), 'utf8'))
+      .toContain('Dark theme, Beijing timestamps.')
+    expect(await readFile(join(vault, 'shared', 'notes', '数据库迁移方案.md'), 'utf8'))
+      .not.toContain('Dark theme, Beijing timestamps.')
+
+    const log = await gitLog(vault)
+    expect(log).toContain('wiki_write: shared/notes/数据库迁移方案.md')
+    expect(log).toContain('wiki_write: shared/notes/用户偏好.md')
+    expect(await heldLocks(vault)).toEqual([])
+  })
+
+  it('recalls a note that memory_capture wrote through the ladder', async () => {
+    const workspace = await temp('dsh-chain-ws-')
+    const ctx = await boot()
+
+    const captured = await capture(ctx, 'capture-en', workspace, 'Project conventions', 'Use pnpm 11.7.0 and Node ^22.19.0.')
+    expect(captured.isError).toBe(false)
+    if (captured.isError) throw new Error('expected chain memory_capture success')
+    expect((JSON.parse(resultText(captured)) as { id: string }).id).toBe('shared/notes/project-conventions.md')
+
+    const recalled = await recall(ctx, 'recall-en', workspace, 'pnpm Node project conventions')
+    expect(recalled.isError).toBe(false)
+    if (recalled.isError) throw new Error('expected chain memory_recall success')
+    const hits = (JSON.parse(resultText(recalled)) as { hits: { id: string }[] }).hits
+    expect(hits.map(hit => hit.id)).toContain('shared/notes/project-conventions.md')
   })
 })
