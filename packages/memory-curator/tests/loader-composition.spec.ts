@@ -124,10 +124,14 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
 
     const r1 = await capture(ctx, 'c1', 'Project conventions', 'Use pnpm 11.7.0 and Node ^22.19.0.', 'agent-1', vault, { tags: ['conventions', 'node', 'pnpm'] })
     expect(r1.isError).toBe(false)
-    const out1 = JSON.parse(resultText(r1)) as { written: boolean; id: string; mode: string }
+    const out1 = JSON.parse(resultText(r1)) as { written: boolean; id: string; mode: string; version: string; created?: string; updated?: string; committed?: boolean }
     expect(out1.written).toBe(true)
     expect(out1.id).toBe('shared/notes/project-conventions.md')
     expect(out1.mode).toBe('overwrite')
+    expect(out1.version.length).toBe(40)
+    expect(out1.created).toMatch(/\+08:00$/)
+    expect(out1).not.toHaveProperty('updated')
+    expect(out1).not.toHaveProperty('committed')
 
     const r1r = await readNote(ctx, 'r1-read', 'shared/notes/project-conventions.md', 'agent-1', vault)
     expect(r1r.isError).toBe(false)
@@ -313,13 +317,39 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
 
     const result = await capture(ctx, 'fresh', 'Fresh note', 'Nothing existed before.', 'agent-1', vault)
     expect(result.isError).toBe(false)
-    const out = JSON.parse(resultText(result)) as { id: string; mode: string }
+    const out = JSON.parse(resultText(result)) as { id: string; mode: string; version: string; created?: string; updated?: string }
     expect(out.mode).toBe('overwrite')
+    expect(out.version.length).toBe(40)
+    expect(out.created).toMatch(/\+08:00$/)
+    expect(out).not.toHaveProperty('updated')
 
     const read = await readNote(ctx, 'fresh-read', out.id, 'agent-1', vault)
     const { frontmatter } = JSON.parse(resultText(read)) as { frontmatter: Record<string, unknown> }
     expect(frontmatter).not.toHaveProperty('updated')
     expect(String(frontmatter.created)).toMatch(/\+08:00$/)
+  })
+
+  it('preserves created and adds updated on an append capture', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
+    // Appending to an existing note is a conflict, so the write path needs
+    // approval to be reachable.
+    const ctx = await boot(vault, { request: async () => 'allowed-once' })
+
+    const r1 = await capture(ctx, 'append-first', 'Appendable', 'First section.', 'agent-1', vault)
+    expect(r1.isError).toBe(false)
+    const out1 = JSON.parse(resultText(r1)) as { written: boolean; id: string; version: string; created?: string; updated?: string }
+    expect(out1.written).toBe(true)
+    expect(out1.version.length).toBe(40)
+    expect(out1.created).toMatch(/\+08:00$/)
+    expect(out1).not.toHaveProperty('updated')
+
+    const r2 = await capture(ctx, 'append-second', 'Appendable', 'Second section.', 'agent-1', vault, { mode: 'append' })
+    expect(r2.isError).toBe(false)
+    const out2 = JSON.parse(resultText(r2)) as { written: boolean; id: string; version: string; created?: string; updated?: string }
+    expect(out2.written).toBe(true)
+    expect(out2.created).toBe(out1.created)
+    expect(out2.updated).toMatch(/\+08:00$/)
+    expect(out2.version).not.toBe(out1.version)
   })
 
   it('withdraws its tools when the Loader fiber unloads', async () => {

@@ -5,7 +5,7 @@ Curator tools for the DSH memory vault. This package is a member of the `@jackli
 ## Tools
 
 - `memory_recall(query)` — Search the vault for prior notes before starting a task. Returns `{ query, hits, total }`, where `total` is the vault-wide match count passed through from `wiki_search` and can exceed `hits.length` when the search layer caps its results — so a caller can tell "these are all the matches" from "there are more".
-- `memory_capture(title, summary, ...)` — Persist durable knowledge after significant work, with conflict detection and optional user approval.
+- `memory_capture(title, summary, ...)` — Persist durable knowledge after significant work, with conflict detection and optional user approval. Returns `{ written, id, mode, conflict, version, created?, updated?, committed? }`: `version` is the SHA-1 of the persisted note text, `created` is present on first capture, `updated` is present on appends, and `committed` is present when `memory-git` completed the commit.
 
 ## Note ids
 

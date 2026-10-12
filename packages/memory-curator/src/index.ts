@@ -76,6 +76,9 @@ interface WriteResult {
   mode: string
   bytes: number
   version: string
+  created?: string
+  updated?: string
+  committed?: boolean
 }
 
 /**
@@ -381,18 +384,23 @@ export function apply(ctx: Context, config: Config): void {
         ? appendContent
         : `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
 
-      await callTool<WriteResult>(ctx, exec, 'wiki_write', {
+      const writeResult = await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: finalId,
         content,
         mode: writeMode,
       })
 
-      return {
+      const response: Record<string, unknown> = {
         written: true,
         id: finalId,
         mode: writeMode,
         conflict: conflictExists,
-      } as unknown as JsonValue
+        version: writeResult.version,
+      }
+      if (typeof writeResult.created === 'string' && writeResult.created !== '') response.created = writeResult.created
+      if (typeof writeResult.updated === 'string' && writeResult.updated !== '') response.updated = writeResult.updated
+      if (typeof writeResult.committed === 'boolean') response.committed = writeResult.committed
+      return response as unknown as JsonValue
     },
   })))
 }
