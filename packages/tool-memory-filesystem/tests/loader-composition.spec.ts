@@ -459,6 +459,35 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(raw).toMatch(/## \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00\n\nPlain tail\./)
   })
 
+  it('keeps overwrite author-owned: created is only stamped on append', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    // Overwrite replaces the whole file, so its frontmatter is the caller's to
+    // compose — `memory_capture` supplies its own `created`. A bare overwrite
+    // must not gain lifetime fields the author never wrote, and the result
+    // reports none.
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('overwrite-authored'),
+      name: 'wiki_write',
+      arguments: {
+        id: 'concepts/authored.md',
+        mode: 'overwrite',
+        content: '---\ntitle: Authored\n---\n\n# Authored\n\nBody text.\n',
+      },
+    })
+    if (write.isError) throw new Error('expected wiki_write success')
+    const result = JSON.parse(resultText(write)) as { created?: string; updated?: string }
+    expect(result.created).toBeUndefined()
+    expect(result.updated).toBeUndefined()
+
+    const raw = await readFile(join(vault, 'concepts', 'authored.md'), 'utf8')
+    expect(raw).toContain('title: Authored')
+    expect(raw).not.toContain('created:')
+    expect(raw).not.toContain('updated:')
+  })
+
   it('fails wiki_write with a stale baseVersion instead of silently overwriting', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)
