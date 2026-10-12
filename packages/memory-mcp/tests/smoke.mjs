@@ -109,6 +109,20 @@ async function runSmoke() {
     const s = await Promise.race([call('tools/call', { name: 'wiki_search', arguments: { query: 'Retrieval' } }), earlyExit])
     assert(JSON.parse(s.content[0].text).length === 1, 'wiki_search hit')
 
+    // Frontmatter `title` must win over body heading in search results.
+    await Promise.race([call('tools/call', {
+      name: 'wiki_write',
+      arguments: {
+        id: 'explicit/title.md',
+        mode: 'overwrite',
+        content: "---\ntitle: Explicit Smoke Title\ncreated: 2026-10-12T00:00:00+08:00\n---\n\n# Body Heading\n\nsearch target text\n",
+      },
+    }), earlyExit])
+    const titleSearch = await Promise.race([call('tools/call', { name: 'wiki_search', arguments: { query: 'target' } }), earlyExit])
+    const titleHits = JSON.parse(titleSearch.content[0].text)
+    assert(titleHits.length === 1, 'frontmatter title search hit')
+    assert(titleHits[0].title === 'Explicit Smoke Title', `frontmatter title wins: ${titleHits[0].title}`)
+
     await writeFile(join(outside, 'secret.md'), 'outside\n')
     let linked = false
     try {

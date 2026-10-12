@@ -304,9 +304,13 @@ async function searchNotes(query, maxResults = 20) {
   const notes = []
   for (const path of await listNotePaths()) {
     const text = await readFile(path, 'utf8')
-    const { body } = splitFrontmatter(text)
+    const { frontmatter, body } = splitFrontmatter(text)
     const id = vaultRelativeId(path)
-    const title = /^#\s+(.+)$/m.exec(body)?.[1]?.trim() ?? id.replace(/\.[^.]+$/, '')
+    const explicitTitle = typeof frontmatter.title === 'string' ? frontmatter.title.trim() : ''
+    const headingMatch = /^#\s+(.+)$/m.exec(body)
+    const title = explicitTitle !== ''
+      ? explicitTitle
+      : (headingMatch?.[1]?.trim() ?? id.replace(/\.[^.]+$/, ''))
     notes.push({ id, title, links: extractLinks(text), body })
   }
   const hits = notes.filter(n => {
@@ -379,8 +383,12 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
 async function buildGraph(id, depth = 1, maxNodes = 200) {
   const idOf = p => vaultRelativeId(p)
   const title = async p => {
-    const { body } = splitFrontmatter(await readFile(p, 'utf8'))
-    return /^#\s+(.+)$/m.exec(body)?.[1]?.trim() ?? idOf(p).replace(/\.[^.]+$/, '')
+    const { frontmatter, body } = splitFrontmatter(await readFile(p, 'utf8'))
+    const explicitTitle = typeof frontmatter.title === 'string' ? frontmatter.title.trim() : ''
+    const headingMatch = /^#\s+(.+)$/m.exec(body)
+    return explicitTitle !== ''
+      ? explicitTitle
+      : (headingMatch?.[1]?.trim() ?? idOf(p).replace(/\.[^.]+$/, ''))
   }
   let paths
   const resolve = await vaultLinkResolver()
