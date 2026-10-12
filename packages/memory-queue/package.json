@@ -1,7 +1,7 @@
 {
   "name": "@jacklika/dsh-memory-queue",
   "description": "Serializes selected model-facing tool calls (default wiki_write) through the tools/execute waterfall so same-vault mutations cannot race.",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "publishConfig": {
     "access": "public"
   },
