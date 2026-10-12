@@ -326,6 +326,39 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(hits.map(h => h.id)).toContain('concepts/RAG.md')
   })
 
+  it('lifts a semantic-only note into wiki_search via fusion', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-memory-fusion-'))
+    vaults.push(vault)
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'a.md'), '# Alpha\n\nzephyr-token appears here.\n')
+    await writeFile(join(vault, 'shared', 'notes', 'b.md'), '# Beta\n\nNo shared keywords here.\n')
+    const ctx = await boot(vault)
+    ctx.tools.register(defineTool({
+      name: 'wiki_semantic_search',
+      description: 'stub semantic search',
+      parameters: { query: { type: 'string', required: true } },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+      },
+      async execute() {
+        return [{ id: 'shared/notes/b.md', score: 0.9 }]
+      },
+    }))
+
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-fusion-lift'),
+      name: 'wiki_search',
+      arguments: { query: 'zephyr-token' },
+    })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected wiki_search success')
+    const page = searchPage<{ id: string }>(result)
+    expect(page.hits.map(h => h.id)).toContain('shared/notes/a.md')
+    expect(page.hits.map(h => h.id)).toContain('shared/notes/b.md')
+  })
+
   it('resolves bare-filename links across nested directories', async () => {
     const vault = await makeNestedVault()
     const ctx = await boot(vault)
