@@ -172,6 +172,11 @@ describe('memory-scope real Loader composition through cordis.yml', () => {
     for (const good of ['shared/notes/ok.md', 'sub/dir.md']) {
       const result = await write(ctx, `ok-${good}`, good, 'agent-1', vault)
       expect(result.isError, `id ${good} must succeed`).toBe(false)
+      if (!result.isError) {
+        const out = JSON.parse(resultText(result)) as { id: string }
+        const expected = good.startsWith('shared/') ? good : `agents/agent-1/${good}`
+        expect(out.id).toBe(expected)
+      }
     }
   })
 })
