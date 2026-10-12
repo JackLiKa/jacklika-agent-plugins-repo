@@ -251,8 +251,10 @@ export function apply(ctx: Context, config: Config): void {
       const search = await callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.query })
       // Mechanical per-turn summaries are useful for session replay, but they
       // are not curated knowledge. Keep them out of proactive recall unless a
-      // caller explicitly searches the wiki.
-      const curated = search.hits.filter(hit => !hit.id.startsWith('shared/notes/auto-capture/'))
+      // caller explicitly searches the wiki. The prefix covers both the legacy
+      // flat form `auto-capture-<session>.md` and the new isolated subdir
+      // `auto-capture/<session>.md`.
+      const curated = search.hits.filter(hit => !hit.id.startsWith('shared/notes/auto-capture'))
       // `search.total` is the vault-wide count before the search-layer cap. If
       // any auto-capture hits made it into the capped `hits` list, remove them
       // from the total so curated numbers stay truthful.
