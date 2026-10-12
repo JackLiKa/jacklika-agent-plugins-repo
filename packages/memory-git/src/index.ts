@@ -16,7 +16,17 @@ import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { containedPath, resolveMemoryVaultRoot } from '@jacklika/dsh-tool-memory-filesystem'
+
+declare module '@deepseek-ai/dsh-tools' {
+  interface ToolErrorInfo {
+    /** Whether the underlying write already reached disk before the commit failed. */
+    written?: boolean
+    /** Whether the git commit step completed. */
+    committed?: boolean
+  }
+}
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'memory-git'
@@ -205,16 +215,33 @@ export function apply(ctx: Context, config: Config): void {
       await enqueue(() => commitWrite(vault, id, resolved, exec.signal))
     } catch (error) {
       // `next()` already put the note on disk, so a commit failure leaves the
-      // vault and its history diverged. Say what state the caller is in and how
-      // to retry safely: a blind repeat of the same append duplicates it.
+      // vault and its history diverged. Surface the divergence as a structured
+      // error so callers know the note exists on disk uncommitted and can retry
+      // safely: a blind repeat of the same append duplicates it.
       const reason = error instanceof Error ? error.message : String(error)
-      throw new Error(
+      const message =
         `memory-git: note ${id} was written to the vault but not committed, so it is on disk outside git history. `
         + 'Re-read it with wiki_read and pass the returned version as baseVersion before writing again; '
-        + `repeating the same append without that read duplicates the appended section. Commit failure: ${reason}`,
-        { cause: error },
-      )
+        + `repeating the same append without that read duplicates the appended section. Commit failure: ${reason}`
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Error: ${message}` }],
+        error: {
+          message,
+          info: { name: 'ToolExecutionError', code: 'COMMIT_FAILED', written: true, committed: false, reason },
+        },
+      }
     }
-    return result
+    // `committed` is filled in so callers can distinguish a fully-persisted
+    // write from one that only reached disk.
+    const baseValue = !Array.isArray(result.value) && typeof result.value === 'object' && result.value !== null
+      ? { ...(result.value as Record<string, JsonValue>) }
+      : { value: result.value }
+    const enriched: Record<string, JsonValue> = { ...baseValue, committed: true }
+    return {
+      ...result,
+      value: enriched as JsonValue,
+      content: [{ type: 'text', text: JSON.stringify(enriched, null, 2) }],
+    }
   })
 }

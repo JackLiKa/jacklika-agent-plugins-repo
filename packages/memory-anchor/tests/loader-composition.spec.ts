@@ -237,7 +237,7 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
     await flush()
 
     expect(writeCalls).toHaveLength(1)
-    expect(writeCalls[0].id).toBe('shared/notes/auto-capture-sess-abc-1.md')
+    expect(writeCalls[0].id).toBe('shared/notes/auto-capture/sess-abc-1.md')
     expect(writeCalls[0].mode).toBe('append')
     expect(writeCalls[0].content).toContain('turn 3 (completed)')
     expect(writeCalls[0].content).toContain('wiki_search')
@@ -355,7 +355,7 @@ describe('memory-anchor auto-capture through the session/event feed', () => {
     await flush()
 
     expect(writeCalls).toHaveLength(1)
-    expect(writeCalls[0].id).toBe('shared/notes/auto-capture-a.md')
+    expect(writeCalls[0].id).toBe('shared/notes/auto-capture/a.md')
     expect(writeCalls[0].content).toContain('only_a')
   })
 

@@ -248,7 +248,13 @@ export function apply(ctx: Context, config: Config): void {
       return ''
     }
     const value = (exec.arguments as Record<string, unknown>)[resolved.laneArgument]
-    return typeof value === 'string' ? value : ''
+    if (typeof value !== 'string') return ''
+    // Note ids frequently arrive with redundant or case-varying forms. Normalize
+    // them so the same logical note uses one lane across agents and platforms.
+    if (resolved.laneArgument === 'id') {
+      return value.normalize('NFC').toLowerCase().replace(/\/+/g, '/').replace(/^\//, '').replace(/\/$/, '')
+    }
+    return value
   }
   const lockPathFor = (vault: string, key: string): string => key === ''
     ? join(vault, LOCK_DIR)

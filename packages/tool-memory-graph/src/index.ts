@@ -85,7 +85,9 @@ function assertPositiveInteger(name: string, value: number): void {
 
 async function noteTitle(absolutePath: string, id: string): Promise<string> {
   const text = await readFile(absolutePath, 'utf8')
-  const { body } = splitFrontmatter(text)
+  const { frontmatter, body } = splitFrontmatter(text)
+  const explicitTitle = typeof frontmatter.title === 'string' ? frontmatter.title.trim() : ''
+  if (explicitTitle !== '') return explicitTitle
   const heading = /^#\s+(.+)$/m.exec(body)
   return heading?.[1]?.trim() ?? id.replace(/\.[^.]+$/, '')
 }

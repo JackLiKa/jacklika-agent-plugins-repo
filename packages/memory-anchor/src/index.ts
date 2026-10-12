@@ -89,7 +89,7 @@ export const Config: z<Config> = z.object({
   ),
   vaultHint: z.boolean().default(true),
   autoCapture: z.boolean().default(true),
-  captureNotePrefix: z.string().default('shared/notes/auto-capture'),
+  captureNotePrefix: z.string().default('shared/notes/auto-capture/'),
   excerptChars: z.number().default(200),
 })
 
@@ -149,7 +149,10 @@ function messageText(value: unknown, max: number): string {
     .map(block => block.text as string)
     .join(' ')
     .trim()
-  return text.length > max ? `${text.slice(0, max)}…` : text
+  // Count visible characters by code point (not UTF-16 code units) so
+  // surrogate pairs and CJK ideographs are not sliced in the middle.
+  const graphemes = Array.from(text)
+  return graphemes.length > max ? `${graphemes.slice(0, max).join('')}…` : text
 }
 
 /**
@@ -332,7 +335,8 @@ async function captureTurn(
     ctx.logger?.debug(`memory-anchor: turn ${activity.turn} skipped: wiki_write not reachable from the agent scope`)
     return
   }
-  const noteId = `${resolved.captureNotePrefix}-${sessionNoteId(session)}.md`
+  const separator = resolved.captureNotePrefix.endsWith('/') ? '' : '-'
+  const noteId = `${resolved.captureNotePrefix}${separator}${sessionNoteId(session)}.md`
   const lines = [
     `## ${formatBeijingTime(new Date())} — turn ${activity.turn} (${reason})`,
     '',

@@ -51,7 +51,7 @@ It resolves the same vault root per call as `tool-memory-filesystem`: an explici
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The package is a single Cordis function plugin that registers `wiki_graph` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper, lists notes through the shared `listNotePaths` walker, and extracts `[[link]]` targets through `extractLinks`/`resolveLinkTarget`. Targets resolve with the same Obsidian-style tiers as `wiki_read` — exact vault-relative path, then path suffix, then basename anywhere in the vault, with deterministic ambiguity handling. A breadth-first walk selects the node set first; edges are then collected from every selected node so boundary-node outgoing edges are not dropped. When the node set exceeds `maxNodes`, a whole-vault graph keeps the lowest ids in code-unit order (the ordering `tool-memory-filesystem` tie-breaks with) and a subgraph keeps the notes nearest the center — BFS level first, then id — so which notes survive the cap never depends on directory-listing order and a subgraph never drops its own center. Output is `{ nodes: [{ id, title, backlinks }], edges: [{ from, to }] }`.
+The package is a single Cordis function plugin that registers `wiki_graph` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper, lists notes through the shared `listNotePaths` walker, and extracts `[[link]]` targets through `extractLinks`/`resolveLinkTarget`. Targets resolve with the same Obsidian-style tiers as `wiki_read` — exact vault-relative path, then path suffix, then basename anywhere in the vault, with deterministic ambiguity handling. A breadth-first walk selects the node set first; edges are then collected from every selected node so boundary-node outgoing edges are not dropped. When the node set exceeds `maxNodes`, a whole-vault graph keeps the lowest ids in code-unit order (the ordering `tool-memory-filesystem` tie-breaks with) and a subgraph keeps the notes nearest the center — BFS level first, then id — so which notes survive the cap never depends on directory-listing order and a subgraph never drops its own center. Output is `{ nodes: [{ id, title }], edges: [{ from, to }], truncated: boolean }`.
 
 -----
 
@@ -83,7 +83,7 @@ Independent. The plugin only supplies tool results; it does not change the reque
 <a id="known-limitations-and-deferred-work"></a>
 
 - **No visualization** — the tool returns JSON nodes and edges; rendering (Obsidian graph view, Mermaid) is left to consumers.
-- **Backlinks reflect the whole vault** — node `backlinks` counts are computed over all notes, not just the selected subgraph.
+- **Edges are scoped to selected nodes** — only links whose source and target both survive the `maxNodes` cap are returned, so boundary links outside the selected set are omitted.
 
 <a id="dev-note"></a>
 ### Dev Note

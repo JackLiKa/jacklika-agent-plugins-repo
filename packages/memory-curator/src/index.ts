@@ -88,16 +88,34 @@ function foldTitle(title: string): string {
   return title.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
 }
 
+const MAX_SLUG_LENGTH = 100
+
+function hashTail(title: string, length = 12): string {
+  return createHash('sha256').update(title.normalize('NFC')).digest('hex').slice(0, length)
+}
+
 function slugify(title: string): string {
-  const slug = foldTitle(title).replace(/ /g, '-')
+  let slug = foldTitle(title).replace(/ /g, '-')
   // Emoji-only and punctuation-only titles fold to nothing; a stable content
   // hash keeps them addressable and separate rather than sharing a bare ".md".
-  if (slug === '') return `note-${createHash('sha256').update(title.normalize('NFC')).digest('hex').slice(0, 12)}`
+  if (slug === '') return `note-${hashTail(title)}`
+  // Keep generated filenames bounded on all platforms. A long CJK title would
+  // otherwise create a very long filename; truncate and append a hash so the
+  // id remains deterministic and collision-resistant.
+  if (slug.length > MAX_SLUG_LENGTH) {
+    slug = `${slug.slice(0, 64)}-${hashTail(title)}`
+  }
   return slug
 }
 
 function ensureMdExtension(id: string): string {
   return id.endsWith('.md') ? id : `${id}.md`
+}
+
+function isSafeNoteId(id: string): boolean {
+  if (id === '' || id.startsWith('/') || id.startsWith('\\') || /^[A-Za-z]:/.test(id)) return false
+  if (id.includes('\\')) return false
+  return !id.split('/').some(segment => segment === '..' || segment === '.')
 }
 
 function resolveNoteId(
@@ -108,6 +126,9 @@ function resolveNoteId(
 ): string {
   if (id !== undefined && id !== '') {
     const withExt = ensureMdExtension(id)
+    if (!isSafeNoteId(withExt)) {
+      throw new Error(`memory-curator: invalid note id ${JSON.stringify(withExt)}: ids must be vault-relative paths without '..', '.', backslashes, leading slashes, or drive letters`)
+    }
     if (scope === 'private') return withExt
     return withExt.startsWith('shared/') ? withExt : `${notesDir}/${withExt.replace(/^\//, '')}`
   }
@@ -228,12 +249,18 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args, exec) {
       const search = await callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.query })
+      // Mechanical per-turn summaries are useful for session replay, but they
+      // are not curated knowledge. Keep them out of proactive recall unless a
+      // caller explicitly searches the wiki.
+      const curated = search.hits.filter(hit => !hit.id.startsWith('shared/notes/auto-capture/'))
+      // `search.total` is the vault-wide count before the search-layer cap. If
+      // any auto-capture hits made it into the capped `hits` list, remove them
+      // from the total so curated numbers stay truthful.
+      const total = search.total - (search.hits.length - curated.length)
       return {
         query: args.query,
-        hits: search.hits.slice(0, 20),
-        // Forward the ranking's own count: `hits` is already capped upstream, so
-        // its length would understate how much actually matched.
-        total: search.total,
+        hits: curated.slice(0, 20),
+        total,
       } as unknown as JsonValue
     },
   })))

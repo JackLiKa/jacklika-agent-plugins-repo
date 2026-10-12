@@ -564,10 +564,13 @@ export async function buildIndex(
   }
   const index = new Map<string, IndexedNote>()
   for (const note of notes) {
+    const explicitTitle = typeof note.frontmatter.title === 'string' ? note.frontmatter.title.trim() : ''
     const headingMatch = /^#\s+(.+)$/m.exec(note.body)
-    const title = headingMatch !== null && headingMatch[1] !== undefined
-      ? headingMatch[1].trim()
-      : note.id.replace(/\.[^.]+$/, '')
+    const title = explicitTitle !== ''
+      ? explicitTitle
+      : (headingMatch !== null && headingMatch[1] !== undefined
+        ? headingMatch[1].trim()
+        : note.id.replace(/\.[^.]+$/, ''))
     index.set(note.id, { id: note.id, title, backlinks: [], body: note.body })
   }
   const linkResolver = createLinkResolver([...index.keys()])
@@ -770,6 +773,9 @@ export function apply(ctx: Context, config: Config): void {
           mode: { type: 'string' },
           bytes: { type: 'integer' },
           version: { type: 'string' },
+          created: { type: 'string' },
+          updated: { type: 'string' },
+          committed: { type: 'boolean' },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
@@ -796,10 +802,14 @@ export function apply(ctx: Context, config: Config): void {
         throw new Error(`tool-memory-filesystem: note ${args.id} changed since it was read; re-read it before writing`)
       }
       let finalBody: string
+      let frontmatter: Record<string, unknown> = {}
       if (mode === 'overwrite') {
         finalBody = normalizeTextTimestamps(args.content)
+        frontmatter = splitFrontmatter(finalBody).frontmatter
       } else {
-        const { frontmatter, body } = splitFrontmatter(existing ?? '')
+        const split = splitFrontmatter(existing ?? '')
+        frontmatter = split.frontmatter
+        const body = split.body
         normalizeNoteTimestamps(frontmatter)
         const timestamp = formatBeijingTime(new Date())
         // Track note lifetime the way memory_capture does: `created` on the
@@ -822,7 +832,7 @@ export function apply(ctx: Context, config: Config): void {
       await writeAtomic(absolutePath, finalBody)
       const info = await stat(absolutePath)
       recordMtime(absolutePath, info.mtimeMs)
-      return {
+      const result: Record<string, unknown> = {
         id: vaultRelativeId(vaultRoot, absolutePath),
         mode,
         bytes: Buffer.byteLength(finalBody, 'utf8'),
@@ -830,6 +840,9 @@ export function apply(ctx: Context, config: Config): void {
         // fingerprint `wiki_read` would report — without a second read.
         version: noteVersion(finalBody),
       }
+      if (typeof frontmatter.created === 'string' && frontmatter.created !== '') result.created = frontmatter.created
+      if (typeof frontmatter.updated === 'string' && frontmatter.updated !== '') result.updated = frontmatter.updated
+      return result
     },
   })))
 }
