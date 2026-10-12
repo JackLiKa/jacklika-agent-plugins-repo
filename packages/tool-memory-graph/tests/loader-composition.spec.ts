@@ -75,10 +75,20 @@ async function makeVault(): Promise<string> {
   return vaultRoot
 }
 
+async function makeKeywordVault(): Promise<string> {
+  const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-graph-keyword-'))
+  const notes = join(vaultRoot, 'notes')
+  await mkdir(notes)
+  await writeFile(join(notes, 'b.md'), '# B\n\nB contains word1.\n')
+  await writeFile(join(notes, 'c.md'), '# C\n\nC contains word1 and word2.\n')
+  await writeFile(join(notes, 'd.md'), '# D\n\nD is unrelated.\n')
+  return vaultRoot
+}
+
 /** The parsed `wiki_graph` payload. */
 interface Graph {
   nodes: { id: string; title: string }[]
-  edges: { from: string; to: string }[]
+  edges: { from: string; to: string; type?: 'link' | 'keyword'; keywords?: string[]; weight?: number }[]
   truncated: boolean
 }
 
@@ -200,5 +210,37 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
       expect(graph.nodes.some(node => node.id === edge.from)).toBe(true)
       expect(graph.nodes.some(node => node.id === edge.to)).toBe(true)
     }
+  })
+
+  it('derives keyword edges from shared terms and updates them after a note is rewritten', async () => {
+    const vault = await makeKeywordVault()
+    const ctx = await boot(vault)
+
+    const before = await graphAll(ctx, 'keyword-before')
+    const beforeEdge = before.edges.find(
+      e => e.from === 'notes/b.md' && e.to === 'notes/c.md' && e.type === 'keyword',
+    )
+    expect(beforeEdge).toBeDefined()
+    expect(beforeEdge?.keywords).toContain('word1')
+    expect(beforeEdge?.weight).toBeGreaterThan(0)
+
+    // Rewrite B: drop word1, introduce word2. C still has both word1 and word2.
+    await writeFile(join(vault, 'notes', 'b.md'), '# B\n\nB now uses word2.\n')
+    const after = await graphAll(ctx, 'keyword-after')
+
+    const staleEdge = after.edges.find(
+      e => e.from === 'notes/b.md' && e.to === 'notes/c.md' && e.keywords?.includes('word1'),
+    )
+    expect(staleEdge).toBeUndefined()
+
+    const updatedEdge = after.edges.find(
+      e => e.from === 'notes/b.md' && e.to === 'notes/c.md' && e.type === 'keyword' && e.keywords?.includes('word2'),
+    )
+    expect(updatedEdge).toBeDefined()
+    expect(updatedEdge?.keywords).toEqual(['word2'])
+    expect(updatedEdge?.weight).toBe(2)
+
+    // D is isolated: no edges to or from it.
+    expect(after.edges.some(e => e.from === 'notes/d.md' || e.to === 'notes/d.md')).toBe(false)
   })
 })

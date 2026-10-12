@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-tool-memory-graph` 让 agent 对 [`dsh-tool-memory-filesystem`](../tool-memory-filesystem/README.zh.md) 使用的 Markdown 仓库做只读图查询。模型可见一个工具 `wiki_graph`，返回由 Obsidian 风格 `[[link]]` 引用推导的笔记节点和有向边——可以是全仓库图，也可以是以某条笔记为中心的可达子图。该包复用 filesystem 插件的仓库根解析与解析辅助函数，路径约束、frontmatter 处理和 `indexHiddenDirs` 策略完全一致，不引入第二套解析器。
+`dsh-tool-memory-graph` 让 agent 对 [`dsh-tool-memory-filesystem`](../tool-memory-filesystem/README.zh.md) 使用的 Markdown 仓库做只读图查询。模型可见一个工具 `wiki_graph`，返回两类来源推导的笔记节点和有向边：显式 Obsidian 风格 `[[link]]` 引用，以及笔记之间的关键词共现（frontmatter tags/title 与正文中的显著词）。因此它能暴露类似“B 与 C 都提到 `word1`”的隐式关联，且当某条笔记被重写、共同词消失时该关联自动消失；若重写后双方出现新的共词（如 `word2`），则自动建立以 `word2` 为标签的新关联。该包复用 filesystem 插件的仓库根解析与解析辅助函数，路径约束、frontmatter 处理和 `indexHiddenDirs` 策略完全一致，不引入第二套解析器。
 
 ## 目录
 
@@ -44,14 +44,14 @@ kind: "package-reference"
 
 ### 工具
 
-- `wiki_graph(id?, depth?)` —— 不传 `id` 时返回全仓库的节点与有向边；传 `id` 时返回 `depth` 跳内的可达子图，两个端点都被选中时边界节点的出边也会包含。
+- `wiki_graph(id?, depth?)` —— 不传 `id` 时返回全仓库的节点与有向边；传 `id` 时返回 `depth` 跳内的可达子图，两个端点都被选中时边界节点的出边也会包含。边携带 `type`（`link` 或 `keyword`）、`keywords`（仅 `keyword` 边）和 `weight`（合并词频）。
 
 -----
 
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-本包是单个 Cordis 函数插件，在 `ctx.tools` 上注册 `wiki_graph`。每次调用通过共享的 `resolveMemoryVaultRoot` 解析仓库根，用 `listNotePaths` 遍历笔记，用 `extractLinks`/`resolveLinkTarget` 提取 `[[link]]` 目标。目标按与 `wiki_read` 相同的 Obsidian 语义解析——先精确仓库相对路径，再路径后缀，最后全仓库 basename 匹配，多重命中按确定性规则选择。先用广度优先遍历确定节点集合，再从所有已选节点收集边，因此边界节点的出边不会丢失。节点集合超过 `maxNodes` 时，全仓库图保留码点序最小的若干 id（与 `tool-memory-filesystem` 的并列排序规则一致），子图则保留离中心最近的笔记——先按 BFS 层级、再按 id——因此保留哪些笔记不依赖目录列举顺序，子图也不会丢掉自己的中心节点。输出为 `{ nodes: [{ id, title }], edges: [{ from, to }], truncated: boolean }`。
+本包是单个 Cordis 函数插件，在 `ctx.tools` 上注册 `wiki_graph`。每次调用通过共享的 `resolveMemoryVaultRoot` 解析仓库根，用 `listNotePaths` 遍历笔记，用 `extractLinks`/`resolveLinkTarget` 提取 `[[link]]` 目标。目标按与 `wiki_read` 相同的 Obsidian 语义解析——先精确仓库相对路径，再路径后缀，最后全仓库 basename 匹配，多重命中按确定性规则选择。除显式链接外，工具还会从每条笔记提取显著词（frontmatter `tags` ×3、frontmatter `title` ×2、正文词 ×1），并为任意两篇共享一个或多个词的笔记创建 `keyword` 边。广度优先遍历同时跟随 `link` 边与 `keyword` 边以确定节点集合，再从所有已选节点收集边，因此边界节点的出边不会丢失。节点集合超过 `maxNodes` 时，全仓库图保留码点序最小的若干 id（与 `tool-memory-filesystem` 的并列排序规则一致），子图则保留离中心最近的笔记——先按 BFS 层级、再按 id——因此保留哪些笔记不依赖目录列举顺序，子图也不会丢掉自己的中心节点。由于 `wiki_graph` 每次调用都会从磁盘重新计算，重写一条笔记会移除旧的 `keyword` 边，并为新正文中保留下来的或新出现的词建立新边。输出为 `{ nodes: [{ id, title }], edges: [{ from, to, type, keywords?, weight? }], truncated: boolean }`。
 
 -----
 
@@ -62,12 +62,12 @@ kind: "package-reference"
 
 #### 模型可见内容
 
-模型看到生成的 `wiki_graph` schema。描述声明该图是只读的，由 `[[link]]` 引用推导。
+模型看到生成的 `wiki_graph` schema。描述声明该图是只读的，由 `[[link]]` 引用与共享关键词共同推导。
 
 ##### `wiki_graph` 的原文描述
 
 ```markdown
-Return the Obsidian-style [[link]] graph of the wiki vault: note ids, titles, and directed edges. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth.
+Return the link and keyword graph of the wiki vault: note ids, titles, and directed edges. Explicit `[[link]]` edges are type `link`; edges derived from shared significant terms are type `keyword` with `keywords` and `weight`. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth.
 ```
 
 #### Token 影响

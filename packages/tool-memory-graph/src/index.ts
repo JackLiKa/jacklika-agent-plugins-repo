@@ -3,6 +3,12 @@
  * registers `wiki_graph`, which returns the vault's note/link graph or the
  * subgraph reachable from one note, so an agent can reason about how memory
  * notes connect before reading them.
+ *
+ * In addition to explicit Obsidian-style `[[link]]` edges, `wiki_graph` now
+ * derives keyword edges: two notes share a directed keyword edge for every
+ * significant term that appears in both. Rewriting a note therefore
+ * automatically removes stale keyword edges and creates new ones for the terms
+ * that survive or appear in the new text.
  * @module @jacklika/dsh-tool-memory-graph
  */
 
@@ -59,12 +65,18 @@ interface GraphNode {
   title: string
 }
 
-/** One directed `[[link]]` edge between notes. */
+/** One directed `[[link]]` or keyword edge between notes. */
 interface GraphEdge {
-  /** Source note id containing the link. */
+  /** Source note id. */
   from: string
-  /** Target note id the link resolves to. */
+  /** Target note id. */
   to: string
+  /** Edge type: explicit `link` or derived `keyword`. */
+  type?: 'link' | 'keyword'
+  /** Shared keywords for `type: 'keyword'` edges. */
+  keywords?: string[]
+  /** Combined term frequency weight for `type: 'keyword'` edges. */
+  weight?: number
 }
 
 /** The complete or partial link graph returned by `wiki_graph`. */
@@ -77,14 +89,101 @@ interface MemoryGraph {
   truncated: boolean
 }
 
+interface ParsedNote {
+  id: string
+  path: string
+  text: string
+  terms: Map<string, number>
+}
+
 function assertPositiveInteger(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`tool-memory-graph: ${name} must be a positive integer`)
   }
 }
 
-async function noteTitle(absolutePath: string, id: string): Promise<string> {
-  const text = await readFile(absolutePath, 'utf8')
+/**
+ * Minimal English stopwords. The list is intentionally short; the model-facing
+ * graph is most useful for distinctive project terms, not for hiding grammar.
+ */
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might',
+  'can', 'could', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'from', 'as', 'it', 'its',
+  'this', 'that', 'these', 'those', 'i', 'me', 'my', 'you', 'your', 'we', 'us', 'our', 'he', 'him',
+  'his', 'she', 'her', 'they', 'them', 'their', 'not', 'no', 'if', 'then', 'than', 'so', 'very',
+  'just', 'only', 'also', 'about', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+  'up', 'down', 'out', 'off', 'over', 'under', 'again', 'further', 'once', 'here', 'there', 'when',
+  'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some',
+  'such', 'what', 'which', 'who', 'whom', 'whose', 'see', 'one', 'two', 'three', 'four', 'five',
+  'get', 'got', 'go', 'went', 'come', 'came', 'take', 'took', 'make', 'made', 'know', 'knew',
+  'think', 'thought', 'say', 'said', 'look', 'use', 'used', 'find', 'found', 'give', 'gave',
+  'tell', 'told', 'ask', 'asked', 'work', 'worked', 'seem', 'seemed', 'feel', 'felt', 'try',
+  'tried', 'leave', 'left', 'call', 'called', 'keep', 'kept', 'let', 'put', 'bring', 'brought',
+  'begin', 'began', 'help', 'helped', 'show', 'showed', 'hear', 'heard', 'play', 'played', 'run',
+  'ran', 'move', 'moved', 'live', 'lived', 'believe', 'believed', 'hold', 'held', 'must', 'need',
+  'needed', 'able', 'due', 'while', 'whereas', 'nevertheless', 'however', 'therefore', 'moreover',
+  'furthermore', 'nonetheless', 'otherwise', 'meanwhile', 'besides', 'thus', 'hence', 'accordingly',
+  'consequently', 'now', 'later', 'soon', 'early', 'late', 'long', 'much', 'many', 'little', 'less',
+  'least', 'well', 'better', 'best', 'bad', 'worse', 'worst', 'good', 'great', 'new', 'old',
+  'first', 'last', 'next', 'previous', 'same', 'different', 'own', 'another', 'none', 'either',
+  'neither', 'whether', 'nor', 'even', 'still', 'yet', 'already', 'always', 'never', 'often',
+  'sometimes', 'usually', 'rarely', 'seldom', 'back', 'already', 'quite', 'rather', 'really',
+  'actually', 'certainly', 'definitely', 'probably', 'possibly', 'perhaps', 'maybe', 'likely',
+  'sure', 'course', 'absolutely', 'completely', 'entirely', 'totally', 'almost', 'nearly',
+  'hardly', 'barely', 'scarcely', 'enough',
+])
+
+/** Token pattern: starts with a letter, then letters or digits. Unicode-aware. */
+const TOKEN_RE = /[\p{L}][\p{L}\p{N}]*/gu
+
+/**
+ * Extract normalised significant terms from Markdown text.
+ * - Frontmatter `tags` count 3x (they are explicit metadata).
+ * - Frontmatter `title` counts 2x.
+ * - Body terms count 1x.
+ * - Numbers-only tokens and short/stop tokens are dropped.
+ */
+function extractTerms(text: string): Map<string, number> {
+  const { frontmatter, body } = splitFrontmatter(text)
+  const terms = new Map<string, number>()
+
+  const addToken = (raw: string, multiplier = 1): void => {
+    const normalized = raw.normalize('NFC').toLowerCase()
+    if (normalized.length < 2) return
+    if (/^\d+$/.test(normalized)) return
+    if (STOPWORDS.has(normalized)) return
+    terms.set(normalized, (terms.get(normalized) ?? 0) + multiplier)
+  }
+
+  const tokenize = (source: string): string[] => {
+    const re = new RegExp(TOKEN_RE.source, TOKEN_RE.flags)
+    return source.match(re) ?? []
+  }
+
+  if (Array.isArray(frontmatter.tags)) {
+    for (const tag of frontmatter.tags) {
+      if (typeof tag === 'string') {
+        for (const token of tokenize(tag)) addToken(token, 3)
+      }
+    }
+  }
+
+  if (typeof frontmatter.title === 'string') {
+    for (const token of tokenize(frontmatter.title)) addToken(token, 2)
+  }
+
+  // Strip Obsidian `[[link]]` syntax so explicit links do not also create
+  // redundant keyword edges; keep markdown link text, not the URL.
+  const bodyForTerms = body
+    .replace(/\[\[[^\]]*\]\]/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+  for (const token of tokenize(bodyForTerms)) addToken(token, 1)
+
+  return terms
+}
+
+function noteTitleFromText(text: string, id: string): string {
   const { frontmatter, body } = splitFrontmatter(text)
   const explicitTitle = typeof frontmatter.title === 'string' ? frontmatter.title.trim() : ''
   if (explicitTitle !== '') return explicitTitle
@@ -93,45 +192,111 @@ async function noteTitle(absolutePath: string, id: string): Promise<string> {
 }
 
 /**
+ * Build undirected keyword edges for a set of notes. Each pair of notes that
+ * share one or more terms receives two directed edges (A→B and B→A) carrying
+ * the sorted shared keywords and a combined weight.
+ */
+function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>): GraphEdge[] {
+  const inverted = new Map<string, string[]>()
+  for (const [id, terms] of noteTerms) {
+    for (const term of terms.keys()) {
+      const list = inverted.get(term) ?? []
+      list.push(id)
+      inverted.set(term, list)
+    }
+  }
+
+  const pairData = new Map<string, { keywords: string[]; weight: number }>()
+  for (const [term, ids] of inverted) {
+    if (ids.length < 2) continue
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const a = ids[i]!
+        const b = ids[j]!
+        const [first, second] = codeUnitCompare(a, b) <= 0 ? [a, b] : [b, a]
+        const weight = (noteTerms.get(a)?.get(term) ?? 0) + (noteTerms.get(b)?.get(term) ?? 0)
+        const key = `${first}\x00${second}`
+        const entry = pairData.get(key) ?? { keywords: [], weight: 0 }
+        entry.keywords.push(term)
+        entry.weight += weight
+        pairData.set(key, entry)
+      }
+    }
+  }
+
+  const edges: GraphEdge[] = []
+  for (const [key, { keywords, weight }] of pairData) {
+    const parts = key.split('\x00')
+    const from = parts[0]!
+    const to = parts[1]!
+    const sortedKeywords = [...keywords].sort(codeUnitCompare)
+    edges.push({ from, to, type: 'keyword', keywords: sortedKeywords, weight })
+    edges.push({ from: to, to: from, type: 'keyword', keywords: sortedKeywords, weight })
+  }
+  return edges
+}
+
+async function loadVaultNotes(
+  root: string,
+  resolved: ResolvedConfig,
+): Promise<{ parsed: ParsedNote[]; parsedById: Map<string, ParsedNote>; linkResolver: ReturnType<typeof createLinkResolver> }> {
+  const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
+  const ids = paths.map(path => vaultRelativeId(root, path))
+  const linkResolver = createLinkResolver(ids)
+  const parsed: ParsedNote[] = []
+  const parsedById = new Map<string, ParsedNote>()
+  for (const path of paths) {
+    const id = vaultRelativeId(root, path)
+    const text = await readFile(path, 'utf8')
+    const note: ParsedNote = { id, path, text, terms: extractTerms(text) }
+    parsed.push(note)
+    parsedById.set(id, note)
+  }
+  return { parsed, parsedById, linkResolver }
+}
+
+/**
  * Build the vault-wide link graph: every note is a node; every `[[link]]`
- * that resolves to an existing note is an edge.
+ * that resolves to an existing note is an edge; every shared significant term
+ * between two nodes becomes a directed `keyword` edge in both directions.
  * @param root - vault root.
  * @param resolved - applied plugin configuration.
  * @returns the full graph, node-capped.
  */
 async function buildGraph(root: string, resolved: ResolvedConfig): Promise<MemoryGraph> {
-  const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
-  const entries = paths.map(path => [vaultRelativeId(root, path), path] as const)
-  const linkResolver = createLinkResolver(entries.map(([id]) => id))
+  const { parsed, linkResolver } = await loadVaultNotes(root, resolved)
 
-  const truncated = entries.length > resolved.maxNodes
-  // `listNotePaths` follows readdir order, so the node cap would otherwise keep
-  // a filesystem-dependent subset of the vault.
-  const capped = [...entries].sort((a, b) => codeUnitCompare(a[0], b[0])).slice(0, resolved.maxNodes)
-  const nodes: GraphNode[] = []
-  for (const [id, path] of capped) nodes.push({ id, title: await noteTitle(path, id) })
+  const truncated = parsed.length > resolved.maxNodes
+  const capped = [...parsed].sort((a, b) => codeUnitCompare(a.id, b.id)).slice(0, resolved.maxNodes)
+  const idSet = new Set(capped.map(p => p.id))
 
-  const idSet = new Set(capped.map(([id]) => id))
+  const nodes: GraphNode[] = capped.map(p => ({ id: p.id, title: noteTitleFromText(p.text, p.id) }))
   const edges: GraphEdge[] = []
-  for (const [id, path] of capped) {
-    const text = await readFile(path, 'utf8')
-    for (const link of extractLinks(text)) {
+
+  for (const p of capped) {
+    for (const link of extractLinks(p.text)) {
       const targetPath = await resolveLinkTarget(root, resolved.extensions, link, linkResolver)
       if (targetPath === undefined) continue
       const targetId = vaultRelativeId(root, targetPath)
-      if (idSet.has(targetId)) edges.push({ from: id, to: targetId })
+      if (idSet.has(targetId)) edges.push({ from: p.id, to: targetId })
     }
   }
-  return { nodes, edges, truncated }
+
+  const noteTerms = new Map(capped.map(p => [p.id, p.terms]))
+  edges.push(...buildKeywordEdges(noteTerms))
+
+  // Safety: every edge endpoint must be in the returned node set.
+  const safeEdges = edges.filter(e => idSet.has(e.from) && idSet.has(e.to))
+  return { nodes, edges: safeEdges, truncated }
 }
 
 /**
  * Collect the subgraph reachable from one note by following `[[link]]`
- * references breadth-first up to `depth`.
+ * references and shared-keyword edges breadth-first up to `depth`.
  * @param root - vault root.
  * @param resolved - applied plugin configuration.
  * @param startId - vault-relative id of the center note.
- * @param depth - maximum link hops from the center.
+ * @param depth - maximum link/keyword hops from the center.
  * @returns the neighborhood graph, node-capped.
  */
 async function buildSubgraph(
@@ -140,27 +305,41 @@ async function buildSubgraph(
   startId: string,
   depth: number,
 ): Promise<MemoryGraph> {
+  const { parsed, parsedById, linkResolver } = await loadVaultNotes(root, resolved)
   const startPath = await containedPathReal(root, startId)
-  const linkResolver = createLinkResolver(
-    (await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs))
-      .map(path => vaultRelativeId(root, path)),
-  )
-  const visited = new Map<string, string>([[vaultRelativeId(root, startPath), startPath]])
-  const levels = new Map<string, number>([[vaultRelativeId(root, startPath), 0]])
-  let frontier = [startPath]
+  const startNoteId = vaultRelativeId(root, startPath)
 
+  const idSetAll = new Set(parsed.map(p => p.id))
+  const adjacency = new Map<string, string[]>()
+
+  for (const p of parsed) {
+    const neighbors: string[] = []
+    for (const link of extractLinks(p.text)) {
+      const targetPath = await resolveLinkTarget(root, resolved.extensions, link, linkResolver)
+      if (targetPath === undefined) continue
+      const targetId = vaultRelativeId(root, targetPath)
+      if (idSetAll.has(targetId) && !neighbors.includes(targetId)) neighbors.push(targetId)
+    }
+    adjacency.set(p.id, neighbors)
+  }
+
+  const noteTerms = new Map(parsed.map(p => [p.id, p.terms]))
+  const keywordEdges = buildKeywordEdges(noteTerms)
+  for (const { from, to } of keywordEdges) {
+    const list = adjacency.get(from) ?? []
+    if (!list.includes(to)) list.push(to)
+    adjacency.set(from, list)
+  }
+
+  const visited = new Map<string, number>([[startNoteId, 0]])
+  let frontier = [startNoteId]
   for (let level = 0; level < depth && frontier.length > 0; level += 1) {
     const next: string[] = []
-    for (const path of frontier) {
-      const text = await readFile(path, 'utf8')
-      for (const link of extractLinks(text)) {
-        const targetPath = await resolveLinkTarget(root, resolved.extensions, link, linkResolver)
-        if (targetPath === undefined) continue
-        const toId = vaultRelativeId(root, targetPath)
-        if (!visited.has(toId)) {
-          visited.set(toId, targetPath)
-          levels.set(toId, level + 1)
-          next.push(targetPath)
+    for (const id of frontier) {
+      for (const neighbor of adjacency.get(id) ?? []) {
+        if (!visited.has(neighbor)) {
+          visited.set(neighbor, level + 1)
+          next.push(neighbor)
         }
       }
     }
@@ -168,33 +347,37 @@ async function buildSubgraph(
   }
 
   const truncated = visited.size > resolved.maxNodes
-  // Truncate by distance from the center, then by id: the neighborhood closest
-  // to the requested note survives the cap, and which notes those are does not
-  // depend on readdir or link order.
   const ids = [...visited.keys()]
-    .sort((a, b) => (levels.get(a) ?? 0) - (levels.get(b) ?? 0) || codeUnitCompare(a, b))
+    .sort((a, b) => (visited.get(a) ?? 0) - (visited.get(b) ?? 0) || codeUnitCompare(a, b))
     .slice(0, resolved.maxNodes)
   const idSet = new Set(ids)
+
+  const nodes: GraphNode[] = ids.map(id => {
+    const p = parsedById.get(id)!
+    return { id, title: noteTitleFromText(p.text, id) }
+  })
+
   const edges: GraphEdge[] = []
-  const nodes: GraphNode[] = []
   for (const id of ids) {
-    const path = await containedPathReal(root, id)
-    nodes.push({ id, title: await noteTitle(path, id) })
-    const text = await readFile(path, 'utf8')
-    for (const link of extractLinks(text)) {
+    const p = parsedById.get(id)!
+    for (const link of extractLinks(p.text)) {
       const targetPath = await resolveLinkTarget(root, resolved.extensions, link, linkResolver)
       if (targetPath === undefined) continue
       const toId = vaultRelativeId(root, targetPath)
       if (idSet.has(toId)) edges.push({ from: id, to: toId })
     }
   }
+
+  const filteredKeywordEdges = keywordEdges.filter(e => idSet.has(e.from) && idSet.has(e.to))
+  edges.push(...filteredKeywordEdges)
+
   return { nodes, edges, truncated }
 }
 
 /**
  * Register the `wiki_graph` tool on `ctx.tools`.
  * @param ctx - registrant context carrying the tool registry.
- * @param config - deployment's explicit vault configuration.
+ * @param config - plugin configuration.
  */
 export function apply(ctx: Context, config: Config): void {
   const tools = ctx.get('tools') as { register?: unknown } | undefined
@@ -209,7 +392,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_graph',
-    description: 'Return the Obsidian-style [[link]] graph of the wiki vault: note ids, titles, and directed edges. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth.',
+    description: 'Return the link and keyword graph of the wiki vault: note ids, titles, and directed edges. Explicit `[[link]]` edges are type `link`; edges derived from shared significant terms are type `keyword` with `keywords` and `weight`. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth.',
     parameters: {
       id: {
         type: 'string',
@@ -217,7 +400,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       depth: {
         type: 'integer',
-        description: 'Maximum [[link]] hops from the center note; defaults to the configured maxDepth.',
+        description: 'Maximum link or keyword hops from the center note; defaults to the configured maxDepth.',
       },
     },
     output: {
