@@ -338,10 +338,22 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
   } else {
     const { frontmatter, body } = splitFrontmatter(existing ?? '')
     normalizeNoteTimestamps(frontmatter)
-    const fm = Object.keys(frontmatter).length > 0
+    const timestamp = formatBeijingTime(new Date())
+    // Track note lifetime the same way the dsh tool does: `created` on the
+    // first write, `updated` on every append thereafter.
+    if (existing === undefined) {
+      frontmatter.created ??= timestamp
+    } else {
+      frontmatter.updated = timestamp
+    }
+    const frontmatterText = Object.keys(frontmatter).length > 0
       ? `---\n${yaml.dump(frontmatter).trimEnd()}\n---\n\n`
       : ''
-    finalBody = `${fm}${body}\n\n## ${formatBeijingTime(new Date())}\n\n${content}\n`
+    // Content that opens with its own heading supplies the section header, so
+    // a bare `## <time>` above it would duplicate it.
+    const header = content.trimStart().startsWith('#') ? '' : `## ${timestamp}\n\n`
+    const base = `${frontmatterText}${body}`.replace(/\s+$/, '')
+    finalBody = base === '' ? `${header}${content}\n` : `${base}\n\n${header}${content}\n`
   }
   const tmp = `${absolutePath}.tmp-${process.pid}-${randomUUID()}`
   try {
@@ -352,7 +364,16 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
     throw error
   }
   recordMtime(absolutePath, (await stat(absolutePath)).mtimeMs)
-  return { id: vaultRelativeId(absolutePath), mode, bytes: Buffer.byteLength(finalBody, 'utf8') }
+  const { frontmatter } = splitFrontmatter(finalBody)
+  const result = {
+    id: vaultRelativeId(absolutePath),
+    mode,
+    bytes: Buffer.byteLength(finalBody, 'utf8'),
+    version: noteVersion(finalBody),
+  }
+  if (typeof frontmatter.created === 'string' && frontmatter.created !== '') result.created = frontmatter.created
+  if (typeof frontmatter.updated === 'string' && frontmatter.updated !== '') result.updated = frontmatter.updated
+  return result
 }
 
 async function buildGraph(id, depth = 1, maxNodes = 200) {

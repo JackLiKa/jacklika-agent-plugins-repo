@@ -71,7 +71,12 @@ async function runSmoke() {
       name: 'wiki_write',
       arguments: { id: 'concepts/RAG.md', content: '# RAG\n\nRetrieval notes link [[Graphs]].' },
     }), earlyExit])
-    assert(w.result ?? w, 'wiki_write result')
+    const writeBlocks = w.content ?? (w.result ? w.result.content : undefined)
+    assert(Array.isArray(writeBlocks) && writeBlocks.length > 0, 'wiki_write response blocks')
+    const writeResult = JSON.parse(writeBlocks[0].text)
+    assert(writeResult.version.length === 40, 'wiki_write version')
+    assert(typeof writeResult.created === 'string' && writeResult.created.endsWith('+08:00'), `wiki_write created: ${writeResult.created}`)
+    assert(!('updated' in writeResult), 'first write has no updated')
     const disk = await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8')
     assert(disk.includes('Retrieval notes'), 'note persisted')
 
@@ -85,6 +90,15 @@ async function runSmoke() {
     ])
     const serialized = await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8')
     assert(serialized.includes('concurrent-a') && serialized.includes('concurrent-b'), 'concurrent writes serialized')
+
+    // Sequential append returns updated and preserves created from the first write.
+    const append = await Promise.race([call('tools/call', { name: 'wiki_write', arguments: { id: 'concepts/RAG.md', content: 'append-section' } }), earlyExit])
+    const appendBlocks = append.content ?? (append.result ? append.result.content : undefined)
+    assert(Array.isArray(appendBlocks) && appendBlocks.length > 0, 'append response blocks')
+    const appendResult = JSON.parse(appendBlocks[0].text)
+    assert(appendResult.created === writeResult.created, 'append preserves created')
+    assert(typeof appendResult.updated === 'string' && appendResult.updated.endsWith('+08:00'), `append updated: ${appendResult.updated}`)
+    assert(appendResult.version !== writeResult.version, 'append changes version')
 
     const conflict = await Promise.race([call('tools/call', {
       name: 'wiki_write',
