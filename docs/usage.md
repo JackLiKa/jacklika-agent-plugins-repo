@@ -207,6 +207,14 @@ Use `agentKey` for a stable private namespace across sessions:
 
 An empty `agentKey` derives `agents/<session id>/`; a configured key writes under `agents/<agentKey>/`. Paths beginning with `shared/` are not rewritten and are committed by `memory-git` by default.
 
+Note that `memory-scope` provides **path namespace isolation** only — it prevents different agents from accidentally writing to the same note id. It does **not** control git commit scope. By default, `memory-git` commits both `shared/` and `agents/` writes (its `prefixes` default is `['shared/', 'agents/']`), so private-namespace notes still appear in the shared Vault git history. To exclude agent-scoped notes from git, override the git plugin's `prefixes` to commit only shared notes:
+
+```yaml
+- id: memory-git
+  config:
+    prefixes: ['shared/']
+```
+
 `memory-git.nestedRepo` defaults to `init`, which creates a Vault-local repository and never joins a parent repository. `inherit` selects the nearest parent repository; `own` requires `<vault>/.git`. The plugin never changes global Git configuration and never pushes.
 
 ## Mount the Skill separately

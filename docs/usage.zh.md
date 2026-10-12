@@ -207,6 +207,14 @@ Bundle 包含 `memory-curator`，提供两个高层工具。它们会自动注�
 
 `agentKey` 为空时写入 `agents/<session id>/`；配置后写入 `agents/<agentKey>/`。以 `shared/` 开头的路径不重写，并默认由 `memory-git` 提交。
 
+注意 `memory-scope` 只提供**路径命名空间隔离**——防止不同 agent 意外写入同一个笔记 id。它**不**控制 git 提交范围。默认情况下，`memory-git` 同时提交 `shared/` 和 `agents/` 下的写入（`prefixes` 默认值为 `['shared/', 'agents/']`），因此私有命名空间的笔记仍然会出现在共享 Vault 的 git 历史中。若要把 agent 作用域的笔记排除在 git 之外，可以覆盖 git 插件的 `prefixes`，只提交 shared 笔记：
+
+```yaml
+- id: memory-git
+  config:
+    prefixes: ['shared/']
+```
+
 `memory-git.nestedRepo` 默认 `init`：创建 Vault 自己的仓库，绝不加入父仓库。`inherit` 选择最近的父仓库；`own` 要求 `<vault>/.git` 已存在。插件永不修改全局 Git 配置，也永不 push。
 
 ## 单独挂载 Skill
