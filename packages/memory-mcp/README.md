@@ -12,11 +12,11 @@ node packages/memory-mcp/src/server.mjs --vault /path/to/vault
 npx dsh-memory-mcp --vault /path/to/vault
 ```
 
-`--vault` defaults to `<cwd>/.plugins/memory/` to match the dsh-memory Bundle default; `--max-link-depth N` controls `wiki_read` link following (default 1).
+`--vault` defaults to `<cwd>/.plugins/memory/` to match the dsh-memory Bundle default; `--max-link-depth N` controls `wiki_read` link following (default 1); `--notes-dir DIR` is the shared curated zone `memory_capture` writes to (default `shared/notes`, the memory-curator default).
 
 ## Surface
 
-Tools: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` — same contract as `@jacklika/dsh-tool-memory-filesystem` / `-graph`, including `baseVersion` optimistic concurrency on writes, `mtime` + `modifiedExternally` on reads, and `+08:00` `created`/`updated` normalization on writes. Resources: `note:///<id>` over `resources/list` / `resources/read`.
+Tools: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` — same contract as `@jacklika/dsh-tool-memory-filesystem` / `-graph`, including `baseVersion` optimistic concurrency on writes, `mtime` + `modifiedExternally` on reads, and `+08:00` `created`/`updated` normalization on writes. `memory_capture` mirrors the dsh curator tool: it derives the note id from the title when omitted, merges an existing note's frontmatter, and returns `{written, id, mode, conflict, version, created?, updated?}`. Two differences are intentional: `committed` never appears because MCP writes do not run memory-git, and `scope` is not offered because MCP has no agent namespace. With no approval channel over MCP, a conflicting capture fails closed exactly as the dsh tool does in headless runs — `written: false`, `conflict: true`, and a reason pointing at `conflictPolicy: 'skip'` — which also makes the approve-then-append branch unreachable: a capture that writes is always a full-note overwrite. Resources: `note:///<id>` over `resources/list` / `resources/read`.
 
 ## Client configuration
 

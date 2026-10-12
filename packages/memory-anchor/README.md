@@ -6,11 +6,12 @@ Keeps the memory discipline in front of the model for every prompt. The vault co
 
 ## Auto-capture
 
-Each turn that did observable work appends a section to `<captureNotePrefix>-<sessionId>.md` (default `shared/notes/auto-capture-<id>.md`):
+Each turn that did observable work appends a section to a note under `captureNotePrefix` (default `shared/notes/auto-capture/`, giving `shared/notes/auto-capture/<sessionId>.md`). A prefix ending in `/` is a directory; any other prefix keeps the flat legacy form `<prefix>-<sessionId>.md`.
 
 - idle turns (no tool calls, no messages) write nothing;
 - a turn without a mounted `wiki_write`, or in a session with no live agent to dispatch as, writes nothing;
-- the note id is sanitized (`sess:abc/1` → `auto-capture-sess-abc-1`);
+- the session id is sanitized before it becomes the file name (`sess:abc/1` → `shared/notes/auto-capture/sess-abc-1.md` under the default prefix);
+- the notes are hidden from `memory_recall` — `memory-curator` excludes the auto-capture namespace (and the flat `auto-capture-*.md` legacy names) with an anchored match, so a curated note whose name merely shares the prefix is still returned;
 - a duplicated `turn/end` — a host retry or a replayed feed — is captured once, because the turn is retired before its summary is dispatched; the next `turn/start` begins a fresh turn as usual;
 - the write goes back through `ctx.tools.execute` carrying that agent, so `memory-scope` namespacing, `memory-queue` serialization, and `memory-git` auto-commit all see it;
 - a `wiki_write` the registry declines (under `mode: 'ptc'` a plugin-issued call has no `parent` token and collapses to `UNKNOWN_TOOL`) is logged at debug as a deployment statement; other failures warn, and nothing is ever thrown into the session feed.
@@ -28,7 +29,7 @@ Each turn that did observable work appends a section to `<captureNotePrefix>-<se
     captureText: '...'
     vaultHint: true                           # allow the Vault sentence
     autoCapture: true                         # append per-turn summaries on turn/end
-    captureNotePrefix: 'shared/notes/auto-capture'
+    captureNotePrefix: 'shared/notes/auto-capture/'  # default; drop the trailing '/' for the flat legacy form
     excerptChars: 200                         # per-message excerpt cap in summaries
 ```
 

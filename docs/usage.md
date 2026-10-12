@@ -190,7 +190,7 @@ If you previously installed Bundle versions `0.1.7-rc.5` or older, the default v
 
 The Bundle includes `memory-curator`, which exposes two high-level tools. They register automatically, but the model will not call them on its own unless the `memory-vault` skill is mounted (see [Mount the Skill separately](#mount-the-skill-separately)).
 
-- `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context. Its `total` reports every vault-wide match even when the returned hit list is capped, so the model knows when to narrow a query.
+- `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context. Its `total` reports every vault-wide match even when the returned hit list is capped, so the model knows when to narrow a query. Per-turn auto-capture notes from `memory-anchor` are hidden from the hit list and subtracted from `total`, so bookkeeping never crowds out curated knowledge.
 - `memory_capture(title, summary, ...)` — Call this at the end of a significant task. It derives a stable note id from the title, checks for conflicting notes, asks for your approval if one exists, and writes the captured knowledge to the shared curated zone.
 
 `memory_capture` defaults to `scope: shared`, which lands under `shared/notes/` and is committed by `memory-git`. Use `scope: private` when the note should stay inside the current agent namespace (`agents/<key>/`).

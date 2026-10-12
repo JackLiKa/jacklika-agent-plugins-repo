@@ -65,7 +65,7 @@ async function runSmoke() {
     assert(init.serverInfo.name === 'dsh-memory-mcp', 'initialize serverInfo')
 
     const list = await Promise.race([call('tools/list'), earlyExit])
-    assert(list.tools.length === 4, `tools/list count ${list.tools.length}`)
+    assert(list.tools.length === 5, `tools/list count ${list.tools.length}`)
 
     const w = await Promise.race([call('tools/call', {
       name: 'wiki_write',
@@ -205,6 +205,56 @@ async function runSmoke() {
     const zNote = JSON.parse(zr.content[0].text)
     assert(!zNote.links.includes('link'), `literal [[link]] leaked: ${JSON.stringify(zNote.links)}`)
     assert(zNote.links.includes('x') && zNote.links.includes('y'), `real links kept: ${JSON.stringify(zNote.links)}`)
+
+    // memory_capture parity with the dsh curator tool: derived id under the
+    // notes dir, merged frontmatter, and the
+    // {written,id,mode,conflict,version,created?} response. `committed` is
+    // absent because MCP runs no memory-git.
+    const cap = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'MCP Parity: Capture!', summary: 'capture smoke summary', tags: ['smoke'] },
+    }), earlyExit])
+    const capResult = JSON.parse(cap.content[0].text)
+    assert(capResult.written === true && capResult.conflict === false, `capture result ${JSON.stringify(capResult)}`)
+    assert(capResult.id === 'shared/notes/mcp-parity-capture.md', `derived capture id ${capResult.id}`)
+    assert(capResult.mode === 'overwrite', 'a capture that writes is a full-note overwrite')
+    assert(typeof capResult.version === 'string' && capResult.version.length === 40, 'capture version')
+    assert(typeof capResult.created === 'string' && capResult.created.endsWith('+08:00'), `capture created ${capResult.created}`)
+    assert(!('updated' in capResult), 'first capture has no updated')
+    assert(!('committed' in capResult), 'MCP never reports committed')
+    const capText = await readFile(join(vault, 'shared', 'notes', 'mcp-parity-capture.md'), 'utf8')
+    assert(/title:.*MCP Parity: Capture!/.test(capText), `capture frontmatter title: ${capText}`)
+    assert(capText.includes('# MCP Parity: Capture!'), 'capture heading')
+    assert(capText.includes('- smoke'), 'capture tags')
+
+    // An explicit id without a shared/ prefix lands under the notes dir, the
+    // same rewrite the curator's shared scope performs.
+    const capExplicit = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'Explicit Capture Id', summary: 'explicit id summary', id: 'concepts/custom' },
+    }), earlyExit])
+    assert(JSON.parse(capExplicit.content[0].text).id === 'shared/notes/concepts/custom.md', 'explicit id scoped under notes dir')
+
+    // No approval channel exists over MCP, so a conflict resolves the way the
+    // dsh tool resolves it headless: refuse and point at conflictPolicy=skip.
+    const recapture = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'MCP Parity: Capture!', summary: 'second' },
+    }), earlyExit])
+    const recaptureResult = JSON.parse(recapture.content[0].text)
+    assert(recaptureResult.written === false && recaptureResult.conflict === true, `conflict refuses ${JSON.stringify(recaptureResult)}`)
+    assert(recaptureResult.reason.includes('conflictPolicy=skip'), `conflict reason ${recaptureResult.reason}`)
+    const skipped = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'MCP Parity: Capture!', summary: 'third', conflictPolicy: 'skip' },
+    }), earlyExit])
+    assert(JSON.parse(skipped.content[0].text).reason === 'skipped by conflictPolicy=skip', 'skip reason')
+
+    const badCaptureId = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'Unsafe', summary: 's', id: '../escape' },
+    }), earlyExit]).then(() => null, e => e)
+    assert(badCaptureId !== null, 'unsafe capture id must error')
 
     console.log('memory-mcp smoke: all assertions passed')
     if (!linked) {

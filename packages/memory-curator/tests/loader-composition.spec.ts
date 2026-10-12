@@ -175,6 +175,32 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(out.total).toBe(3)
   })
 
+  it('hides auto-capture notes from recall without swallowing notes that merely share the name prefix', async () => {
+    const vault = await vaultDir()
+    const notes = join(vault, 'shared', 'notes')
+    await mkdir(join(notes, 'auto-capture'), { recursive: true })
+    await writeFile(join(notes, 'auto-capture', 'session-1.md'), 'Mechanical zephyrprobe turn summary.\n')
+    // Real vault shapes: the legacy flat form is `<prefix>-<sanitized session id>`,
+    // with and without the `session-` id prefix.
+    await writeFile(join(notes, 'auto-capture-session-6845668f-076f-4053-90ce-9b806c3432b4.md'), 'Legacy zephyrprobe flat summary.\n')
+    await writeFile(join(notes, 'auto-capture-b433b13a-f474-4f5d-814e-16927c26aa04.md'), 'Legacy zephyrprobe bare-id summary.\n')
+    // Ships under a name that starts with the auto-capture namespace without
+    // being a capture; a bare prefix or substring filter would hide it.
+    await writeFile(join(notes, 'auto-capture-release-0.1.0-alpha.1.md'), '# Release 0.1.0-alpha.1\n\nCurated zephyrprobe release notes.\n')
+    const ctx = await boot(vault)
+
+    const result = await recall(ctx, 'recall-namespace', 'zephyrprobe', 'agent-1', vault)
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected memory_recall success')
+    const out = JSON.parse(resultText(result)) as { hits: { id: string }[]; total: number }
+    const ids = out.hits.map(hit => hit.id)
+    expect(ids).toContain('shared/notes/auto-capture-release-0.1.0-alpha.1.md')
+    expect(ids).not.toContain('shared/notes/auto-capture/session-1.md')
+    expect(ids).not.toContain('shared/notes/auto-capture-session-6845668f-076f-4053-90ce-9b806c3432b4.md')
+    expect(ids).not.toContain('shared/notes/auto-capture-b433b13a-f474-4f5d-814e-16927c26aa04.md')
+    expect(out.total).toBe(1)
+  })
+
   it('appends to an existing note when the same title is captured again with conflictPolicy=skip', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
     const ctx = await boot(vault)

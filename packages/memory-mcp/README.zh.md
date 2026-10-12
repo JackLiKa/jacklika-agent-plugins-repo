@@ -12,11 +12,11 @@ node packages/memory-mcp/src/server.mjs --vault /path/to/vault
 npx dsh-memory-mcp --vault /path/to/vault
 ```
 
-`--vault` 默认为 `<cwd>/.plugins/memory/`，与 dsh-memory Bundle 默认保持一致；`--max-link-depth N` 控制 `wiki_read` 的链接展开深度（默认 1）。
+`--vault` 默认为 `<cwd>/.plugins/memory/`，与 dsh-memory Bundle 默认保持一致；`--max-link-depth N` 控制 `wiki_read` 的链接展开深度（默认 1）；`--notes-dir DIR` 是 `memory_capture` 写入的共享策展区（默认 `shared/notes`，与 memory-curator 默认一致）。
 
 ## 暴露面
 
-工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph` —— 与 `@jacklika/dsh-tool-memory-filesystem` / `-graph` 的契约相同，写操作带 `baseVersion` 乐观并发控制，读操作返回 `mtime` + `modifiedExternally`，写入归一化 `created`/`updated` 为 `+08:00`。资源：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
+工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph` —— 与 `@jacklika/dsh-tool-memory-filesystem` / `-graph` 的契约相同，写操作带 `baseVersion` 乐观并发控制，读操作返回 `mtime` + `modifiedExternally`，写入归一化 `created`/`updated` 为 `+08:00`。`memory_capture` 与 dsh 策展工具对齐：省略 `id` 时由标题推导笔记 id，覆盖既有笔记时合并 frontmatter，返回 `{written, id, mode, conflict, version, created?, updated?}`。有两处有意差异：MCP 写入不跑 memory-git，因此永不返回 `committed`；MCP 没有 agent 命名空间，因此不提供 `scope`。MCP 无审批通道，冲突捕获按 dsh 工具的无头行为 fail closed——`written: false`、`conflict: true`，reason 指向 `conflictPolicy: 'skip'`——这也使“批准后追加”分支不可达：真正落盘的捕获总是整篇覆盖写。资源：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
 
 ## 客户端配置
 

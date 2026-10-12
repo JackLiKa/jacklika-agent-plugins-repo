@@ -4,8 +4,10 @@
  * any MCP client. One process owns all writes, so clients serialize through
  * the server instead of negotiating filesystem locks.
  *
- * Usage: dsh-memory-mcp [--vault <path>] [--max-link-depth N]
+ * Usage: dsh-memory-mcp [--vault <path>] [--max-link-depth N] [--notes-dir DIR]
  *   --vault defaults to <cwd>/.plugins/memory/ to match the Bundle default.
+ *   --notes-dir is the shared curated zone for memory_capture; it defaults to
+ *   shared/notes, the memory-curator default.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -27,6 +29,7 @@ function argValue(flag, fallback) {
 }
 const VAULT = resolve(argValue('--vault', join(process.cwd(), '.plugins', 'memory')))
 const MAX_LINK_DEPTH = Number(argValue('--max-link-depth', '1'))
+const NOTES_DIR = (argValue('--notes-dir', 'shared/notes') || 'shared/notes').replace(/\/+$/, '')
 const EXTENSIONS = ['.md']
 const EXCLUDE_DIRS = new Set(['.git', 'node_modules', '.obsidian'])
 
@@ -380,6 +383,125 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
   return result
 }
 
+// ── memory_capture (mirrors @jacklika/dsh-memory-curator) ────────────────────
+
+const MAX_SLUG_LENGTH = 100
+
+/**
+ * Fold a title to its comparison form exactly like the curator: NFC,
+ * case-insensitive, every run of characters that are neither Unicode letters
+ * nor digits collapsed to one space. Keeping `\p{L}` means CJK and other
+ * non-Latin titles stay distinct instead of folding to one empty string.
+ */
+function foldTitle(title) {
+  return title.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
+function hashTail(title, length = 12) {
+  return createHash('sha256').update(title.normalize('NFC')).digest('hex').slice(0, length)
+}
+
+function slugify(title) {
+  let slug = foldTitle(title).replace(/ /g, '-')
+  // Symbol-only titles fold to nothing; a stable content hash keeps them
+  // addressable and separate rather than sharing a bare ".md".
+  if (slug === '') return `note-${hashTail(title)}`
+  if (slug.length > MAX_SLUG_LENGTH) slug = `${slug.slice(0, 64)}-${hashTail(title)}`
+  return slug
+}
+
+function isSafeNoteId(id) {
+  if (id === '' || id.startsWith('/') || id.startsWith('\\') || /^[A-Za-z]:/.test(id)) return false
+  if (id.includes('\\')) return false
+  return !id.split('/').some(segment => segment === '..' || segment === '.')
+}
+
+function captureTargetId(explicitId, title) {
+  if (typeof explicitId === 'string' && explicitId !== '') {
+    const withExt = explicitId.endsWith('.md') ? explicitId : `${explicitId}.md`
+    if (!isSafeNoteId(withExt)) {
+      throw new Error(`memory_capture: invalid note id ${JSON.stringify(withExt)}: ids must be vault-relative paths without '..', '.', backslashes, leading slashes, or drive letters`)
+    }
+    return withExt.startsWith('shared/') ? withExt : `${NOTES_DIR}/${withExt}`
+  }
+  return `${NOTES_DIR}/${slugify(title)}.md`
+}
+
+function findCaptureConflicts(targetId, title, hits) {
+  const normalized = foldTitle(title)
+  const target = targetId.normalize('NFC').toLowerCase()
+  return hits.filter(hit => {
+    if (hit.id.normalize('NFC').toLowerCase() === target) return true
+    // A title that folds to nothing carries no identity; matching it would make
+    // every untitled note a conflict with every other one.
+    return normalized !== '' && foldTitle(hit.title) === normalized
+  })
+}
+
+async function captureFrontmatter(id, title, tags, now) {
+  let existing
+  let existed = false
+  try {
+    existing = splitFrontmatter(await readFile(await containedPathReal(id), 'utf8')).frontmatter
+    existed = true
+  } catch { /* no readable note at this id: the ordinary first capture */ }
+  const frontmatter = { ...existing, title, tags }
+  const created = existing?.created
+  frontmatter.created = typeof created === 'string' && created !== '' ? created : now
+  if (existed) frontmatter.updated = now
+  return frontmatter
+}
+
+/**
+ * Port of the curator's `memory_capture`. The MCP server has no approval
+ * channel, so a conflict resolves the way the dsh tool resolves it in headless
+ * runs: refuse and point at `conflictPolicy: 'skip'`. That also makes the
+ * approve-then-append path unreachable, so a capture that does write is always
+ * a full-note overwrite. `committed` is absent because MCP writes never run
+ * memory-git.
+ */
+async function captureNote(a = {}) {
+  if (typeof a.title !== 'string') throw new Error('memory_capture: title must be a string')
+  if (typeof a.summary !== 'string') throw new Error('memory_capture: summary must be a string')
+  const targetId = captureTargetId(a.id, a.title)
+  const tags = Array.isArray(a.tags) ? a.tags.map(String) : []
+
+  const [titleHits, idHits] = await Promise.all([searchNotes(a.title), searchNotes(targetId)])
+  const hits = [...new Map([...titleHits, ...idHits].map(hit => [hit.id, hit])).values()]
+  const conflicts = findCaptureConflicts(targetId, a.title, hits)
+  const conflictExists = conflicts.length > 0
+  const finalId = conflicts[0]?.id ?? targetId
+
+  if (conflictExists) {
+    if (a.conflictPolicy === 'skip') {
+      return { written: false, id: finalId, conflict: true, reason: 'skipped by conflictPolicy=skip' }
+    }
+    return {
+      written: false,
+      id: finalId,
+      conflict: true,
+      reason: 'approval service or agent unavailable; set conflictPolicy=skip to allow silent skip in headless mode',
+    }
+  }
+
+  const now = formatBeijingTime(new Date())
+  const detailsText = typeof a.details === 'string' && a.details !== '' ? `\n\n## Details\n\n${a.details}` : ''
+  const appendContent = `${a.summary}${detailsText}\n`
+  const frontmatter = await captureFrontmatter(finalId, a.title, tags, now)
+  const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${a.title}\n\n${appendContent}`
+  const write = await writeNote(finalId, content, 'overwrite')
+  const response = {
+    written: true,
+    id: write.id,
+    mode: 'overwrite',
+    conflict: false,
+    version: write.version,
+  }
+  if (write.created !== undefined) response.created = write.created
+  if (write.updated !== undefined) response.updated = write.updated
+  return response
+}
+
 async function buildGraph(id, depth = 1, maxNodes = 200) {
   const idOf = p => vaultRelativeId(p)
   const title = async p => {
@@ -471,6 +593,22 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'memory_capture',
+    description: 'Persist durable knowledge to the vault, mirroring the dsh memory_capture tool: derives the note id from the title when omitted, merges frontmatter on an existing note, and returns the same fields minus committed, which requires memory-git. MCP has no approval channel, so a conflicting capture refuses the write and points at conflictPolicy: "skip".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short human-readable title; used to derive the note id when id is omitted.' },
+        summary: { type: 'string', description: 'The durable knowledge to record, in concise Markdown.' },
+        details: { type: 'string', description: 'Optional additional Markdown context (error traces, alternatives, links).' },
+        id: { type: 'string', description: 'Optional explicit vault-relative note id; a path without a shared/ prefix lands under the notes dir.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for the note frontmatter.' },
+        conflictPolicy: { type: 'string', enum: ['ask', 'skip'], description: 'ask (default) refuses a conflicting capture; skip skips it silently.' },
+      },
+      required: ['title', 'summary'],
+    },
+  },
 ]
 
 async function callTool(name, a = {}) {
@@ -491,6 +629,8 @@ async function callTool(name, a = {}) {
       return writeNote(a.id, a.content ?? '', a.mode ?? 'append', a.baseVersion)
     case 'wiki_graph':
       return buildGraph(a.id, a.depth ?? 1)
+    case 'memory_capture':
+      return captureNote(a)
     default:
       throw new Error(`unknown tool ${name}`)
   }

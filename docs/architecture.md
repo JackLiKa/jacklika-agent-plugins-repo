@@ -36,7 +36,7 @@ Each layer is a separate opt-in `tools/execute` waterfall decorator; `wiki_write
 
 ## MCP path
 
-`dsh-memory-mcp` is a zero-dependency Node stdio server implementing the same tools plus `note:///` resources. One server process serializes its own writes — the single-writer deployment. Caveats (documented in [security.md](security.md)):
+`dsh-memory-mcp` is a zero-dependency Node stdio server implementing the same tools plus the curator's `memory_capture` and `note:///` resources. One server process serializes its own writes — the single-writer deployment. Caveats (documented in [security.md](security.md)):
 
 - Serialization is per server process; independent MCP processes and direct filesystem writers are not covered — `baseVersion` and atomic rename remain the safety net.
 - MCP-origin writes do not produce git commits; `memory-git` runs on the dsh tool-calling path only.

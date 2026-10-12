@@ -36,7 +36,7 @@ wiki_write("notes/x.md")
 
 ## MCP 路径
 
-`dsh-memory-mcp` 是零依赖 Node stdio server，实现同一组工具加 `note:///` resources。单个 server 进程串行化自己的写——即单写者部署形态。注意事项（详见 [security.md](security.zh.md)）：
+`dsh-memory-mcp` 是零依赖 Node stdio server，实现同一组工具，外加策展工具 `memory_capture` 与 `note:///` resources。单个 server 进程串行化自己的写——即单写者部署形态。注意事项（详见 [security.md](security.zh.md)）：
 
 - 串行化按进程生效；多个独立 MCP 进程和直接文件写不在覆盖范围——`baseVersion` 与原子 rename 仍是兜底。
 - MCP 来源的写不产生 git commit；`memory-git` 只在 dsh tool-calling 路径上运行。

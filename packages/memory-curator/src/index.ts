@@ -254,10 +254,24 @@ export function apply(ctx: Context, config: Config): void {
       const search = await callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.query })
       // Mechanical per-turn summaries are useful for session replay, but they
       // are not curated knowledge. Keep them out of proactive recall unless a
-      // caller explicitly searches the wiki. The prefix covers both the legacy
-      // flat form `auto-capture-<session>.md` and the new isolated subdir
-      // `auto-capture/<session>.md`.
-      const curated = search.hits.filter(hit => !hit.id.startsWith('shared/notes/auto-capture'))
+      // caller explicitly searches the wiki. Two shapes exist under the notes
+      // dir: the current subdir `auto-capture/<session>.md` and the legacy flat
+      // `auto-capture-<session>.md`. A bare prefix or substring test would also
+      // swallow unrelated notes that merely share the text, such as
+      // `auto-capture-release-0.1.0-alpha.1.md`, so the flat form is matched by
+      // the exact charset memory-anchor can emit.
+      const notesPrefix = `${resolved.notesDir}/`
+      const isAutoCapture = (id: string): boolean => {
+        if (!id.startsWith(notesPrefix)) return false
+        const rest = id.slice(notesPrefix.length)
+        // The dir form is confined to the subdir, so any nested path is a capture.
+        if (rest.startsWith('auto-capture/')) return true
+        // memory-anchor's sessionNoteId sanitizes the session id to [A-Za-z0-9_-]+,
+        // so a legacy flat capture never carries another dot in its file name;
+        // `release-0.1.0-alpha.1` and other dot-bearing names stay in recall.
+        return /^auto-capture-[A-Za-z0-9_-]+\.md$/.test(rest)
+      }
+      const curated = search.hits.filter(hit => !isAutoCapture(hit.id))
       // `search.total` is the vault-wide count before the search-layer cap. If
       // any auto-capture hits made it into the capped `hits` list, remove them
       // from the total so curated numbers stay truthful.
