@@ -143,6 +143,7 @@ async function acquireLock(
   lockPath: string,
   resolved: ResolvedConfig,
   signal: AbortSignal,
+  logger?: Context['logger'],
 ): Promise<() => Promise<void>> {
   const heartbeatPath = join(lockPath, 'heartbeat')
   const ownerPath = join(lockPath, 'owner.json')
@@ -162,6 +163,7 @@ async function acquireLock(
       await writeFile(ownerPath, JSON.stringify(owner), 'utf8')
       let counter = 0
       await writeFile(heartbeatPath, String(counter), 'utf8').catch(() => undefined)
+      logger?.debug(`memory-queue: lock acquired ${lockPath} token=${owner.token} pid=${owner.pid} hostname=${owner.hostname}`)
       const heartbeat = setInterval(() => {
         counter += 1
         writeFile(heartbeatPath, String(counter), 'utf8').catch(() => undefined)
@@ -174,6 +176,7 @@ async function acquireLock(
         const tombstone = `${lockPath}.release-${owner.token}`
         try {
           await rename(lockPath, tombstone)
+          logger?.debug(`memory-queue: lock released ${lockPath} token=${owner.token}`)
         } catch (error) {
           // Windows file indexers/antivirus can hold a handle on the lock
           // directory; tolerate the same transient codes as stale-lock reclaim.
@@ -197,6 +200,7 @@ async function acquireLock(
       } else if (Date.now() - lastChangeAt > resolved.lockStaleMs) {
         const owner = await readOwner(ownerPath)
         if (!processIsAlive(owner)) {
+          logger?.warn(`memory-queue: reclaiming stale lock ${lockPath} (no heartbeat for ${Date.now() - lastChangeAt}ms, owner=${owner?.pid ?? 'unknown'}@${owner?.hostname ?? 'unknown'})`)
           const tombstone = `${lockPath}.stale-${randomUUID()}`
           try {
             await rename(lockPath, tombstone)
@@ -209,6 +213,7 @@ async function acquireLock(
         lastChangeAt = Date.now()
       }
       if (Date.now() >= deadline) {
+        logger?.warn(`memory-queue: timeout waiting for lock ${lockPath} after ${resolved.lockTimeoutMs}ms`)
         throw new Error(`memory-queue: timed out waiting for vault lock ${lockPath}`)
       }
       await sleep(resolved.lockRetryMs, signal)
@@ -273,8 +278,9 @@ export function apply(ctx: Context, config: Config): void {
       exec.signal.throwIfAborted()
       if (!resolved.crossProcessLock) return await next()
       const lockPath = lockPathFor(resolveMemoryVaultRoot(resolved.vaultRoot, exec), key)
+      ctx.logger?.debug(`memory-queue: dispatch ${exec.name} lane=${key || '(global)'} lock=${lockPath}`)
       await mkdir(dirname(lockPath), { recursive: true })
-      const unlock = await acquireLock(lockPath, resolved, exec.signal)
+      const unlock = await acquireLock(lockPath, resolved, exec.signal, ctx.logger)
       try {
         return await next()
       } finally {

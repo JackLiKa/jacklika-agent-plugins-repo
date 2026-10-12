@@ -263,6 +263,16 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 
 `<vault>` defaults to `<session workspace>/.plugins/memory/`. Mount `skills/memory-vault` separately (`customSkillDirs`) or the model will not know the read-before-write and `baseVersion` conventions.
 
+## Observability
+
+The memory suite emits structured runtime diagnostics through the Cordis logger (`ctx.logger`) when the deployment enables the corresponding log level. No metrics, tracing, or telemetry are collected; observability is local logs plus the built-in audit trail.
+
+- `debug` — emitted by `memory-queue` (lock acquire/release, stale-lock reclaim, timeout), `memory-git` (git command invocations and `index.lock` retries), `memory-scope` (id rejection, namespace rewrite, passthrough), and `memory-curator` (recall filter counts and capture target/conflict decisions).
+- `warn` — emitted on registration failures (any plugin), `memory-queue` lock timeouts, `memory-git` git/command failures, and `memory-anchor` auto-capture failures.
+- Audit trail — `memory-git` commits every matching `wiki_write` to `<vault>/.git` with the note id as the commit subject, and `memory-anchor` writes per-turn `auto-capture` notes under `shared/notes/auto-capture/`. These two artifacts provide a durable timeline of what changed and when.
+
+Enable runtime logs by configuring the DSH/Cordis log level to `debug` in your Profile. The suite intentionally does not log note body content; only ids, counts, version fingerprints, and error messages are recorded.
+
 ## Troubleshooting
 
 | Symptom | Action |

@@ -114,10 +114,11 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * @param args - git arguments after `-C <vault>`.
  * @param resolved - applied plugin configuration.
  */
-async function git(vault: string, args: string[], resolved: ResolvedConfig, signal: AbortSignal): Promise<string> {
+async function git(vault: string, args: string[], resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger']): Promise<string> {
   for (let attempt = 0; ; attempt += 1) {
     try {
       signal.throwIfAborted()
+      logger?.debug(`memory-git: git -C ${vault} ${args.join(' ')}`)
       const { stdout } = await execFileAsync('git', ['-C', vault, ...args], { signal })
       return stdout
     } catch (error) {
@@ -125,7 +126,11 @@ async function git(vault: string, args: string[], resolved: ResolvedConfig, sign
         throw new Error('memory-git: git executable was not found on PATH', { cause: error })
       }
       const message = error instanceof Error ? error.message : String(error)
-      if (!message.includes('index.lock') || attempt >= resolved.indexLockRetries) throw error
+      if (!message.includes('index.lock') || attempt >= resolved.indexLockRetries) {
+        logger?.warn(`memory-git: git -C ${vault} ${args.join(' ')} failed: ${message}`)
+        throw error
+      }
+      logger?.debug(`memory-git: retrying after index.lock contention (attempt ${attempt})`)
       await sleep(resolved.indexLockRetryMs, signal)
     }
   }
@@ -139,7 +144,7 @@ async function git(vault: string, args: string[], resolved: ResolvedConfig, sign
  * @param id - vault-relative note id as reported by the tool call.
  * @param resolved - applied plugin configuration.
  */
-async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, signal: AbortSignal): Promise<void> {
+async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger']): Promise<void> {
   containedPath(vault, id)
   await mkdir(vault, { recursive: true })
   const hasOwnRepo = await stat(join(vault, '.git')).then(() => true, () => false)
@@ -148,22 +153,23 @@ async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, 
   }
   if (resolved.nestedRepo === 'init' && !hasOwnRepo) {
     if (!resolved.autoInit) throw new Error(`memory-git: ${vault} has no .git and autoInit is off`)
-    await git(vault, ['init'], resolved, signal)
+    await git(vault, ['init'], resolved, signal, logger)
   }
   if (resolved.nestedRepo === 'inherit') {
-    await git(vault, ['rev-parse', '--git-dir'], resolved, signal).catch(async (error: unknown) => {
+    await git(vault, ['rev-parse', '--git-dir'], resolved, signal, logger).catch(async (error: unknown) => {
       if (!resolved.autoInit) throw error
-      await git(vault, ['init'], resolved, signal)
+      await git(vault, ['init'], resolved, signal, logger)
     })
   }
-  const status = await git(vault, ['status', '--porcelain', '--', id], resolved, signal)
+  const status = await git(vault, ['status', '--porcelain', '--', id], resolved, signal, logger)
   if (status.trim() === '') return
-  await git(vault, ['add', '--', id], resolved, signal)
+  await git(vault, ['add', '--', id], resolved, signal, logger)
   await git(vault, [
     '-c', `user.name=${resolved.authorName}`,
     '-c', `user.email=${resolved.authorEmail}`,
     'commit', '-m', `${resolved.commitPrefix}: ${id}`, '--', id,
-  ], resolved, signal)
+  ], resolved, signal, logger)
+  logger?.debug(`memory-git: committed ${id}`)
 }
 
 /**
@@ -211,14 +217,16 @@ export function apply(ctx: Context, config: Config): void {
     }
     const vault = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
     exec.signal.throwIfAborted()
+    ctx.logger?.debug(`memory-git: dispatch ${exec.name} id=${id}`)
     try {
-      await enqueue(() => commitWrite(vault, id, resolved, exec.signal))
+      await enqueue(() => commitWrite(vault, id, resolved, exec.signal, ctx.logger))
     } catch (error) {
       // `next()` already put the note on disk, so a commit failure leaves the
       // vault and its history diverged. Surface the divergence as a structured
       // error so callers know the note exists on disk uncommitted and can retry
       // safely: a blind repeat of the same append duplicates it.
       const reason = error instanceof Error ? error.message : String(error)
+      ctx.logger?.warn(`memory-git: commit failed for ${id}: ${reason}`)
       const message =
         `memory-git: note ${id} was written to the vault but not committed, so it is on disk outside git history. `
         + 'Re-read it with wiki_read and pass the returned version as baseVersion before writing again; '

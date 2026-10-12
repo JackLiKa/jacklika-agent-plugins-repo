@@ -152,14 +152,24 @@ export function apply(ctx: Context, config: Config): void {
     const id = (args as Record<string, unknown>)[resolved.idArgument]
     if (typeof id !== 'string') return next()
     if (!isSafeNoteId(id)) {
+      ctx.logger?.debug(`memory-scope: rejecting unsafe id ${JSON.stringify(id)}`)
       return invalidIdResult(`memory-scope: invalid note id ${JSON.stringify(id)}: ids must be vault-relative paths without '..', '.', backslashes, leading slashes, or drive letters`)
     }
-    if (shared.some(prefix => id.startsWith(prefix))) return next()
+    if (shared.some(prefix => id.startsWith(prefix))) {
+      ctx.logger?.debug(`memory-scope: id ${id} passes through shared prefix`)
+      return next()
+    }
     const key = agentKey(exec, resolved.agentKey)
+    ctx.logger?.debug(`memory-scope: agentKey=${key} for agent=${exec.agent?.id ?? '(none)'}`)
     if (key === '') return next()
     const ownPrefix = `${resolved.scopePrefix}/${key}/`
-    if (id.startsWith(ownPrefix)) return next()
-    const scopedArgs = { ...(args as Record<string, unknown>), [resolved.idArgument]: `${ownPrefix}${id}` }
+    if (id.startsWith(ownPrefix)) {
+      ctx.logger?.debug(`memory-scope: id ${id} already in own namespace`)
+      return next()
+    }
+    const scopedId = `${ownPrefix}${id}`
+    ctx.logger?.debug(`memory-scope: rewrite ${id} -> ${scopedId}`)
+    const scopedArgs = { ...(args as Record<string, unknown>), [resolved.idArgument]: scopedId }
     return ctx.tools.execute({
       callId: ToolCallId(`${exec.callId}:scoped`),
       rootCallId: exec.rootCallId,

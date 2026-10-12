@@ -262,6 +262,7 @@ export function apply(ctx: Context, config: Config): void {
       // any auto-capture hits made it into the capped `hits` list, remove them
       // from the total so curated numbers stay truthful.
       const total = search.total - (search.hits.length - curated.length)
+      ctx.logger?.debug(`memory-curator: recall query=${args.query} hits=${curated.length} total=${total}`)
       return {
         query: args.query,
         hits: curated.slice(0, 20),
@@ -379,6 +380,7 @@ export function apply(ctx: Context, config: Config): void {
 
       const appending = conflictExists && mode === 'append'
       const writeMode: 'append' | 'overwrite' = appending ? 'append' : 'overwrite'
+      ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode}`)
       const frontmatter = appending ? undefined : await overwriteFrontmatter(ctx, exec, finalId, args.title, tags, now)
       const content = appending
         ? appendContent

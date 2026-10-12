@@ -263,6 +263,16 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 
 `<vault>` 默认为 `<session workspace>/.plugins/memory/`。请单独挂载 `skills/memory-vault`（`customSkillDirs`），否则模型不会知道"先读后写"与 `baseVersion` 的约定。
 
+## 可观测性
+
+记忆套件通过 Cordis 日志器（`ctx.logger`）输出结构化运行时诊断信息，前提是部署环境启用了对应日志级别。套件本身不收集指标、链路或遥测数据；可观测性由本地日志与内置审计轨迹组成。
+
+- `debug` —— 由 `memory-queue`（锁获取/释放、stale-lock 回收、超时）、`memory-git`（git 命令调用与 `index.lock` 重试）、`memory-scope`（id 拒绝、命名空间重写、透传）和 `memory-curator`（召回过滤计数与捕获目标/冲突决策）输出。
+- `warn` —— 在注册失败（任意插件）、`memory-queue` 锁超时、`memory-git` git/命令失败、`memory-anchor` 自动捕获失败时输出。
+- 审计轨迹 —— `memory-git` 将每个匹配的 `wiki_write` 提交到 `<vault>/.git`，提交主题为笔记 id；`memory-anchor` 将每轮会话写入 `shared/notes/auto-capture/` 下的 `auto-capture` 笔记。这两者共同构成“何时改了什么”的持久时间线。
+
+在 Profile 中将 DSH/Cordis 日志级别设为 `debug` 即可启用运行时日志。套件有意不记录笔记正文内容，仅记录 id、计数、版本指纹和错误消息。
+
 ## 常见问题
 
 | 现象 | 处理 |
