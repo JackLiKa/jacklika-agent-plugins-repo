@@ -29,9 +29,14 @@ on:
         description: 'Print the commands instead of running them'
         type: boolean
         default: true
+      oidc:
+        description: 'Use trusted-publishing (OIDC) auth instead of NPM_TOKEN; needs "Allow npm dist-tag" enabled per package'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   dist-tags:
@@ -44,7 +49,9 @@ jobs:
 
       - name: Apply dist-tag change
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Token fallback for the default path; oidc=true forces trusted
+          # publishing so a dispatch proves whether the npm-side grant works.
+          NODE_AUTH_TOKEN: ${{ inputs.oidc && '' || secrets.NPM_TOKEN }}
         run: |
           action='${{ inputs.action }}'
           tag='${{ inputs.tag }}'

@@ -11,4 +11,5 @@ DeepSeek Harness 插件套件的套件级文档。各包的配置参考在各包
 | [usage.md](usage.zh.md) | 把套件装进 dsh profile（registry、私人或本地 checkout）、挂载 skill、工具参考 |
 | [mcp-server.md](mcp-server.zh.md) | 运行 `dsh-memory-mcp` 并在 MCP 客户端中挂载 |
 | [security.md](security.zh.md) | 数据流、纯本地保证、LLM/embedding 暴露边界 |
+| [RELEASING.md](RELEASING.zh.md) | 发布运维手册：九项门禁、打 tag、npm 发布、dist-tag、OIDC 迁移、profile 部署 |
 | [adding-plugins.md](adding-plugins.zh.md) | 向本仓库新增插件包的约定 |

@@ -2,8 +2,8 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/README.md
-README.md: fd00b5b62a0d6125496164ebeb113e57b304e0f6
-README.zh.md: fe68ea7852ff555978f3b088924013640ca1e6ea
+README.md: 3efaf630b495893ab90a82640d1c2503b5c20e93
+README.zh.md: ced090c4df804e5b93753e8dd293db73e460796f
 adding-plugins.md: d922fc2d1bd8fd74cdd4b929a495ca5b9edf7602
 adding-plugins.zh.md: 6330ca8d86a6b7beb0e991c1125be0488e135f9c
 architecture.md: 5268277f155c519b30ebb815eefc0044d5c0563a
@@ -16,3 +16,5 @@ security.md: 61cfa1e6f9763384d391e467e2b4fe9fcdac9886
 security.zh.md: 69e67248e44165cf6fc297650dbe0f4c0441d55e
 usage.md: b4a53ecd6f8c0a019b73214ab2f145f6be8cba09
 usage.zh.md: 1cb9c90f9dd1fbc1988f45ff9e280d8b46a2a220
+RELEASING.md: 21683432dfb272b4953737b05e76dfd2ca2504c8
+RELEASING.zh.md: 085ec55e7533035de13e5e1de01c3f95fdcf9333

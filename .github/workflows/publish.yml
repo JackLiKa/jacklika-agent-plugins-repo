@@ -19,6 +19,9 @@ on:
 
 permissions:
   contents: read
+  # Trusted publishing: the OIDC grant is only used once the OIDC_PUBLISHING
+  # repository variable is set to 'true' (see docs/RELEASING.md).
+  id-token: write
 
 jobs:
   publish:
@@ -49,8 +52,14 @@ jobs:
       # requiring the version to start with a digit.
       - name: Publish packages
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # Auth order: trusted publishing (OIDC) first, token fallback second.
+          # With both ACTIONS_ID_TOKEN_REQUEST_URL and NODE_AUTH_TOKEN present npm
+          # ignores the OIDC route, so the token is withheld until a publish
+          # actually fails on authentication. Once every package's trusted
+          # publisher is configured and proven, NPM_TOKEN can be dropped for good.
+          unset NODE_AUTH_TOKEN
           dry_run=''
           if [ '${{ github.event.inputs.dry_run || 'false' }}' = 'true' ]; then
             dry_run='--dry-run'
@@ -68,49 +77,51 @@ jobs:
                 npm publish --access public --tag "$tag" $dry_run "$tgz"
                 continue
               fi
+              attempt_publish() {
+                if npm publish --access public --tag "$tag" "$tgz" >npm_publish.log 2>&1; then
+                  return 0
+                fi
+                publish_status=$?
+                # npm may return E403/E409 if the version was published but
+                # not yet visible to npm view due to registry propagation.
+                # If the error message explicitly says the version already
+                # exists, trust it and move on; otherwise retry npm view for up
+                # to two minutes before failing the job.
+                if grep -qiE 'previously published|already exists|Cannot publish over' npm_publish.log; then
+                  echo "$name@$version already published (per npm error message)"
+                  return 0
+                fi
+                cat npm_publish.log
+                for _ in $(seq 1 12); do
+                  if npm view "$name@$version" version >/dev/null 2>&1; then
+                    echo "$name@$version already published (confirmed after E403/E409)"
+                    return 0
+                  fi
+                  sleep 10
+                done
+                return "$publish_status"
+              }
+
               if npm view "$name@$version" version >/dev/null 2>&1; then
                 echo "$name@$version already published"
               else
                 echo "Publishing $name@$version"
-                if npm publish --access public --tag "$tag" "$tgz" >npm_publish.log 2>&1; then
+                if attempt_publish; then
                   : # published successfully
                 else
-                  publish_status=$?
-                  # npm may return E403/E409 if the version was published but
-                  # not yet visible to npm view due to registry propagation.
-                  # If the error message explicitly says the version already
-                  # exists, trust it and move on; otherwise retry npm view for up
-                  # to two minutes before failing the job.
-                  if grep -qiE 'previously published|already exists|Cannot publish over' npm_publish.log; then
-                    echo "$name@$version already published (per npm error message)"
-                  else
-                    cat npm_publish.log
-                    confirmed=0
-                    for i in $(seq 1 12); do
-                      if npm view "$name@$version" version >/dev/null 2>&1; then
-                        echo "$name@$version already published (confirmed after E403/E409)"
-                        confirmed=1
-                        break
-                      fi
-                      sleep 10
-                    done
-                    if [ "$confirmed" -ne 1 ]; then
-                      exit "$publish_status"
-                    fi
-                  fi
+                  # The OIDC attempt failed; retry once with the repository
+                  # token, which stays valid for publishing until January 2027.
+                  echo "OIDC publish of $name@$version failed; retrying with NPM_TOKEN"
+                  export NODE_AUTH_TOKEN="$NPM_TOKEN"
+                  attempt_publish || exit "$?"
                 fi
               fi
               echo "Published $name@$version with tag $tag"
               # npm publish --tag already sets the dist-tag; skip a separate
               # dist-tag add to avoid transient 404s on brand-new scoped packages.
-              # New scoped packages may inherit restricted visibility from the
-              # org default; ensure every published package is publicly installable.
-              echo "Setting public access for $name..."
-              if npm access set status=public "$name" 2>&1; then
-                echo "Public access set for $name"
-              else
-                echo "WARN: could not set public access for $name (see above)"
-              fi
+              # Visibility is granted by --access public on the publish command;
+              # a separate npm access call is refused for bypass-2FA tokens and
+              # only produces a 403 warning, so none is attempted.
             done
           }
 

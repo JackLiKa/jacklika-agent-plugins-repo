@@ -11,4 +11,5 @@ Suite-level documentation for the DeepSeek Harness plugin collection. Per-packag
 | [usage.md](usage.md) | Installing the suite into a dsh profile (registry, private, or local checkout), mounting skills, tool reference |
 | [mcp-server.md](mcp-server.md) | Running `dsh-memory-mcp` and mounting it in MCP clients |
 | [security.md](security.md) | Data flows, local-only guarantees, LLM/embedding exposure boundaries |
+| [RELEASING.md](RELEASING.md) | Release runbook: nine gates, tagging, npm publish, dist-tags, OIDC migration, profile deployment |
 | [adding-plugins.md](adding-plugins.md) | Conventions for adding new plugin packages to this repository |
