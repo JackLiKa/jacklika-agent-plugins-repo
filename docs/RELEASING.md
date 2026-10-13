@@ -89,6 +89,7 @@ Direct publishing loses token support in January 2027, and npm's answer is [trus
 1. Repository side: grant `id-token: write` in `publish.yml` (already present) so the runner exposes `ACTIONS_ID_TOKEN_REQUEST_URL`.
 2. npm side: for each package add a trusted publisher for this repository and the `publish.yml` workflow file, enable **Allow npm dist-tag** on that same configuration, and complete the first successful publish to validate the configuration. These steps need interactive 2FA on npmjs.com and cannot be performed by CI.
 3. Validate: `publish.yml` runs OIDC-first without being asked to, and falls back to `NPM_TOKEN` for one retry when an OIDC publish fails, so a package without a trusted publisher still publishes. A `publish.yml` dispatch with `action=dist-tag` proves the dist-tag grant; if it returns `401`, the grant or validation is missing on the npm side.
+   - Note: OIDC dist-tag operations require npm CLI `>= 11.21.0` (or `>= 12.2.0`). The dist-tag job in `publish.yml` upgrades the runner's npm before invoking `npm dist-tag`, because the Node 24 image ships an older npm that does not support OIDC dist-tag.
 4. Retire the token once a release has published cleanly over OIDC: revoke `NPM_TOKEN` and delete the repository secret.
 
 The auth selector `publish.yml` uses:

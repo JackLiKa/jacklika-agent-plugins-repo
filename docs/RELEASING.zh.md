@@ -89,6 +89,7 @@ gh workflow run publish.yml -f action=dist-tag -f dist_tag_action=add -f dist_ta
 1. 仓库侧：在 `publish.yml` 中授予 `id-token: write`（已就位），使 runner 暴露 `ACTIONS_ID_TOKEN_REQUEST_URL`。
 2. npm 侧：为每个包添加指向本仓库与 `publish.yml` 工作流文件的 trusted publisher，并在同一配置中启用 **Allow npm dist-tag**，随后通过第一次成功发布验证该配置。这些步骤都需要在 npmjs.com 上交互式 2FA，CI 无法代劳。
 3. 验证：`publish.yml` 无需额外开关即 OIDC 优先，当某包的 OIDC 发布失败时回退到 `NPM_TOKEN` 重试一次，因此尚未配置 trusted publisher 的包仍能发布。`publish.yml` 用 `action=dist-tag` dispatch 证明 dist-tag 授权；若返回 `401`，说明 npm 侧授权缺失或未验证。
+   - 注意：OIDC dist-tag 操作要求 npm CLI `>= 11.21.0`（或 `>= 12.2.0`）。`publish.yml` 的 dist-tag job 会在调用 `npm dist-tag` 前升级 runner 上的 npm，因为 Node 24 镜像自带的 npm 版本不支持 OIDC dist-tag。
 4. 某次发布在 OIDC 下干净完成后撤销令牌：吊销 `NPM_TOKEN` 并删除仓库 secret。
 
 `publish.yml` 使用的认证选择器：
