@@ -45,16 +45,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Apply dist-tag change
         env:
-          # Token fallback for the default path. oidc=true unsets this variable
-          # inside the step so npm uses the OIDC token from ACTIONS_ID_TOKEN_REQUEST_URL.
+          # Token fallback for the default path. oidc=true does not write a static
+          # .npmrc auth line so npm falls back to the OIDC token from the runner.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ '${{ inputs.oidc }}' = 'true' ]; then
             unset NODE_AUTH_TOKEN
+          else
+            npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
           fi
           action='${{ inputs.action }}'
           tag='${{ inputs.tag }}'
