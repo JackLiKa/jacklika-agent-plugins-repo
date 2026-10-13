@@ -35,7 +35,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Install and build
         run: |
@@ -112,7 +111,7 @@ jobs:
                   # The OIDC attempt failed; retry once with the repository
                   # token, which stays valid for publishing until January 2027.
                   echo "OIDC publish of $name@$version failed; retrying with NPM_TOKEN"
-                  export NODE_AUTH_TOKEN="$NPM_TOKEN"
+                  npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
                   attempt_publish || exit "$?"
                 fi
               fi
