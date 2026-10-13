@@ -205,7 +205,7 @@ jobs:
               echo "$output"
             else
               # Re-running a cleanup must not fail on an already-absent tag.
-              if echo "$output" | grep -qi 'no such dist-tag\|E404'; then
+              if echo "$output" | grep -qiE 'no such dist-tag|is not a dist-tag|E404'; then
                 echo "skipped: $entry has no '$tag' dist-tag"
               else
                 echo "$output"
