@@ -49,10 +49,13 @@ jobs:
 
       - name: Apply dist-tag change
         env:
-          # Token fallback for the default path; oidc=true forces trusted
-          # publishing so a dispatch proves whether the npm-side grant works.
-          NODE_AUTH_TOKEN: ${{ inputs.oidc && '' || secrets.NPM_TOKEN }}
+          # Token fallback for the default path. oidc=true unsets this variable
+          # inside the step so npm uses the OIDC token from ACTIONS_ID_TOKEN_REQUEST_URL.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ '${{ inputs.oidc }}' = 'true' ]; then
+            unset NODE_AUTH_TOKEN
+          fi
           action='${{ inputs.action }}'
           tag='${{ inputs.tag }}'
           version='${{ inputs.version }}'
