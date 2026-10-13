@@ -1,30 +1,52 @@
 name: Publish to npm
 
-# Publishes the workspace packages to the npm registry from pre-built tarballs.
-# Trigger manually in dry-run mode first, then for real when a release is cut.
+# Publishes the workspace packages to the npm registry from pre-built tarballs,
+# and maintains npm dist-tags via OIDC once trusted publishing is validated.
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: 'Publish packages or maintain dist-tags'
+        type: choice
+        options: [publish, dist-tag]
+        default: 'publish'
       dry_run:
         description: 'Run npm publish --dry-run instead of publishing'
         type: boolean
         default: true
       tag:
-        description: 'npm dist-tag to apply'
+        description: 'npm dist-tag to apply when publishing'
         type: string
         default: 'latest'
+      dist_tag_action:
+        description: 'dist-tag action (only for action=dist-tag)'
+        type: choice
+        options: [rm, add]
+        default: 'rm'
+      dist_tag:
+        description: 'dist-tag name (only for action=dist-tag)'
+        type: string
+        default: 'next'
+      dist_tag_version:
+        description: 'version for dist-tag add (ignored for rm)'
+        type: string
+        default: ''
+      dist_tag_packages:
+        description: 'packages for dist-tag action; empty uses the memory suite'
+        type: string
+        default: ''
   release:
     types: [published]
 
 permissions:
   contents: read
-  # Trusted publishing: the OIDC grant is only used once the OIDC_PUBLISHING
-  # repository variable is set to 'true' (see docs/RELEASING.md).
+  # Trusted publishing: OIDC is used when NODE_AUTH_TOKEN is not present.
   id-token: write
 
 jobs:
   publish:
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.action == 'publish')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -141,3 +163,54 @@ jobs:
           publish jacklika-dsh-todo-anchor-*.tgz
           publish jacklika-dsh-memory-anchor-*.tgz
           publish jacklika-dsh-memory-[0-9]*.tgz
+
+  dist-tags:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'dist-tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Apply dist-tag change
+        env:
+          # Token fallback for the default path. OIDC mode unsets this variable
+          # so npm uses the OIDC token from the runner.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Use OIDC trusted publishing; npm picks up the runner's OIDC token
+          # when NODE_AUTH_TOKEN is absent.
+          unset NODE_AUTH_TOKEN
+
+          if [ '${{ inputs.dist_tag_action }}' = 'add' ] && [ -z '${{ inputs.dist_tag_version }}' ]; then
+            echo 'dist_tag_version is required for action=add'
+            exit 1
+          fi
+          action='${{ inputs.dist_tag_action }}'
+          tag='${{ inputs.dist_tag }}'
+          version='${{ inputs.dist_tag_version }}'
+          packages='${{ inputs.dist_tag_packages }}'
+          if [ -z "$packages" ]; then
+            packages='@jacklika/dsh-memory @jacklika/dsh-tool-memory-filesystem @jacklika/dsh-memory-curator @jacklika/dsh-tool-memory-graph @jacklika/dsh-memory-mcp'
+          fi
+          failed=0
+          for entry in $packages; do
+            if [ "$action" = 'rm' ]; then
+              target="$entry"
+            else
+              target="$entry@$version"
+            fi
+            echo "npm dist-tag $action $target $tag"
+            if output=$(npm dist-tag "$action" "$target" "$tag" 2>&1); then
+              echo "$output"
+            else
+              # Re-running a cleanup must not fail on an already-absent tag.
+              if echo "$output" | grep -qi 'no such dist-tag\|E404'; then
+                echo "skipped: $entry has no '$tag' dist-tag"
+              else
+                echo "$output"
+                failed=1
+              fi
+            fi
+          done
+          exit "$failed"

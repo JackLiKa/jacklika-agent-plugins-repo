@@ -58,15 +58,15 @@ A version is verified when `npm view <pkg>@<version> version` prints it; expecte
 
 ## Dist-tag maintenance
 
-`dist-tags.yml` is a `workflow_dispatch` helper; local checkouts carry no npm credentials, so every registry write goes through CI. Accepted inputs: `action` (`rm` or `add`), `tag`, comma- or space-separated `packages` (empty selects the five memory packages), `version` (required for `add`), and `dry_run` (default `true`).
+Dist-tag maintenance is handled by the same `publish.yml` workflow through a `workflow_dispatch` `dist-tag` action; local checkouts carry no npm credentials, so every registry write goes through CI. Accepted inputs: `action` (`dist-tag`), `dist_tag_action` (`rm` or `add`), `dist_tag`, comma- or space-separated `dist_tag_packages` (empty selects the five memory packages), `dist_tag_version` (required for `add`).
 
 ```bash
-gh workflow run dist-tags.yml -f action=add -f tag=next -f packages='@jacklika/dsh-memory' -f version=0.1.7-rc.22 -f dry_run=false
+gh workflow run publish.yml -f action=dist-tag -f dist_tag_action=add -f dist_tag=next -f dist_tag_packages='@jacklika/dsh-memory' -f dist_tag_version=0.1.7-rc.23
 ```
 
 - `add` re-points a tag and is idempotent; every dispatch covers a single version, so repointing several packages to different versions takes one dispatch each.
 - `rm` tolerates `E404` for an already-absent tag but fails on any other error.
-- Always run a `dry_run=true` dispatch first; it prints the exact `npm dist-tag` commands without touching the registry.
+- The dist-tag job always uses OIDC trusted publishing and falls back to `NPM_TOKEN` only when the OIDC attempt fails.
 - The health check for `next` is that every tracked line exposes the same version on `next` and `latest`.
 
 ## npm token failures
@@ -86,9 +86,9 @@ Distinguish the two failure classes before retrying anything: a `403` together w
 
 Direct publishing loses token support in January 2027, and npm's answer is [trusted publishing](https://docs.npmjs.com/trusted-publishers) with short-lived OIDC credentials. Prepare both workflows now; the migration direction is OIDC-first with the token as the fallback until the npm-side configuration is validated.
 
-1. Repository side: grant `id-token: write` in both `publish.yml` and `dist-tags.yml` (already present) so `actions/setup-node` exposes `ACTIONS_ID_TOKEN_REQUEST_URL`.
-2. npm side: for each package add a trusted publisher for this repository and workflow file, then enable [Allow npm dist-tag](https://github.blog/changelog/2026-09-30-opt-in-dist-tag-permissions-for-npm-trusted-publishing) per configuration. Both actions need interactive 2FA on npmjs.com and cannot be performed by CI.
-3. Validate: `publish.yml` runs OIDC-first without being asked to, and falls back to `NPM_TOKEN` for one retry when an OIDC publish fails, so a package without a trusted publisher still publishes. A `dist-tags.yml` dispatch with the `oidc` input proves the dist-tag grant: use `add`, and if `rm` still returns `403`, the grant is missing or unvalidated on the npm side.
+1. Repository side: grant `id-token: write` in `publish.yml` (already present) so the runner exposes `ACTIONS_ID_TOKEN_REQUEST_URL`.
+2. npm side: for each package add a trusted publisher for this repository and the `publish.yml` workflow file, enable **Allow npm dist-tag** on that same configuration, and complete the first successful publish to validate the configuration. These steps need interactive 2FA on npmjs.com and cannot be performed by CI.
+3. Validate: `publish.yml` runs OIDC-first without being asked to, and falls back to `NPM_TOKEN` for one retry when an OIDC publish fails, so a package without a trusted publisher still publishes. A `publish.yml` dispatch with `action=dist-tag` proves the dist-tag grant; if it returns `401`, the grant or validation is missing on the npm side.
 4. Retire the token once a release has published cleanly over OIDC: revoke `NPM_TOKEN` and delete the repository secret.
 
 The auth selector `publish.yml` uses:
@@ -97,7 +97,7 @@ The auth selector `publish.yml` uses:
 unset NODE_AUTH_TOKEN
 ```
 
-With both `ACTIONS_ID_TOKEN_REQUEST_URL` and `NODE_AUTH_TOKEN` present npm ignores the OIDC route, so the token is withheld until an attempt fails on authentication. `dist-tags.yml` instead selects one mode per dispatch through its `oidc` input, and never falls back, so a refused deletion cannot look like a deletion that worked.
+With both `ACTIONS_ID_TOKEN_REQUEST_URL` and `NODE_AUTH_TOKEN` present npm ignores the OIDC route, so the token is withheld until an attempt fails on authentication. The dist-tag job in `publish.yml` uses the same unset-then-fallback pattern.
 
 ## Desktop profile deployment
 

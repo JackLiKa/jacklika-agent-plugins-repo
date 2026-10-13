@@ -58,15 +58,15 @@ for p in @jacklika/dsh-memory @jacklika/dsh-tool-memory-filesystem @jacklika/dsh
 
 ## dist-tag 维护
 
-`dist-tags.yml` 是一个 `workflow_dispatch` 辅助工作流；本地 checkout 不带 npm 凭据，因此所有 registry 写入都走 CI。接受的输入：`action`（`rm` 或 `add`）、`tag`、以逗号或空格分隔的 `packages`（留空即选中五个 memory 包）、`version`（`add` 必填）、`dry_run`（默认 `true`）。
+dist-tag 维护由同一个 `publish.yml` 工作流通过 `workflow_dispatch` 的 `dist-tag` action 完成；本地 checkout 不带 npm 凭据，因此所有 registry 写入都走 CI。接受的输入：`action`（`dist-tag`）、`dist_tag_action`（`rm` 或 `add`）、`dist_tag`、以逗号或空格分隔的 `dist_tag_packages`（留空即选中五个 memory 包）、`dist_tag_version`（`add` 必填）。
 
 ```bash
-gh workflow run dist-tags.yml -f action=add -f tag=next -f packages='@jacklika/dsh-memory' -f version=0.1.7-rc.22 -f dry_run=false
+gh workflow run publish.yml -f action=dist-tag -f dist_tag_action=add -f dist_tag=next -f dist_tag_packages='@jacklika/dsh-memory' -f dist_tag_version=0.1.7-rc.23
 ```
 
 - `add` 用于重指 tag，幂等；每次 dispatch 只接受一个版本，因此多个包指向不同版本时需逐个 dispatch。
 - `rm` 容忍 tag 本就不存在的 `E404`，其他错误一律失败。
-- 先跑一次 `dry_run=true`；它只打印确切的 `npm dist-tag` 命令，不触碰 registry。
+- dist-tag 任务始终使用 OIDC trusted publishing，仅在 OIDC 尝试失败时回退到 `NPM_TOKEN`。
 - `next` 的健康标准是：每条受跟踪的发布线在 `next` 与 `latest` 上暴露相同版本。
 
 ## npm 令牌故障
@@ -86,9 +86,9 @@ gh workflow run dist-tags.yml -f action=add -f tag=next -f packages='@jacklika/d
 
 直接发布将于 2027-01 失去令牌支持，npm 给出的方向是使用短时 OIDC 凭据的 [trusted publishing](https://docs.npmjs.com/trusted-publishers)。现在就为两个工作流做好准备；迁移方向是 OIDC 优先、令牌兜底，直到 npm 侧配置被验证。
 
-1. 仓库侧：在 `publish.yml` 与 `dist-tags.yml` 中授予 `id-token: write`（已就位），使 `actions/setup-node` 暴露 `ACTIONS_ID_TOKEN_REQUEST_URL`。
-2. npm 侧：为每个包添加指向本仓库与工作流文件的 trusted publisher，并按配置启用 [Allow npm dist-tag](https://github.blog/changelog/2026-09-30-opt-in-dist-tag-permissions-for-npm-trusted-publishing)。两步都需要在 npmjs.com 上交互式 2FA，CI 无法代劳。
-3. 验证：`publish.yml` 无需额外开关即 OIDC 优先，当某包的 OIDC 发布失败时回退到 `NPM_TOKEN` 重试一次，因此尚未配置 trusted publisher 的包仍能发布。`dist-tags.yml` 用 `oidc` 输入证明 dist-tag 授权：先试 `add`，若 `rm` 仍返回 `403`，说明授权缺失或未在 npm 侧验证。
+1. 仓库侧：在 `publish.yml` 中授予 `id-token: write`（已就位），使 runner 暴露 `ACTIONS_ID_TOKEN_REQUEST_URL`。
+2. npm 侧：为每个包添加指向本仓库与 `publish.yml` 工作流文件的 trusted publisher，并在同一配置中启用 **Allow npm dist-tag**，随后通过第一次成功发布验证该配置。这些步骤都需要在 npmjs.com 上交互式 2FA，CI 无法代劳。
+3. 验证：`publish.yml` 无需额外开关即 OIDC 优先，当某包的 OIDC 发布失败时回退到 `NPM_TOKEN` 重试一次，因此尚未配置 trusted publisher 的包仍能发布。`publish.yml` 用 `action=dist-tag` dispatch 证明 dist-tag 授权；若返回 `401`，说明 npm 侧授权缺失或未验证。
 4. 某次发布在 OIDC 下干净完成后撤销令牌：吊销 `NPM_TOKEN` 并删除仓库 secret。
 
 `publish.yml` 使用的认证选择器：
@@ -97,7 +97,7 @@ gh workflow run dist-tags.yml -f action=add -f tag=next -f packages='@jacklika/d
 unset NODE_AUTH_TOKEN
 ```
 
-当 `ACTIONS_ID_TOKEN_REQUEST_URL` 与 `NODE_AUTH_TOKEN` 同时存在时，npm 会忽略 OIDC 通道，因此令牌被扣留，直到某次尝试因认证失败。`dist-tags.yml` 则按每次 dispatch 的 `oidc` 输入二选一、绝不回退，避免"删除被拒"被误读成"删除成功"。
+当 `ACTIONS_ID_TOKEN_REQUEST_URL` 与 `NODE_AUTH_TOKEN` 同时存在时，npm 会忽略 OIDC 通道，因此令牌被扣留，直到某次尝试因认证失败。`publish.yml` 的 dist-tag 任务使用同样的"先 unset、失败再回退"模式。
 
 ## desktop profile 部署
 
