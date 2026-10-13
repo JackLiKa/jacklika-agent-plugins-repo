@@ -1,0 +1,101 @@
+name: Dist tags
+
+# Manual maintenance for npm dist-tags. The registry is writable only from CI
+# (local checkouts carry no npm credentials), so stale tags are cleaned here.
+# Run with dry_run=true first; it prints the exact commands without touching
+# the registry.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Remove a dist-tag or point it at a version'
+        type: choice
+        options: [rm, add]
+        default: rm
+      tag:
+        description: 'dist-tag name'
+        type: string
+        default: 'next'
+      packages:
+        description: 'Package names, comma- or space-separated; empty selects the @jacklika/dsh-memory suite'
+        type: string
+        default: ''
+      version:
+        description: 'Version for action=add (ignored for rm)'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Print the commands instead of running them'
+        type: boolean
+        default: true
+      oidc:
+        description: 'Use trusted-publishing (OIDC) auth instead of NPM_TOKEN; needs "Allow npm dist-tag" enabled per package'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  dist-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Apply dist-tag change
+        env:
+          # Token fallback for the default path. oidc=true does not write a static
+          # .npmrc auth line so npm falls back to the OIDC token from the runner.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ '${{ inputs.oidc }}' = 'true' ]; then
+            unset NODE_AUTH_TOKEN
+          else
+            npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
+          fi
+          action='${{ inputs.action }}'
+          tag='${{ inputs.tag }}'
+          version='${{ inputs.version }}'
+          dry_run='${{ inputs.dry_run }}'
+          packages='${{ inputs.packages }}'
+          if [ -z "$packages" ]; then
+            packages='@jacklika/dsh-memory @jacklika/dsh-tool-memory-filesystem @jacklika/dsh-memory-curator @jacklika/dsh-tool-memory-graph @jacklika/dsh-memory-mcp'
+          fi
+          if [ -z "$tag" ]; then
+            echo 'tag input is required'
+            exit 1
+          fi
+          if [ "$action" = 'add' ] && [ -z "$version" ]; then
+            echo 'version input is required for action=add'
+            exit 1
+          fi
+
+          failed=0
+          for entry in $packages; do
+            if [ "$action" = 'rm' ]; then
+              target="$entry"
+            else
+              target="$entry@$version"
+            fi
+            if [ "$dry_run" = 'true' ]; then
+              echo "[dry-run] npm dist-tag $action $target $tag"
+              continue
+            fi
+            echo "npm dist-tag $action $target $tag"
+            if output=$(npm dist-tag "$action" "$target" "$tag" 2>&1); then
+              echo "$output"
+            else
+              # Re-running a cleanup must not fail on an already-absent tag.
+              if echo "$output" | grep -qi 'no such dist-tag\|E404'; then
+                echo "skipped: $entry has no '$tag' dist-tag"
+              else
+                echo "$output"
+                failed=1
+              fi
+            fi
+          done
+          exit "$failed"
