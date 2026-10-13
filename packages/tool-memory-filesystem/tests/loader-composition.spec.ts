@@ -490,6 +490,104 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(raw).not.toContain('updated:')
   })
 
+  it('refuses an update-only write to a missing note without creating it or its directory', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-require-existing-missing'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/missing.md', content: 'must not create', requireExisting: true },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected wiki_write failure')
+    expect(result.error.message).toContain('note "concepts/missing.md" does not exist')
+    expect(result.error.message).not.toContain(vault)
+
+    // No note and no half-created parent directory survive the refusal.
+    await expect(stat(join(vault, 'concepts', 'missing.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const created = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-require-existing-missing-nested'),
+      name: 'wiki_write',
+      arguments: { id: 'fresh/nested.md', content: 'must not create', requireExisting: true },
+    })
+    expect(created.isError).toBe(true)
+    if (!created.isError) throw new Error('expected wiki_write failure')
+    expect(await readdir(vault)).toEqual(['concepts', 'embedding.md'])
+  })
+
+  it('appends through an update-only write to an existing note and preserves its frontmatter', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-require-existing'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/RAG.md', content: 'Update-only addition.', requireExisting: true },
+    })
+    expect(write.isError).toBe(false)
+    if (write.isError) throw new Error('expected wiki_write success')
+
+    const raw = await readFile(join(vault, 'concepts', 'RAG.md'), 'utf8')
+    expect(raw).toContain('Update-only addition.')
+    expect(raw).toContain('RAG combines [[embedding]] retrieval with LLM generation.')
+
+    const read = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('read-require-existing'),
+      name: 'wiki_read',
+      arguments: { id: 'concepts/RAG.md' },
+    })
+    expect(read.isError).toBe(false)
+    if (read.isError) throw new Error('expected wiki_read success')
+    const note = JSON.parse(resultText(read)) as { frontmatter: Record<string, unknown> }
+    expect(note.frontmatter.tags).toEqual(['llm', 'architecture'])
+  })
+
+  it('rejects a note id that uses backslashes as separators', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    for (const [callId, name, id] of [
+      ['read-backslash-id', 'wiki_read', 'concepts\\RAG.md'],
+      ['write-backslash-id', 'wiki_write', 'concepts\\new.md'],
+    ] as const) {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId(callId),
+        name,
+        arguments: { id, content: 'must not write' },
+      })
+      expect(result.isError).toBe(true)
+      if (!result.isError) throw new Error(`expected ${name} failure`)
+      expect(result.error.message).toContain('must not contain a backslash')
+      expect(result.error.message).not.toContain(vault)
+    }
+    // The refused write never landed anywhere in the vault.
+    expect(await readdir(vault)).toEqual(['concepts', 'embedding.md'])
+  })
+
+  it('resolves a link target that uses Windows-style separators', async () => {
+    const vault = await makeVault()
+    await writeFile(join(vault, 'concepts', 'windows-links.md'), '# Windows links\n\nSee [[concepts\\RAG]] for details.\n')
+    const ctx = await boot(vault)
+
+    const read = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('read-windows-link'),
+      name: 'wiki_read',
+      arguments: { id: 'concepts/windows-links.md' },
+    })
+    expect(read.isError).toBe(false)
+    if (read.isError) throw new Error('expected wiki_read success')
+    const note = JSON.parse(resultText(read)) as { links: string[]; linkedNotes: { id: string }[] }
+    expect(note.links).toContain('concepts\\RAG')
+    expect(note.linkedNotes.map(linked => linked.id)).toEqual(['concepts/RAG.md'])
+  })
+
   it('fails wiki_write with a stale baseVersion instead of silently overwriting', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)
@@ -600,6 +698,26 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(result.isError).toBe(true)
     if (!result.isError) throw new Error('expected wiki_read failure')
     expect(result.error.message).toContain('path "../embedding.md" is outside the vault root')
+    expect(result.error.message).not.toContain(vault)
+  })
+
+  it('reports a vault root that does not exist yet as a missing note', async () => {
+    const vault = join(await mkdtemp(join(tmpdir(), 'dsh-memory-vault-absent-')), 'never-created')
+    vaults.push(vault)
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('read-absent-vault'),
+      name: 'wiki_read',
+      arguments: { id: 'shared/notes/x.md' },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected wiki_read failure')
+    // The raw ENOENT from realpath(VAULT) carries the absolute host path and
+    // the syscall name; a caller that reads before the first write must see
+    // the same "no such note" it would get for a missing file in a vault that
+    // already exists.
+    expect(result.error.message).toContain('no such note')
     expect(result.error.message).not.toContain(vault)
   })
 

@@ -191,7 +191,7 @@ Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，�
 Bundle 包含 `memory-curator`，提供两个高层工具。它们会自动注册到工具表，但除非挂载 `memory-vault` skill（见[单独挂载 Skill](#单独挂载-skill)），模型不会主动在任务前后调用它们。
 
 - `memory_recall(query)` — 在开发任务开始时调用。搜索知识库中的相关笔记，让 agent 基于已有上下文继续工作，而不是重复提问。其 `total` 始终报告全库命中数，即使返回的命中列表被截断；任一层截断（搜索层上限或 recall 自身的 20 条展示上限）都会令 `truncated` 为 `true`，模型据此知道何时该收窄查询。`memory-anchor` 写入的逐回合自动入库笔记会从命中列表中隐藏，并从 `total` 中扣除，记账内容不会挤占策展知识。
-- `memory_capture(title, summary, ...)` — 在有意义的任务结束时调用。它根据标题生成稳定笔记 id，检查是否与现有笔记冲突；若发现冲突，会请求用户审批，通过后再把知识写入共享策展区。
+- `memory_capture(title, summary, ...)` — 在有意义的任务结束时调用。它根据标题生成稳定笔记 id，检查是否与现有笔记冲突；若发现冲突，会请求用户审批，通过后再把知识写入共享策展区。传入 `requireExisting: true` 表示更新一篇必须已存在的笔记（例如刚读过的显式 `id`）：直接追加、不请求审批，笔记缺失时失败而不是静默新建。
 
 `memory_capture` 默认 `scope: shared`，笔记落在 `shared/notes/` 下，由 `memory-git` 自动提交。若使用 `scope: private`，笔记会进入当前 agent 命名空间（`agents/<key>/`），不被其他 session 共享。
 

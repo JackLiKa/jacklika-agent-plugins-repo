@@ -38,13 +38,38 @@ function vaultRelativeId(absolutePath) {
   return relative(VAULT, absolutePath).replace(/\\/g, '/')
 }
 
+/**
+ * Describe an fs error without its path: raw Node error messages carry the
+ * absolute vault path (or a temp file name), which must not reach clients.
+ * Node fs errors always carry a `code`, so the fallback stays path-free too.
+ */
+function describeIoError(error) {
+  const code = error?.code
+  if (code === 'ENOENT') return 'no such note'
+  if (code === 'EACCES' || code === 'EPERM') return 'permission denied'
+  if (code === 'EISDIR') return 'path is a directory'
+  return typeof code === 'string' && code !== '' ? code : 'unknown error'
+}
+
+function noteIoError(action, id, error) {
+  return new Error(`memory-mcp: cannot ${action} note ${JSON.stringify(id)}: ${describeIoError(error)}`)
+}
+
 // ── Vault operations (mirrors @jacklika/dsh-tool-memory-filesystem) ──────────
 
 function containedPath(candidate) {
+  if (candidate.includes('\0')) {
+    throw new Error('memory-mcp: note id must not contain a NUL byte')
+  }
+  // A backslash is a path separator only on Windows; ids always use '/', the
+  // same rule the scope, curator, and filesystem plugins enforce.
+  if (candidate.includes('\\')) {
+    throw new Error(`memory-mcp: note id ${JSON.stringify(candidate)} must not contain a backslash; use "/" as the path separator`)
+  }
   const absolute = resolve(VAULT, candidate)
   const remainder = relative(VAULT, absolute)
   if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
-    throw new Error(`path ${candidate} is outside vault root ${VAULT}`)
+    throw new Error(`memory-mcp: path ${JSON.stringify(candidate)} is outside the vault root`)
   }
   return absolute
 }
@@ -58,7 +83,7 @@ async function containedPathReal(candidate) {
       const canonicalAncestor = await realpath(ancestor)
       const remainder = relative(canonicalRoot, canonicalAncestor)
       if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
-        throw new Error(`path ${candidate} resolves outside vault root ${VAULT}`)
+        throw new Error(`memory-mcp: path ${JSON.stringify(candidate)} resolves outside the vault root`)
       }
       return absolute
     } catch (error) {
@@ -265,11 +290,15 @@ async function vaultLinkResolver() {
 }
 
 async function resolveLinkTarget(link, resolve) {
+  // Link targets stay lenient where ids are strict: Windows-style separators
+  // normalize to '/', and percent-encoding is never decoded, so `%2e%2e` is a
+  // literal name rather than an escape.
+  const normalized = String(link).replace(/\\/g, '/')
   if (resolve !== undefined) {
-    const id = resolve(link)
+    const id = resolve(normalized)
     if (id !== undefined) return containedPathReal(id)
   }
-  for (const candidate of [link, ...EXTENSIONS.map(ext => `${link}${ext}`)]) {
+  for (const candidate of [normalized, ...EXTENSIONS.map(ext => `${normalized}${ext}`)]) {
     try {
       const p = await containedPathReal(candidate)
       await readFile(p, 'utf8')
@@ -324,18 +353,31 @@ async function searchNotes(query, maxResults = 20) {
   return hits.slice(0, maxResults).map(({ id, title }) => ({ id, title }))
 }
 
-async function writeNote(id, content, mode = 'append', baseVersion) {
+async function writeNote(id, content, mode = 'append', baseVersion, requireExisting = false) {
   if (!EXTENSIONS.some(ext => id.endsWith(ext))) {
     throw new Error(`note id must end with one of ${EXTENSIONS.join(', ')}`)
   }
   await mkdir(VAULT, { recursive: true })
   const absolutePath = await containedPathReal(id)
-  await mkdir(dirname(absolutePath), { recursive: true })
-  await containedPathReal(id)
   let existing
   try {
     existing = await readFile(absolutePath, 'utf8')
-  } catch { /* new note */ }
+  } catch (error) {
+    // Only a missing file means a first write; any other failure (a directory
+    // in the way, an unreadable note) must not look like a new note.
+    if (error?.code !== 'ENOENT') throw noteIoError('write', id, error)
+  }
+  if (existing === undefined && requireExisting) {
+    throw new Error(`memory-mcp: note ${JSON.stringify(id)} does not exist; refusing to create it`)
+  }
+  // Parents are created only after the existence rules passed, so a refused
+  // update leaves no empty directory behind.
+  try {
+    await mkdir(dirname(absolutePath), { recursive: true })
+  } catch (error) {
+    throw noteIoError('write', id, error)
+  }
+  await containedPathReal(id)
   if (baseVersion !== undefined && noteVersion(existing ?? '') !== baseVersion) {
     throw new Error(`note ${id} changed since it was read; re-read it before writing`)
   }
@@ -368,7 +410,7 @@ async function writeNote(id, content, mode = 'append', baseVersion) {
     await rename(tmp, absolutePath)
   } catch (error) {
     await rm(tmp, { force: true }).catch(() => undefined)
-    throw error
+    throw noteIoError('write', id, error)
   }
   recordMtime(absolutePath, (await stat(absolutePath)).mtimeMs)
   const { frontmatter } = splitFrontmatter(finalBody)
@@ -444,21 +486,27 @@ async function captureFrontmatter(id, title, tags, now) {
   try {
     existing = splitFrontmatter(await readFile(await containedPathReal(id), 'utf8')).frontmatter
     existed = true
-  } catch { /* no readable note at this id: the ordinary first capture */ }
+  } catch (error) {
+    // Only a missing note means a first capture; any other failure must not be
+    // mistaken for one.
+    if (error?.code !== 'ENOENT') throw noteIoError('read', id, error)
+  }
   const frontmatter = { ...existing, title, tags }
   const created = existing?.created
   frontmatter.created = typeof created === 'string' && created !== '' ? created : now
   if (existed) frontmatter.updated = now
-  return frontmatter
+  return { frontmatter, existed }
 }
 
 /**
  * Port of the curator's `memory_capture`. The MCP server has no approval
  * channel, so a conflict resolves the way the dsh tool resolves it in headless
- * runs: refuse and point at `conflictPolicy: 'skip'`. That also makes the
- * approve-then-append path unreachable, so a capture that does write is always
- * a full-note overwrite. `committed` is absent because MCP writes never run
- * memory-git.
+ * runs: refuse and point at `conflictPolicy: 'skip'` — unless the capture
+ * declares `requireExisting: true`, which makes updating an existing note the
+ * stated intent and needs no approval. A capture without that flag always
+ * writes a full-note replacement — the approve-then-append path stays
+ * unreachable — while an update-only capture appends to the note it found.
+ * `committed` is absent because MCP writes never run memory-git.
  */
 async function captureNote(a = {}) {
   if (typeof a.title !== 'string') throw new Error('memory_capture: title must be a string')
@@ -471,8 +519,9 @@ async function captureNote(a = {}) {
   const conflicts = findCaptureConflicts(targetId, a.title, hits)
   const conflictExists = conflicts.length > 0
   const finalId = conflicts[0]?.id ?? targetId
+  const requireExisting = a.requireExisting === true
 
-  if (conflictExists) {
+  if (conflictExists && !requireExisting) {
     if (a.conflictPolicy === 'skip') {
       return { written: false, id: finalId, conflict: true, reason: 'skipped by conflictPolicy=skip' }
     }
@@ -487,13 +536,21 @@ async function captureNote(a = {}) {
   const now = formatBeijingTime(new Date())
   const detailsText = typeof a.details === 'string' && a.details !== '' ? `\n\n## Details\n\n${a.details}` : ''
   const appendContent = `${a.summary}${detailsText}\n`
-  const frontmatter = await captureFrontmatter(finalId, a.title, tags, now)
-  const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${a.title}\n\n${appendContent}`
-  const write = await writeNote(finalId, content, 'overwrite')
+  // A declared update appends to the note it found, so a second capture adds a
+  // section instead of replacing the first. Without one the capture keeps the
+  // replace shape MCP always produced, or — when the note is genuinely absent —
+  // writeNote refuses it under requireExisting.
+  const { existed, frontmatter } = await captureFrontmatter(finalId, a.title, tags, now)
+  const appending = requireExisting && existed
+  const content = appending
+    ? appendContent
+    : `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${a.title}\n\n${appendContent}`
+  const writeMode = appending ? 'append' : 'overwrite'
+  const write = await writeNote(finalId, content, writeMode, undefined, requireExisting)
   const response = {
     written: true,
     id: write.id,
-    mode: 'overwrite',
+    mode: writeMode,
     conflict: false,
     version: write.version,
   }
@@ -578,6 +635,7 @@ const TOOLS = [
         content: { type: 'string', description: 'Markdown content to write or append.' },
         mode: { type: 'string', enum: ['append', 'overwrite'], description: 'append (default) or overwrite.' },
         baseVersion: { type: 'string', description: 'Optional version from wiki_read; the write fails if the note changed.' },
+        requireExisting: { type: 'boolean', description: 'Refuse to create the note: the write must target an existing note (update-only write).' },
       },
       required: ['id', 'content'],
     },
@@ -595,7 +653,7 @@ const TOOLS = [
   },
   {
     name: 'memory_capture',
-    description: 'Persist durable knowledge to the vault, mirroring the dsh memory_capture tool: derives the note id from the title when omitted, merges frontmatter on an existing note, and returns the same fields minus committed, which requires memory-git. MCP has no approval channel, so a conflicting capture refuses the write and points at conflictPolicy: "skip".',
+    description: 'Persist durable knowledge to the vault, mirroring the dsh memory_capture tool: derives the note id from the title when omitted, merges frontmatter on an existing note, and returns the same fields minus committed, which requires memory-git. MCP has no approval channel, so a conflicting capture refuses the write and points at conflictPolicy: "skip" — unless requireExisting declares an update, which needs no approval and refuses to create a missing note.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -605,6 +663,7 @@ const TOOLS = [
         id: { type: 'string', description: 'Optional explicit vault-relative note id; a path without a shared/ prefix lands under the notes dir.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for the note frontmatter.' },
         conflictPolicy: { type: 'string', enum: ['ask', 'skip'], description: 'ask (default) refuses a conflicting capture; skip skips it silently.' },
+        requireExisting: { type: 'boolean', description: 'Update-only capture: the note must already exist, and a conflict needs no approval. A missing note fails instead of creating one.' },
       },
       required: ['title', 'summary'],
     },
@@ -614,19 +673,26 @@ const TOOLS = [
 async function callTool(name, a = {}) {
   switch (name) {
     case 'wiki_read': {
-      const absolutePath = await containedPathReal(a.id)
-      const note = await readNote(absolutePath, MAX_LINK_DEPTH)
-      const info = await stat(absolutePath)
-      return {
-        ...note,
-        mtime: formatBeijingTime(info.mtime),
-        modifiedExternally: detectExternalChange(absolutePath, info.mtimeMs),
+      try {
+        const absolutePath = await containedPathReal(a.id)
+        const note = await readNote(absolutePath, MAX_LINK_DEPTH)
+        const info = await stat(absolutePath)
+        return {
+          ...note,
+          mtime: formatBeijingTime(info.mtime),
+          modifiedExternally: detectExternalChange(absolutePath, info.mtimeMs),
+        }
+      } catch (error) {
+        // Containment and id errors are already structured and path-free; a
+        // raw fs error still carries the absolute path and is rewritten.
+        if (typeof error?.code !== 'string') throw error
+        throw noteIoError('read', a.id, error)
       }
     }
     case 'wiki_search':
       return searchNotes(a.query ?? '')
     case 'wiki_write':
-      return writeNote(a.id, a.content ?? '', a.mode ?? 'append', a.baseVersion)
+      return writeNote(a.id, a.content ?? '', a.mode ?? 'append', a.baseVersion, a.requireExisting === true)
     case 'wiki_graph':
       return buildGraph(a.id, a.depth ?? 1)
     case 'memory_capture':

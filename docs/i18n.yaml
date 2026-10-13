@@ -10,9 +10,9 @@ architecture.md: 5268277f155c519b30ebb815eefc0044d5c0563a
 architecture.zh.md: 2a65df03a9aad229404889c5f197bc0bd39074a6
 compatibility.md: 308d84f1300ac1ed3c082ae1d6b1a6bc952f78d1
 compatibility.zh.md: a4e22121d5335487e7a313289cb4d63a826d8109
-mcp-server.md: 6b60e525b14ee2f50795e268b6f92c81191cd0da
-mcp-server.zh.md: e1034e4f9ac4b5a1f15ee8626f36eda170e009ab
-security.md: 5694e2f40dfbe7f99c768970129372d86f455697
-security.zh.md: 2fca6d1d191b23756445532f28e2e6610b9f7054
-usage.md: 5c8cb757be81fafcce16ce2e05e062459250abd0
-usage.zh.md: 71281d3b1fe3bd0b738b2027508b64190f2eb8d1
+mcp-server.md: 4b9d96e89688601adf34d19e91c9ab3afa0e3fe1
+mcp-server.zh.md: 30017d10f630bc4b6444d5db9b46f7ef1d48e658
+security.md: 61cfa1e6f9763384d391e467e2b4fe9fcdac9886
+security.zh.md: 69e67248e44165cf6fc297650dbe0f4c0441d55e
+usage.md: b4a53ecd6f8c0a019b73214ab2f145f6be8cba09
+usage.zh.md: 1cb9c90f9dd1fbc1988f45ff9e280d8b46a2a220

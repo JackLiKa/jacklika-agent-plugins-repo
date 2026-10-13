@@ -256,6 +256,46 @@ async function runSmoke() {
     }), earlyExit]).then(() => null, e => e)
     assert(badCaptureId !== null, 'unsafe capture id must error')
 
+    // Update-only writes: a declared update appends to the note it found and
+    // needs no approval, while one aimed at a missing note refuses instead of
+    // creating it.
+    const update = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'MCP Parity: Capture!', summary: 'declared update', requireExisting: true },
+    }), earlyExit])
+    const updateResult = JSON.parse(update.content[0].text)
+    assert(
+      updateResult.written === true && updateResult.conflict === false && updateResult.mode === 'append',
+      `update-only capture ${JSON.stringify(updateResult)}`,
+    )
+    const updatedText = await readFile(join(vault, 'shared', 'notes', 'mcp-parity-capture.md'), 'utf8')
+    assert(updatedText.includes('capture smoke summary') && updatedText.includes('declared update'), 'update-only capture appends')
+    assert((updatedText.match(/# MCP Parity: Capture!/g) ?? []).length === 1, 'update-only capture keeps one heading')
+
+    const updateMissing = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'Update Missing Smoke', summary: 's', requireExisting: true },
+    }), earlyExit]).then(() => null, e => e)
+    assert(updateMissing !== null, 'update-only capture of a missing note must error')
+
+    const writeMissing = await Promise.race([call('tools/call', {
+      name: 'wiki_write',
+      arguments: { id: 'concepts/missing-update.md', content: 'x', requireExisting: true },
+    }), earlyExit]).then(() => null, e => e)
+    assert(writeMissing !== null, 'update-only write to a missing note must error')
+    assert(String(writeMissing.message).includes('does not exist'), `missing-note reason ${writeMissing.message}`)
+    assert(!String(writeMissing.message).includes(vault), `missing-note error must not leak the vault path: ${writeMissing.message}`)
+
+    // Backslash ids are rejected the way the dsh tools reject them, and the
+    // message stays path-free.
+    const backslash = await Promise.race([call('tools/call', {
+      name: 'wiki_read',
+      arguments: { id: 'concepts\\RAG.md' },
+    }), earlyExit]).then(() => null, e => e)
+    assert(backslash !== null, 'backslash id must error')
+    assert(String(backslash.message).includes('must not contain a backslash'), `backslash reason ${backslash.message}`)
+    assert(!String(backslash.message).includes(vault), `backslash error must not leak the vault path: ${backslash.message}`)
+
     console.log('memory-mcp smoke: all assertions passed')
     if (!linked) {
       console.warn('memory-mcp smoke: symlink escape probe was skipped on this platform')

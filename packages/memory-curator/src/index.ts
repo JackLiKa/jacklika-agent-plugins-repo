@@ -197,6 +197,25 @@ function dedupeHits(hits: SearchHit[]): SearchHit[] {
  * @param now - Beijing-time timestamp used for `created`/`updated`.
  * @returns the merged frontmatter to serialize.
  */
+async function readFrontmatter(
+  ctx: Context,
+  exec: ToolRunContext,
+  id: string,
+): Promise<Record<string, unknown> | undefined> {
+  try {
+    const note = await callTool<{ frontmatter?: unknown }>(ctx, exec, 'wiki_read', { id })
+    return note !== null && typeof note === 'object' && note.frontmatter !== null && typeof note.frontmatter === 'object'
+      ? note.frontmatter as Record<string, unknown>
+      : {}
+  } catch (error) {
+    // Only a missing note means a first capture: `wiki_read` reports it as
+    // "no such note". Any other failure (permission denied, a directory in the
+    // way) must surface instead of silently turning an update into a replace.
+    if ((error as Error).message.includes('no such note')) return undefined
+    throw error
+  }
+}
+
 async function overwriteFrontmatter(
   ctx: Context,
   exec: ToolRunContext,
@@ -205,15 +224,7 @@ async function overwriteFrontmatter(
   tags: string[],
   now: string,
 ): Promise<Record<string, unknown>> {
-  let existing: Record<string, unknown> | undefined
-  try {
-    const note = await callTool<{ frontmatter?: unknown }>(ctx, exec, 'wiki_read', { id })
-    if (note !== null && typeof note === 'object' && note.frontmatter !== null && typeof note.frontmatter === 'object') {
-      existing = note.frontmatter as Record<string, unknown>
-    }
-  } catch {
-    // No readable note at this id: the ordinary first capture of a new note.
-  }
+  const existing = await readFrontmatter(ctx, exec, id)
   const frontmatter: Record<string, unknown> = { ...existing, title, tags }
   const created = existing?.created
   frontmatter.created = typeof created === 'string' && created !== '' ? created : now
@@ -291,7 +302,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_capture',
-    description: 'Persist durable knowledge to the memory vault. Call this at the end of a significant task to capture decisions, discovered APIs, project conventions, fixes, or user preferences. It checks for conflicting notes, asks for approval when a conflict is found, and writes the captured note to the shared curated zone by default.',
+    description: 'Persist durable knowledge to the memory vault. Call this at the end of a significant task to capture decisions, discovered APIs, project conventions, fixes, or user preferences. It checks for conflicting notes, asks for approval when a conflict is found, and writes the captured note to the shared curated zone by default. Set requireExisting to declare an update: the capture then only modifies a note that already exists and needs no conflict approval.',
     parameters: {
       title: {
         type: 'string',
@@ -331,6 +342,10 @@ export function apply(ctx: Context, config: Config): void {
         enum: ['ask', 'skip'],
         description: 'Override the deployment conflict policy for this capture: ask for approval on conflict, or skip the write.',
       },
+      requireExisting: {
+        type: 'boolean',
+        description: 'Update-only capture: the note must already exist, and a conflict needs no approval because updating that note is the declared intent. A missing note fails instead of creating one.',
+      },
     },
     output: {
       schema: { type: 'json' },
@@ -341,6 +356,7 @@ export function apply(ctx: Context, config: Config): void {
       const notesDir = scope === 'shared' ? resolved.notesDir : ''
       const targetId = resolveNoteId(args.id, args.title, scope, notesDir)
       const mode = args.mode ?? 'append'
+      const requireExisting = args.requireExisting === true
       const tags = Array.isArray(args.tags) ? args.tags.map(String) : []
 
       const [titleSearch, idSearch] = await Promise.all([
@@ -352,7 +368,11 @@ export function apply(ctx: Context, config: Config): void {
       const conflictExists = conflicts.length > 0
       const finalId = conflicts[0]?.id ?? targetId
 
-      if (conflictExists) {
+      // A declared update-only capture targets an existing note by
+      // construction, so the approval that guards against accidentally
+      // clobbering one while creating is not required; `wiki_write` enforces
+      // the existence requirement itself, atomically with the write.
+      if (conflictExists && !requireExisting) {
         const policy = args.conflictPolicy ?? resolved.conflictPolicy
         if (policy === 'skip') {
           return {
@@ -396,9 +416,16 @@ export function apply(ctx: Context, config: Config): void {
       const detailsText = args.details ? `\n\n## Details\n\n${args.details}` : ''
       const appendContent = `${args.summary}${detailsText}\n`
 
-      const appending = conflictExists && mode === 'append'
+      // A conflict already proves the note exists, so the write appends. An
+      // update-only capture without a detected conflict has to ask the vault
+      // instead of the search: a note missed by the ranking must be appended
+      // to, and one that is genuinely absent fails the write rather than
+      // replacing it. The other path stays conflict-driven so an ordinary new
+      // capture keeps creating its note.
+      const exists = requireExisting ? (await readFrontmatter(ctx, exec, finalId)) !== undefined : conflictExists
+      const appending = exists && mode === 'append'
       const writeMode: 'append' | 'overwrite' = appending ? 'append' : 'overwrite'
-      ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode}`)
+      ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode} requireExisting=${requireExisting}`)
       const frontmatter = appending ? undefined : await overwriteFrontmatter(ctx, exec, finalId, args.title, tags, now)
       const content = appending
         ? appendContent
@@ -408,13 +435,16 @@ export function apply(ctx: Context, config: Config): void {
         id: finalId,
         content,
         mode: writeMode,
+        ...(requireExisting ? { requireExisting: true } : {}),
       })
 
       const response: Record<string, unknown> = {
         written: true,
         id: finalId,
         mode: writeMode,
-        conflict: conflictExists,
+        // A declared update is not a conflict: the caller named the note it
+        // meant to change, so nothing required approval or a skip decision.
+        conflict: conflictExists && !requireExisting,
         version: writeResult.version,
       }
       if (typeof writeResult.created === 'string' && writeResult.created !== '') response.created = writeResult.created

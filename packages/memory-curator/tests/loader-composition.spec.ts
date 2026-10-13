@@ -244,6 +244,41 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(text).not.toContain('Added regression test.')
   })
 
+  it('fails an update-only capture for a note that does not exist', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+
+    const result = await capture(ctx, 'c-require-missing', 'Nowhere note', 'Update body.', 'agent-1', vault, { requireExisting: true })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected memory_capture failure')
+    expect(result.error.message).toContain('does not exist')
+    expect(await readdir(vault)).toEqual([])
+  })
+
+  it('updates an existing note without conflict approval when requireExisting is set', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+
+    const first = await capture(ctx, 'c-require-first', 'Release checklist', 'Initial checklist.', 'agent-1', vault)
+    expect(first.isError).toBe(false)
+
+    // Without an approval service a conflicting capture would refuse; a
+    // declared update is not a conflict, so it appends.
+    const update = await capture(ctx, 'c-require-update', 'Release checklist', 'Added smoke check.', 'agent-1', vault, { requireExisting: true })
+    expect(update.isError).toBe(false)
+    if (update.isError) throw new Error('expected memory_capture success')
+    const out = JSON.parse(resultText(update)) as { written: boolean; conflict: boolean; id: string; mode: string }
+    expect(out.written).toBe(true)
+    expect(out.conflict).toBe(false)
+    expect(out.id).toBe('shared/notes/release-checklist.md')
+    expect(out.mode).toBe('append')
+
+    const text = await readFile(join(vault, 'shared', 'notes', 'release-checklist.md'), 'utf8')
+    expect(text).toContain('Initial checklist.')
+    expect(text).toContain('Added smoke check.')
+    expect(text.match(/# Release checklist/g)).toHaveLength(1)
+  })
+
   it('derives distinct readable ids for non-Latin and mixed-script titles', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
     const ctx = await boot(vault)

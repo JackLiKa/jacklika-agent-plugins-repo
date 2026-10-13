@@ -39,6 +39,12 @@ export interface Config {
   extensions?: string[]
   /** Default traversal depth when the call omits `depth`. */
   maxDepth?: number
+  /**
+   * Hard upper bound for the effective depth. A call asking for more is
+   * clamped to this value, and the subgraph reports the depth actually
+   * traversed. Must be greater than or equal to `maxDepth`.
+   */
+  maxDepthLimit?: number
   /** Maximum nodes returned in one graph. */
   maxNodes?: number
   /** Maximum edges returned in one graph. */
@@ -52,6 +58,7 @@ export const Config: z<Config> = z.object({
   vaultRoot: z.string().default(''),
   extensions: z.array(z.string()).default(['.md']),
   maxDepth: z.number().default(1),
+  maxDepthLimit: z.number().default(20),
   maxNodes: z.number().default(200),
   maxEdges: z.number().default(1000),
   indexHiddenDirs: z.boolean().default(false),
@@ -92,6 +99,8 @@ interface MemoryGraph {
   truncated: boolean
   /** Whether `maxEdges` truncated the edge set. */
   edgesTruncated: boolean
+  /** Depth actually traversed, after clamping to `maxDepthLimit`; present on subgraph results. */
+  depth?: number
 }
 
 interface ParsedNote {
@@ -443,7 +452,7 @@ async function buildSubgraph(
   edges.push(...filteredKeywordEdges)
 
   const budgeted = capEdges(edges, resolved.maxEdges)
-  return { nodes, edges: budgeted.edges, truncated, edgesTruncated: budgeted.truncated }
+  return { nodes, edges: budgeted.edges, truncated, edgesTruncated: budgeted.truncated, depth }
 }
 
 /**
@@ -460,13 +469,17 @@ export function apply(ctx: Context, config: Config): void {
 
   const resolved = config as ResolvedConfig
   assertPositiveInteger('maxDepth', resolved.maxDepth)
+  assertPositiveInteger('maxDepthLimit', resolved.maxDepthLimit)
+  if (resolved.maxDepthLimit < resolved.maxDepth) {
+    throw new Error('tool-memory-graph: maxDepthLimit must be >= maxDepth')
+  }
   assertPositiveInteger('maxNodes', resolved.maxNodes)
   assertPositiveInteger('maxEdges', resolved.maxEdges)
   assertExtensions(resolved.extensions)
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_graph',
-    description: 'Return the link and keyword graph of the wiki vault: note ids, titles, and directed edges. Explicit `[[link]]` edges are type `link`; edges derived from shared significant terms are type `keyword` with `keywords` and `weight`. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth. Nodes are capped at maxNodes (`truncated`) and edges at maxEdges (`edgesTruncated`).',
+    description: 'Return the link and keyword graph of the wiki vault: note ids, titles, and directed edges. Explicit `[[link]]` edges are type `link`; edges derived from shared significant terms are type `keyword` with `keywords` and `weight`. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth. Nodes are capped at maxNodes (`truncated`) and edges at maxEdges (`edgesTruncated`); a subgraph result also reports the effective `depth` after clamping the request to maxDepthLimit.',
     parameters: {
       id: {
         type: 'string',
@@ -474,7 +487,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       depth: {
         type: 'integer',
-        description: 'Maximum link or keyword hops from the center note; defaults to the configured maxDepth.',
+        description: 'Maximum link or keyword hops from the center note; defaults to the configured maxDepth and is capped at the configured maxDepthLimit.',
       },
     },
     output: {
@@ -483,8 +496,9 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args, exec) {
       const vaultRoot = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
-      const depth = args.depth ?? resolved.maxDepth
-      assertPositiveInteger('depth', depth)
+      const requestedDepth = args.depth ?? resolved.maxDepth
+      assertPositiveInteger('depth', requestedDepth)
+      const depth = Math.min(requestedDepth, resolved.maxDepthLimit)
       const onSkip = skipLogger(ctx, vaultRoot)
       const graph = args.id === undefined
         ? await buildGraph(vaultRoot, resolved, onSkip)

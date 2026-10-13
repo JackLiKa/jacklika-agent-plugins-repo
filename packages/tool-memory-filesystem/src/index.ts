@@ -108,6 +108,12 @@ export function containedPath(root: string, candidate: string): string {
   if (candidate.includes('\0')) {
     throw new Error('tool-memory-filesystem: note id must not contain a NUL byte')
   }
+  // A backslash is a path separator only on Windows; the same id would name
+  // different files per platform. Note ids always use '/', matching the id
+  // rules the scope and curator plugins already enforce.
+  if (candidate.includes('\\')) {
+    throw new Error(`tool-memory-filesystem: note id ${JSON.stringify(candidate)} must not contain a backslash; use "/" as the path separator`)
+  }
   const absoluteRoot = resolve(root)
   const absolute = resolve(absoluteRoot, candidate)
   const remainder = relative(absoluteRoot, absolute)
@@ -416,12 +422,17 @@ export async function resolveLinkTarget(
   target: string,
   resolve?: LinkResolver,
 ): Promise<string | undefined> {
+  // Link targets stay lenient where ids are strict: the resolver looks targets
+  // up rather than addressing files, so Windows-style separators normalize to
+  // '/' the same way {@link createLinkResolver} does. Percent-encoding is not
+  // decoded on either path, so `%2e%2e` is a literal name, never an escape.
+  const normalized = target.replace(/\\/g, '/')
   if (resolve !== undefined) {
-    const id = resolve(target)
+    const id = resolve(normalized)
     if (id !== undefined) return containedPathReal(root, id)
   }
-  const candidates = extensions.map(ext => `${target}${dottedExtension(ext)}`)
-  candidates.push(target)
+  const candidates = extensions.map(ext => `${normalized}${dottedExtension(ext)}`)
+  candidates.push(normalized)
   for (const candidate of candidates) {
     // A NUL byte can never name a real note; skip it instead of aborting the
     // whole read over one malformed link.
@@ -749,6 +760,14 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
       const absolutePath = await containedPathReal(vaultRoot, args.id)
+        .catch(error => {
+          // A vault whose root does not exist yet simply holds no such note.
+          // An errno failure always carries an absolute host path in its raw
+          // message, so it is rewritten; a containment or id rejection has no
+          // errno and keeps its own message.
+          if ((error as NodeJS.ErrnoException).code !== undefined) throw noteIoError('read', args.id, error)
+          throw error
+        })
       const linkResolver = createLinkResolver(
         (await listNotePaths(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot)))
           .map(path => vaultRelativeId(vaultRoot, path)),
@@ -843,7 +862,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_write',
-    description: 'Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header. Returns { id, mode, bytes, version }, where version fingerprints the written content and can be passed as baseVersion on the next write without reading the note again.',
+    description: 'Create a new note or append to an existing note in the wiki vault. The path is relative to the vault root. When appending, the new content is inserted at the end of the body after a timestamp header. Set requireExisting to update a note that must already exist: the write then fails instead of creating a new note. Returns { id, mode, bytes, version }, where version fingerprints the written content and can be passed as baseVersion on the next write without reading the note again.',
     parameters: {
       id: {
         type: 'string',
@@ -863,6 +882,10 @@ export function apply(ctx: Context, config: Config): void {
       baseVersion: {
         type: 'string',
         description: 'Optional version returned by wiki_read or by an earlier wiki_write. When provided, the write fails if the note changed since that version.',
+      },
+      requireExisting: {
+        type: 'boolean',
+        description: 'Refuse to create the note: the write must target an existing note. Use this for update-only writes, where a missing note means the caller addressed the wrong id rather than intending a new note.',
       },
     },
     output: {
@@ -891,13 +914,6 @@ export function apply(ctx: Context, config: Config): void {
         throw new Error(`tool-memory-filesystem: note id must end with one of ${resolved.extensions.join(', ')}`)
       }
       const writeTarget = await resolveSymlinkWriteTarget(vaultRoot, absolutePath, args.id)
-      try {
-        await mkdir(dirname(writeTarget), { recursive: true })
-      } catch (error) {
-        throw noteIoError('write', args.id, error)
-      }
-      await containedPathReal(vaultRoot, args.id)
-      exec.signal.throwIfAborted()
       let existing: string | undefined
       try {
         existing = await readFile(writeTarget, 'utf8')
@@ -907,6 +923,18 @@ export function apply(ctx: Context, config: Config): void {
         // back to treating the note as new and replacing it.
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw noteIoError('write', args.id, error)
       }
+      if (existing === undefined && args.requireExisting === true) {
+        throw new Error(`tool-memory-filesystem: note ${JSON.stringify(args.id)} does not exist; refusing to create it`)
+      }
+      // Parents are created only after the existence rules passed, so a
+      // refused update leaves no empty directory behind.
+      try {
+        await mkdir(dirname(writeTarget), { recursive: true })
+      } catch (error) {
+        throw noteIoError('write', args.id, error)
+      }
+      await containedPathReal(vaultRoot, args.id)
+      exec.signal.throwIfAborted()
       if (args.baseVersion !== undefined && noteVersion(existing ?? '') !== args.baseVersion) {
         throw new Error(`tool-memory-filesystem: note ${args.id} changed since it was read; re-read it before writing`)
       }

@@ -22,7 +22,8 @@
     "pack:all": "pnpm build && node scripts/pack-all.mjs",
     "test:pack": "pnpm build && node scripts/verify-pack.mjs",
     "test:profile": "pnpm build && node scripts/verify-profile-install.mjs",
-    "test:multiprocess": "pnpm build && node scripts/verify-multiprocess.mjs"
+    "test:multiprocess": "pnpm build && node scripts/verify-multiprocess.mjs",
+    "bench:vault": "pnpm build && node scripts/bench-vault.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

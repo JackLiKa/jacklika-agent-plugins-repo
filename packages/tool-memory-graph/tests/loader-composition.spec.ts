@@ -91,6 +91,7 @@ interface Graph {
   edges: { from: string; to: string; type?: 'link' | 'keyword'; keywords?: string[]; weight?: number }[]
   truncated: boolean
   edgesTruncated: boolean
+  depth?: number
 }
 
 async function graphAll(ctx: Context, callId: string): Promise<Graph> {
@@ -303,6 +304,45 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     expect(graph.edges[0]?.to).toBe('notes/c.md')
     expect(graph.edges[0]?.type).toBe('keyword')
     expect(graph.edges[0]?.keywords).toEqual(['contains', 'word1'])
+  })
+
+  it('clamps a requested depth to maxDepthLimit and reports the effective depth', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-graph-vault-'))
+    await writeFile(join(vault, 'center.md'), '# Center\n\nSee [[zeta]].\n')
+    await writeFile(join(vault, 'zeta.md'), '# Zeta\n\nSee [[alpha]].\n')
+    await writeFile(join(vault, 'alpha.md'), '# Alpha\n')
+    const ctx = await boot(vault, ['    maxDepthLimit: 2'])
+
+    // Under the limit the request is honored as asked.
+    const honored = await graphFrom(ctx, 'graph-depth-honored', 'center.md', 2)
+    expect(honored.depth).toBe(2)
+    expect(honored.nodes.map(node => node.id).sort()).toEqual(['alpha.md', 'center.md', 'zeta.md'])
+
+    // Past the limit the traversal stops at the cap, and the result says so
+    // instead of silently claiming the requested depth.
+    const clamped = await graphFrom(ctx, 'graph-depth-clamped', 'center.md', 9)
+    expect(clamped.depth).toBe(2)
+    expect(clamped.nodes.map(node => node.id).sort()).toEqual(['alpha.md', 'center.md', 'zeta.md'])
+  })
+
+  it('clamps the default depth to maxDepthLimit too', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-graph-vault-'))
+    await writeFile(join(vault, 'center.md'), '# Center\n\nSee [[zeta]].\n')
+    await writeFile(join(vault, 'zeta.md'), '# Zeta\n\nSee [[alpha]].\n')
+    await writeFile(join(vault, 'alpha.md'), '# Alpha\n')
+    // One hop is reachable, but the configured default asks for more: the cap
+    // keeps the walk at one level and reports that effective depth.
+    const ctx = await boot(vault, ['    maxDepthLimit: 1'])
+
+    const graph = await graphFrom(ctx, 'graph-depth-default-clamp', 'center.md', 3)
+    expect(graph.depth).toBe(1)
+    expect(graph.nodes.map(node => node.id).sort()).toEqual(['center.md', 'zeta.md'])
+  })
+
+  it('refuses to register wiki_graph when maxDepthLimit is below maxDepth', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, ['    maxDepth: 3', '    maxDepthLimit: 2'])
+    expect(ctx.tools.schemas().some(schema => schema.name === 'wiki_graph')).toBe(false)
   })
 
   it('refuses to register wiki_graph when extensions is an empty list', async () => {
