@@ -9,7 +9,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto'
-import { readdir, readFile, realpath, rename, rm, stat, writeFile, mkdir } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -105,6 +105,9 @@ export function resolveMemoryVaultRoot(
  * @returns the absolute, contained path.
  */
 export function containedPath(root: string, candidate: string): string {
+  if (candidate.includes('\0')) {
+    throw new Error('tool-memory-filesystem: note id must not contain a NUL byte')
+  }
   const absoluteRoot = resolve(root)
   const absolute = resolve(absoluteRoot, candidate)
   const remainder = relative(absoluteRoot, absolute)
@@ -145,19 +148,25 @@ export async function containedPathReal(root: string, candidate: string): Promis
 
 /**
  * Extract YAML frontmatter and body from Markdown text. Only the leading
- * `---\n...\n---\n` form is recognized.
+ * `---\n...\n---\n` form is recognized, optionally behind a UTF-8 BOM.
+ * Duplicate keys resolve last-one-wins rather than dropping the block.
  * @param text - raw file contents.
  * @returns frontmatter map and body.
  */
 export function splitFrontmatter(text: string): { frontmatter: Record<string, unknown>; body: string } {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text)
+  // A UTF-8 BOM is invisible but pushes the opening fence off the start of the
+  // string, which would silently drop the whole frontmatter block.
+  const source = text.startsWith('\uFEFF') ? text.slice(1) : text
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(source)
   if (match === null) {
     return { frontmatter: {}, body: text }
   }
   const frontmatterText = match[1] ?? ''
   const bodyText = match[2] ?? ''
   try {
-    const parsed = yaml.load(frontmatterText)
+    // `json: true` makes duplicate keys last-one-wins instead of throwing;
+    // throwing falls into the catch below and drops every field.
+    const parsed = yaml.load(frontmatterText, { json: true })
     const frontmatter: Record<string, unknown> = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
       ? parsed as Record<string, unknown>
       : {}
@@ -414,6 +423,9 @@ export async function resolveLinkTarget(
   const candidates = extensions.map(ext => `${target}${dottedExtension(ext)}`)
   candidates.push(target)
   for (const candidate of candidates) {
+    // A NUL byte can never name a real note; skip it instead of aborting the
+    // whole read over one malformed link.
+    if (candidate.includes('\0')) continue
     try {
       const path = await containedPathReal(root, candidate)
       const info = await stat(path)
@@ -432,12 +444,15 @@ export async function resolveLinkTarget(
  * @param root - vault root.
  * @param extensions - note extensions.
  * @param indexHiddenDirs - descend into remaining dot-directories.
+ * @param onSkip - optional callback for entries skipped because they could not
+ *   be read; one unreadable directory must not fail the whole vault scan.
  * @returns absolute paths of every note file.
  */
 export async function listNotePaths(
   root: string,
   extensions: string[],
   indexHiddenDirs = false,
+  onSkip?: (path: string, error: unknown) => void,
 ): Promise<string[]> {
   const results: string[] = []
   const exclude = new Set(['.git', 'node_modules', '.obsidian'])
@@ -450,7 +465,14 @@ export async function listNotePaths(
   }
 
   async function walk(dir: string): Promise<void> {
-    const entries = await readdir(dir, { withFileTypes: true })
+    let entries
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch (error) {
+      // An unreadable directory hides only its own subtree.
+      onSkip?.(dir, error)
+      return
+    }
     for (const entry of entries) {
       if (!indexHiddenDirs && entry.name.startsWith('.') && entry.name !== '.') continue
       if (exclude.has(entry.name)) continue
@@ -541,17 +563,26 @@ export async function readNote(
  * @param root - vault root.
  * @param extensions - note extensions.
  * @param indexHiddenDirs - descend into dot-directories besides the fixed exclusions.
+ * @param onSkip - optional callback for notes skipped because they could not
+ *   be read; one unreadable note must not fail search for the whole vault.
  * @returns a map from note id to search result.
  */
 export async function buildIndex(
   root: string,
   extensions: string[],
   indexHiddenDirs = false,
+  onSkip?: (path: string, error: unknown) => void,
 ): Promise<Map<string, IndexedNote>> {
-  const paths = await listNotePaths(root, extensions, indexHiddenDirs)
+  const paths = await listNotePaths(root, extensions, indexHiddenDirs, onSkip)
   const notes: Note[] = []
   for (const path of paths) {
-    const text = await readFile(path, 'utf8')
+    let text: string
+    try {
+      text = await readFile(path, 'utf8')
+    } catch (error) {
+      onSkip?.(path, error)
+      continue
+    }
     const { frontmatter, body } = splitFrontmatter(text)
     notes.push({
       path,
@@ -597,12 +628,80 @@ export async function buildIndex(
  */
 async function writeAtomic(absolutePath: string, contents: string): Promise<void> {
   const tmpPath = `${absolutePath}.tmp-${process.pid}-${randomUUID()}`
+  // rename replaces the inode, so carry an existing target's permission bits
+  // onto the staged file; otherwise a read-only note silently becomes writable.
+  let mode: number | undefined
   try {
-    await writeFile(tmpPath, contents, 'utf8')
+    mode = (await stat(absolutePath)).mode & 0o7777
+  } catch {
+    // New note: keep the default creation mode.
+  }
+  try {
+    await writeFile(tmpPath, contents, { encoding: 'utf8', ...(mode === undefined ? {} : { mode }) })
+    if (mode !== undefined) await chmod(tmpPath, mode)
     await rename(tmpPath, absolutePath)
   } catch (error) {
     await rm(tmpPath, { force: true }).catch(() => undefined)
     throw error
+  }
+}
+
+/**
+ * Turn a filesystem failure into a structured, vault-relative tool error. Raw
+ * Node errors carry absolute host paths and no plugin context; callers see
+ * `tool-memory-filesystem: cannot read note "x.md": permission denied` instead.
+ */
+function noteIoError(action: 'read' | 'write', id: string, error: unknown): Error {
+  return new Error(`tool-memory-filesystem: cannot ${action} note ${JSON.stringify(id)}: ${describeIoError(error)}`)
+}
+
+/** Short, host-path-free description of one filesystem error. */
+function describeIoError(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  if (code === 'ENOENT') return 'no such note'
+  if (code === 'EACCES' || code === 'EPERM') return 'permission denied'
+  if (code === 'EISDIR') return 'path is a directory'
+  if (typeof code === 'string' && code !== '') return code
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Follow a symlink at the final path component so a write publishes through
+ * the link instead of replacing it: the sibling-temp + rename sequence targets
+ * the directory entry itself, which would otherwise turn an alias note into a
+ * regular file and leave the linked note untouched.
+ */
+async function resolveSymlinkWriteTarget(root: string, absolutePath: string, id: string): Promise<string> {
+  const info = await lstat(absolutePath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw noteIoError('write', id, error)
+  })
+  if (info === undefined || !info.isSymbolicLink()) return absolutePath
+  const canonical = await realpath(absolutePath).catch(() => {
+    // A broken link cannot be written through; replacing it would silently
+    // discard the alias, so refuse instead.
+    throw new Error(`tool-memory-filesystem: cannot write through broken symbolic link ${JSON.stringify(id)}`)
+  })
+  const canonicalRoot = await realpath(resolve(root))
+  const remainder = relative(canonicalRoot, canonical)
+  if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
+    throw new Error(`tool-memory-filesystem: path ${id} resolves outside vault root ${root}`)
+  }
+  return canonical
+}
+
+/** Build the skip callback that reports unreadable entries to the Loader logger. */
+function skipLogger(ctx: Context, root: string): (path: string, error: unknown) => void {
+  return (path, error) => {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown'
+    ctx.logger?.warn(`tool-memory-filesystem: skipped unreadable entry ${vaultRelativeId(root, path)} (${code})`)
+  }
+}
+
+/** Validate that at least one note extension is configured. */
+function assertExtensions(extensions: string[]): void {
+  if (extensions.length === 0) {
+    throw new Error('tool-memory-filesystem: extensions must list at least one file extension')
   }
 }
 
@@ -629,6 +728,7 @@ export function apply(ctx: Context, config: Config): void {
   const resolved = config as ResolvedConfig
   assertPositiveInteger('maxLinkDepth', resolved.maxLinkDepth)
   assertPositiveInteger('maxSearchResults', resolved.maxSearchResults)
+  assertExtensions(resolved.extensions)
 
   const vaultRootFor = (exec: ToolRunContext): string => resolveMemoryVaultRoot(resolved.vaultRoot, exec)
 
@@ -650,11 +750,12 @@ export function apply(ctx: Context, config: Config): void {
       const vaultRoot = vaultRootFor(exec)
       const absolutePath = await containedPathReal(vaultRoot, args.id)
       const linkResolver = createLinkResolver(
-        (await listNotePaths(vaultRoot, resolved.extensions, resolved.indexHiddenDirs))
+        (await listNotePaths(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot)))
           .map(path => vaultRelativeId(vaultRoot, path)),
       )
       const note = await readNote(vaultRoot, resolved.extensions, resolved.maxLinkDepth, absolutePath, new Set(), linkResolver)
-      const info = await stat(absolutePath)
+        .catch(error => { throw noteIoError('read', args.id, error) })
+      const info = await stat(absolutePath).catch(error => { throw noteIoError('read', args.id, error) })
       return {
         ...note,
         mtime: formatBeijingTime(info.mtime),
@@ -699,7 +800,7 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
-      const index = await buildIndex(vaultRoot, resolved.extensions, resolved.indexHiddenDirs)
+      const index = await buildIndex(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot))
       let hits = rankNotes(index, args.query)
       // Optional semantic layer: when `wiki_semantic_search` is mounted, fuse
       // both rankings via reciprocal rank fusion. Only the dispatch is
@@ -789,14 +890,22 @@ export function apply(ctx: Context, config: Config): void {
       if (!hasExtension) {
         throw new Error(`tool-memory-filesystem: note id must end with one of ${resolved.extensions.join(', ')}`)
       }
-      await mkdir(dirname(absolutePath), { recursive: true })
+      const writeTarget = await resolveSymlinkWriteTarget(vaultRoot, absolutePath, args.id)
+      try {
+        await mkdir(dirname(writeTarget), { recursive: true })
+      } catch (error) {
+        throw noteIoError('write', args.id, error)
+      }
       await containedPathReal(vaultRoot, args.id)
       exec.signal.throwIfAborted()
       let existing: string | undefined
       try {
-        existing = await readFile(absolutePath, 'utf8')
-      } catch {
-        // file does not exist yet
+        existing = await readFile(writeTarget, 'utf8')
+      } catch (error) {
+        // Only a missing file means a first write; any other failure (a
+        // directory in the way, an unreadable note) must not silently fall
+        // back to treating the note as new and replacing it.
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw noteIoError('write', args.id, error)
       }
       if (args.baseVersion !== undefined && noteVersion(existing ?? '') !== args.baseVersion) {
         throw new Error(`tool-memory-filesystem: note ${args.id} changed since it was read; re-read it before writing`)
@@ -829,8 +938,9 @@ export function apply(ctx: Context, config: Config): void {
         finalBody = base === '' ? `${header}${args.content}\n` : `${base}\n\n${header}${args.content}\n`
       }
       exec.signal.throwIfAborted()
-      await writeAtomic(absolutePath, finalBody)
-      const info = await stat(absolutePath)
+      await writeAtomic(writeTarget, finalBody)
+        .catch(error => { throw noteIoError('write', args.id, error) })
+      const info = await stat(writeTarget)
       recordMtime(absolutePath, info.mtimeMs)
       const result: Record<string, unknown> = {
         id: vaultRelativeId(vaultRoot, absolutePath),

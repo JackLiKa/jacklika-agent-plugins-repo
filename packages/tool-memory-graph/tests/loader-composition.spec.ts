@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -90,6 +90,7 @@ interface Graph {
   nodes: { id: string; title: string }[]
   edges: { from: string; to: string; type?: 'link' | 'keyword'; keywords?: string[]; weight?: number }[]
   truncated: boolean
+  edgesTruncated: boolean
 }
 
 async function graphAll(ctx: Context, callId: string): Promise<Graph> {
@@ -149,12 +150,14 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
       nodes: { id: string; title: string }[]
       edges: { from: string; to: string }[]
       truncated: boolean
+      edgesTruncated: boolean
     }
     expect(graph.nodes.map(n => n.id).sort()).toEqual(['concepts/RAG.md', 'embedding.md', 'island.md'])
     expect(graph.nodes.find(n => n.id === 'concepts/RAG.md')?.title).toBe('Retrieval-Augmented Generation')
     expect(graph.edges).toContainEqual({ from: 'concepts/RAG.md', to: 'embedding.md' })
     expect(graph.edges).toContainEqual({ from: 'embedding.md', to: 'concepts/RAG.md' })
     expect(graph.truncated).toBe(false)
+    expect(graph.edgesTruncated).toBe(false)
   })
 
   it('returns only the reachable subgraph for a center note and depth', async () => {
@@ -242,5 +245,69 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
 
     // D is isolated: no edges to or from it.
     expect(after.edges.some(e => e.from === 'notes/d.md' || e.to === 'notes/d.md')).toBe(false)
+  })
+
+  it('rejects a graph center that is not an indexed note instead of crashing', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    for (const [callId, id] of [['graph-missing', 'missing.md'], ['graph-directory', 'concepts']] as const) {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId(callId),
+        name: 'wiki_graph',
+        arguments: { id },
+      })
+      expect(result.isError).toBe(true)
+      if (!result.isError) throw new Error('expected wiki_graph failure')
+      expect(result.error.message).toContain('note not found')
+      expect(result.error.message).toContain(id)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('skips an unreadable note instead of failing the whole graph', async () => {
+    const vault = await makeVault()
+    const island = join(vault, 'island.md')
+    await chmod(island, 0o000)
+    try {
+      const ctx = await boot(vault)
+
+      const graph = await graphAll(ctx, 'graph-skip')
+      expect(graph.nodes.map(node => node.id).sort()).toEqual(['concepts/RAG.md', 'embedding.md'])
+
+      // Centering on the skipped note names the read failure, not "missing".
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId('graph-skip-center'),
+        name: 'wiki_graph',
+        arguments: { id: 'island.md', depth: 1 },
+      })
+      expect(result.isError).toBe(true)
+      if (!result.isError) throw new Error('expected wiki_graph failure')
+      expect(result.error.message).toContain('cannot read note "island.md"')
+    } finally {
+      await chmod(island, 0o644)
+    }
+  })
+
+  it('caps edges at maxEdges in link-first order and reports edgesTruncated', async () => {
+    const vault = await makeKeywordVault()
+    const ctx = await boot(vault, ['    maxEdges: 1'])
+
+    const graph = await graphAll(ctx, 'graph-edge-cap')
+    expect(graph.edgesTruncated).toBe(true)
+    expect(graph.edges).toHaveLength(1)
+    // Both keyword edges between B and C are candidates; the deterministic
+    // order keeps the same one regardless of directory-listing order.
+    expect(graph.edges[0]?.from).toBe('notes/b.md')
+    expect(graph.edges[0]?.to).toBe('notes/c.md')
+    expect(graph.edges[0]?.type).toBe('keyword')
+    expect(graph.edges[0]?.keywords).toEqual(['contains', 'word1'])
+  })
+
+  it('refuses to register wiki_graph when extensions is an empty list', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, ['    extensions: []'])
+    expect(ctx.tools.schemas().some(schema => schema.name === 'wiki_graph')).toBe(false)
   })
 })

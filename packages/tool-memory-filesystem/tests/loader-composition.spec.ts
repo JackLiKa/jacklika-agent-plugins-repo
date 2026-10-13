@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir, symlink } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -39,21 +39,23 @@ function searchPage<T>(result: { content: { type: string; text?: string }[] }): 
  * @param vaultRoot - absolute path to the vault root, or undefined for
  *   session-workspace defaulting.
  * @param maxSearchResults - optional `wiki_search` result cap override.
+ * @param extraConfig - extra raw config lines appended under `config:`.
  * @returns the booted context.
  */
-async function boot(vaultRoot?: string, indexHiddenDirs = false, maxSearchResults?: number): Promise<Context> {
+async function boot(vaultRoot?: string, indexHiddenDirs = false, maxSearchResults?: number, extraConfig: string[] = []): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-memory-loader-'))
   const configPath = join(root, 'cordis.yml')
   const configLines = [
     "- name: '@deepseek-ai/dsh-system-prompt'",
     "- name: '@deepseek-ai/dsh-tools'",
     "- name: '@jacklika/dsh-tool-memory-filesystem'",
-    ...vaultRoot !== undefined || indexHiddenDirs || maxSearchResults !== undefined
+    ...vaultRoot !== undefined || indexHiddenDirs || maxSearchResults !== undefined || extraConfig.length > 0
       ? [
         '  config:',
         ...vaultRoot !== undefined ? [`    vaultRoot: ${vaultRoot}`] : [],
         ...indexHiddenDirs ? ['    indexHiddenDirs: true'] : [],
         ...maxSearchResults !== undefined ? [`    maxSearchResults: ${maxSearchResults}`] : [],
+        ...extraConfig,
       ]
       : [],
     '',
@@ -837,5 +839,196 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     if (hitResult.isError) throw new Error('expected wiki_search success')
     const hits = searchPage<{ id: string }>(hitResult).hits
     expect(hits.some(h => h.id === '.dsh/memory/secret.md')).toBe(true)
+  })
+
+  it.skipIf(process.platform === 'win32')('skips an unreadable note in search and reports it as a structured read error', async () => {
+    const vault = await makeVault()
+    await writeFile(join(vault, 'open.md'), '# Open\n\nzephyr-token here.\n')
+    const locked = join(vault, 'locked.md')
+    await writeFile(locked, '# Locked\n\nzephyr-token here too.\n')
+    await chmod(locked, 0o000)
+    try {
+      const ctx = await boot(vault)
+
+      // Search indexes what it can read instead of failing the whole call.
+      const search = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId('search-skip-unreadable'),
+        name: 'wiki_search',
+        arguments: { query: 'zephyr-token' },
+      })
+      expect(search.isError).toBe(false)
+      if (search.isError) throw new Error('expected wiki_search success')
+      const page = searchPage<{ id: string }>(search)
+      expect(page.hits.map(hit => hit.id)).toEqual(['open.md'])
+      expect(page.total).toBe(1)
+
+      // Reading the unreadable note itself still fails, with a vault-relative
+      // message that does not leak the host path.
+      const read = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId('read-skip-unreadable'),
+        name: 'wiki_read',
+        arguments: { id: 'locked.md' },
+      })
+      expect(read.isError).toBe(true)
+      if (!read.isError) throw new Error('expected wiki_read failure')
+      expect(read.error.message).toContain('cannot read note "locked.md"')
+      expect(read.error.message).not.toContain(vault)
+    } finally {
+      await chmod(locked, 0o644)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('skips an unreadable directory subtree instead of failing search', async () => {
+    const vault = await makeVault()
+    const lockedDir = join(vault, 'locked-dir')
+    await mkdir(lockedDir)
+    await writeFile(join(lockedDir, 'inside.md'), '# Inside\n\nzephyr-token buried.\n')
+    await chmod(lockedDir, 0o000)
+    try {
+      const ctx = await boot(vault)
+      const search = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId('search-skip-unreadable-dir'),
+        name: 'wiki_search',
+        arguments: { query: 'zephyr-token' },
+      })
+      expect(search.isError).toBe(false)
+      if (search.isError) throw new Error('expected wiki_search success')
+      expect(searchPage<{ id: string }>(search)).toEqual({ hits: [], total: 0, truncated: false })
+    } finally {
+      await chmod(lockedDir, 0o755)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('reports a directory target as a structured read error', async () => {
+    const vault = await makeVault()
+    await mkdir(join(vault, 'folder.md'))
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('read-directory'),
+      name: 'wiki_read',
+      arguments: { id: 'folder.md' },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected wiki_read failure')
+    expect(result.error.message).toContain('cannot read note "folder.md"')
+    expect(result.error.message).toContain('path is a directory')
+    expect(result.error.message).not.toContain(vault)
+  })
+
+  it('rejects a note id containing a NUL byte with a structured error', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('read-nul-id'),
+      name: 'wiki_read',
+      arguments: { id: 'bad\u0000.md' },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected wiki_read failure')
+    expect(result.error.message).toContain('must not contain a NUL byte')
+  })
+
+  it.skipIf(process.platform === 'win32')('writes through an in-vault symlink and keeps the link intact', async () => {
+    const vault = await makeVault()
+    const target = join(vault, 'alias-target.md')
+    await writeFile(target, '# Target\n\nOriginal body.\n')
+    await symlink('alias-target.md', join(vault, 'alias.md'))
+    const ctx = await boot(vault)
+
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-symlink'),
+      name: 'wiki_write',
+      arguments: { id: 'alias.md', content: 'Appended through the link.' },
+    })
+    expect(write.isError).toBe(false)
+    if (write.isError) throw new Error('expected wiki_write success')
+
+    // The alias stays a symlink and the bytes land in the linked note.
+    expect((await lstat(join(vault, 'alias.md'))).isSymbolicLink()).toBe(true)
+    const text = await readFile(target, 'utf8')
+    expect(text).toContain('Original body.')
+    expect(text).toContain('Appended through the link.')
+  })
+
+  it.skipIf(process.platform === 'win32')('refuses to write through a broken symlink', async () => {
+    const vault = await makeVault()
+    await symlink('missing.md', join(vault, 'broken.md'))
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-broken-symlink'),
+      name: 'wiki_write',
+      arguments: { id: 'broken.md', content: 'must not create the target' },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected wiki_write failure')
+    expect(result.error.message).toContain('broken symbolic link')
+    await expect(stat(join(vault, 'missing.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it.skipIf(process.platform === 'win32')('preserves the note permission mode across an append write', async () => {
+    const vault = await makeVault()
+    const notePath = join(vault, 'readonly.md')
+    await writeFile(notePath, '# Readonly\n\nOriginal.\n')
+    await chmod(notePath, 0o444)
+    const ctx = await boot(vault)
+
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('write-readonly'),
+      name: 'wiki_write',
+      arguments: { id: 'readonly.md', content: 'Appended despite read-only bits.' },
+    })
+    expect(write.isError).toBe(false)
+    if (write.isError) throw new Error('expected wiki_write success')
+
+    // rename replaces the inode, so the staged file must carry the old mode.
+    expect((await stat(notePath)).mode & 0o777).toBe(0o444)
+    expect(await readFile(notePath, 'utf8')).toContain('Appended despite read-only bits.')
+  })
+
+  it.skipIf(process.platform === 'win32')('reports an unwritable vault directory without leaking a temp file', async () => {
+    const vault = await makeVault()
+    const readOnlyDir = join(vault, 'read-only')
+    await mkdir(readOnlyDir)
+    await chmod(readOnlyDir, 0o555)
+    try {
+      const ctx = await boot(vault)
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId('write-unwritable-dir'),
+        name: 'wiki_write',
+        arguments: { id: 'read-only/new.md', content: 'must not be staged' },
+      })
+      expect(result.isError).toBe(true)
+      if (!result.isError) throw new Error('expected wiki_write failure')
+      expect(result.error.message).toContain('cannot write note "read-only/new.md"')
+      expect(result.error.message).toContain('permission denied')
+      expect(result.error.message).not.toContain(vault)
+      expect(await readdir(readOnlyDir)).toEqual([])
+    } finally {
+      await chmod(readOnlyDir, 0o755)
+    }
+  })
+
+  it('accepts a valid extensions list passed through extra config lines', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, false, undefined, ['    extensions: [".md"]'])
+    expect(ctx.tools.schemas().some(schema => schema.name === 'wiki_read')).toBe(true)
+  })
+
+  it('refuses to register the wiki tools when extensions is an empty list', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, false, undefined, ['    extensions: []'])
+    const names = ctx.tools.schemas().map(schema => schema.name)
+    expect(names).not.toContain('wiki_read')
+    expect(names).not.toContain('wiki_search')
+    expect(names).not.toContain('wiki_write')
   })
 })

@@ -238,7 +238,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_recall',
-    description: 'Search the memory vault for prior notes related to the current task or topic. Call this at the start of a development task to avoid asking the user to repeat context that is already captured. Query terms are OR-matched and ranked by field-weighted relevance, so partial matches still return. Returns the matching note ids, titles, scores, and backlinks, plus total — how many notes matched before the result cap, so a total above the returned hit count means the list was truncated.',
+    description: 'Search the memory vault for prior notes related to the current task or topic. Call this at the start of a development task to avoid asking the user to repeat context that is already captured. Query terms are OR-matched and ranked by field-weighted relevance, so partial matches still return. Returns the matching note ids, titles, scores, and backlinks, plus total — how many notes matched before the result cap — and truncated, which is true when hits omits matches. A total above the returned hit count also means the list was truncated.',
     parameters: {
       query: {
         type: 'string',
@@ -277,10 +277,14 @@ export function apply(ctx: Context, config: Config): void {
       // from the total so curated numbers stay truthful.
       const total = search.total - (search.hits.length - curated.length)
       ctx.logger?.debug(`memory-curator: recall query=${args.query} hits=${curated.length} total=${total}`)
+      const hits = curated.slice(0, 20)
       return {
         query: args.query,
-        hits: curated.slice(0, 20),
+        hits,
         total,
+        // `wiki_search` reports its own cap; recall caps again at 20, so the
+        // page is incomplete whenever either cap bit.
+        truncated: search.truncated || curated.length > hits.length,
       } as unknown as JsonValue
     },
   })))

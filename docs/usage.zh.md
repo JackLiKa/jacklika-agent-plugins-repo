@@ -190,7 +190,7 @@ Bundle 默认 `.plugins/memory/` 会把知识库放在项目工作区内部，�
 
 Bundle 包含 `memory-curator`，提供两个高层工具。它们会自动注册到工具表，但除非挂载 `memory-vault` skill（见[单独挂载 Skill](#单独挂载-skill)），模型不会主动在任务前后调用它们。
 
-- `memory_recall(query)` — 在开发任务开始时调用。搜索知识库中的相关笔记，让 agent 基于已有上下文继续工作，而不是重复提问。其 `total` 始终报告全库命中数，即使返回的命中列表被截断，模型据此知道何时该收窄查询。`memory-anchor` 写入的逐回合自动入库笔记会从命中列表中隐藏，并从 `total` 中扣除，记账内容不会挤占策展知识。
+- `memory_recall(query)` — 在开发任务开始时调用。搜索知识库中的相关笔记，让 agent 基于已有上下文继续工作，而不是重复提问。其 `total` 始终报告全库命中数，即使返回的命中列表被截断；任一层截断（搜索层上限或 recall 自身的 20 条展示上限）都会令 `truncated` 为 `true`，模型据此知道何时该收窄查询。`memory-anchor` 写入的逐回合自动入库笔记会从命中列表中隐藏，并从 `total` 中扣除，记账内容不会挤占策展知识。
 - `memory_capture(title, summary, ...)` — 在有意义的任务结束时调用。它根据标题生成稳定笔记 id，检查是否与现有笔记冲突；若发现冲突，会请求用户审批，通过后再把知识写入共享策展区。
 
 `memory_capture` 默认 `scope: shared`，笔记落在 `shared/notes/` 下，由 `memory-git` 自动提交。若使用 `scope: private`，笔记会进入当前 agent 命名空间（`agents/<key>/`），不被其他 session 共享。
@@ -267,7 +267,7 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 | 写一条 `shared/notes/x.md` | `<workspace>/.plugins/memory/shared/notes/x.md` 存在，且 `git -C <vault> log --oneline` 有一条作者为 `dsh-memory-git` 的 `wiki_write` 提交 |
 | 写一条私有笔记 `daily/x.md` | 落到 `<vault>/agents/<session id>/daily/x.md`，且**没有** Git 提交 |
 | 读取笔记并跟随 `[[链接]]` | `wiki_read` 在 `linkedNotes` 中返回被链接的笔记 |
-| 搜索 vault / 展示链接图 | `wiki_search` 返回被上限截断的命中列表外加 `total`（无论是否截断都是全部命中数）；`wiki_graph` 返回节点与边 |
+| 搜索 vault / 展示链接图 | `wiki_search` 返回被上限截断的命中列表外加 `total`（无论是否截断都是全部命中数）与 `truncated`；`wiki_graph` 返回节点与边，节点/边上限分别由 `truncated`/`edgesTruncated` 标记 |
 
 `<vault>` 默认为 `<session workspace>/.plugins/memory/`。请单独挂载 `skills/memory-vault`（`customSkillDirs`），否则模型不会知道"先读后写"与 `baseVersion` 的约定。
 
@@ -276,7 +276,7 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 记忆套件通过 Cordis 日志器（`ctx.logger`）输出结构化运行时诊断信息，前提是部署环境启用了对应日志级别。套件本身不收集指标、链路或遥测数据；可观测性由本地日志与内置审计轨迹组成。
 
 - `debug` —— 由 `memory-queue`（锁获取/释放、stale-lock 回收、超时）、`memory-git`（git 命令调用与 `index.lock` 重试）、`memory-scope`（id 拒绝、命名空间重写、透传）和 `memory-curator`（召回过滤计数与捕获目标/冲突决策）输出。
-- `warn` —— 在注册失败（任意插件）、`memory-queue` 锁超时、`memory-git` git/命令失败、`memory-anchor` 自动捕获失败时输出。
+- `warn` —— 在注册失败（任意插件）、`memory-queue` 锁超时、`memory-git` git/命令失败、`memory-anchor` 自动捕获失败，以及 `tool-memory-filesystem`/`tool-memory-graph` 跳过不可读仓库条目时输出。
 - 审计轨迹 —— `memory-git` 将每个匹配的 `wiki_write` 提交到 `<vault>/.git`，提交主题为笔记 id；`memory-anchor` 将每轮会话写入 `shared/notes/auto-capture/` 下的 `auto-capture` 笔记。这两者共同构成“何时改了什么”的持久时间线。
 
 在 Profile 中将 DSH/Cordis 日志级别设为 `debug` 即可启用运行时日志。套件有意不记录笔记正文内容，仅记录 id、计数、版本指纹和错误消息。
@@ -292,7 +292,7 @@ Bundle 默认禁用 vector。只有显式提供 HTTP(S) endpoint 与 model 后�
 | peer 版本不兼容 | 使用 [compatibility.zh.md](compatibility.zh.md) 中声明的有界 Harness 版本范围内的版本；不要压制 peer 检查。 |
 | Git 不存在 | 安装 Git 并确认 `git --version` 可在 `PATH` 运行，或在自定义 Bundle 中不挂 `memory-git`。 |
 | Git identity 错误 | 插件通过 `git -c` 提供单次命令 identity，永不改全局配置；查看原样返回的 Git 错误。 |
-| Vault 无权限 | 选择可写的 `vaultRoot`；原始文件系统错误会返回。 |
+| Vault 无权限 | 选择可写的 `vaultRoot`；工具会返回结构化的仓库相对错误（如 `cannot read note "x.md": permission denied`），扫描则跳过不可读条目并记 `warn` 日志，而不是整次失败。 |
 | 锁超时 | 检查其他活跃 writer；只有心跳持续不变且同机 PID 检查通过后才回收 stale lock。 |
 | Skill 未加载 | 检查 `customSkillDirs` 指向包含 `memory-vault/SKILL.md` 的目录；非 HMR Profile 需重启。 |
 | Vector endpoint 错误 | 检查 HTTP(S) URL、model、环境变量 key、timeout 与 OpenAI 兼容的 `data[].embedding` 响应。 |

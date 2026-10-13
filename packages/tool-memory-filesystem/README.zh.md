@@ -45,27 +45,27 @@ kind: "package-reference"
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `vaultRoot` | `string` | `''` → `<session cwd>/.dsh/memory/` | 仓库根目录。留空表示使用按工作区隔离的记忆目录；相对路径相对于会话工作区解析。 |
-| `extensions` | `string[]` | `['.md']` | 视为笔记的文件扩展名。 |
+| `extensions` | `string[]` | `['.md']` | 视为笔记的文件扩展名。至少需列出一个扩展名；空列表会导致插件加载失败。 |
 | `maxLinkDepth` | `number` | `1` | `wiki_read` 解析 `[[link]]` 的最大深度。 |
 | `maxSearchResults` | `number` | `20` | `wiki_search` 返回的最大结果数。 |
 | `indexHiddenDirs` | `boolean` | `false` | 是否索引以 `.` 开头的目录（`.git` 与 `node_modules` 始终排除）。当 `vaultRoot` 指向工作区根时开启，以纳入 `.dsh/memory/` 中的笔记。 |
 
 ### 工具
 
-- `wiki_read(id)` — 按仓库相对路径读取笔记，返回 frontmatter、正文、链接、已解析的链接笔记、内容指纹 `version`、`+08:00` 格式的文件 `mtime`，以及 `modifiedExternally` 标志（文件自本插件上次观察以来在磁盘上被改动时为 `true`，例如 Obsidian 编辑）。插件按绝对路径维护一个 256 条上限的 LRU mtime 表；自身的 `wiki_write` 会刷新记录，因此插件写入永不误报。
-- `wiki_search(query)` — 按标题、id、正文关键词搜索；查询词采用 OR 匹配，并按字段加权的 BM25 式评分排序（标题/id 命中权重最高，稀有词权重更高），另有整段短语加分与被强命中笔记链接的图增强；挂载 `wiki_semantic_search` 时两路排序经 RRF 融合。返回 `{ hits, total, truncated }` 分页结构：每条命中含笔记 id、标题、分数与反向链接；`total` 是 `maxSearchResults` 截断**之前**的全部命中数；`truncated` 为 `true` 表示结果被该上限截断，调用方因此能区分“结果完整”与“还有更多”，而不会误以为仓库里只有这些。
-- `wiki_write(id, content, mode?, baseVersion?)` — 创建或追加笔记。追加模式保留 frontmatter 并添加时间戳标题；两种写入模式都会把 `created`/`updated` frontmatter 值归一化为 `+08:00` 秒级精度（不可解析的值原样保留）。把 `wiki_read` 返回的 `version` 作为 `baseVersion` 传入时，若笔记在读取后被其他写入方改动，写入会显式失败。返回值为 `{ id, mode, bytes, version }`，其中 `version` 就是刚发布内容的指纹——可直接作为下一次写入的 `baseVersion`，无需再 `wiki_read` 一次即可串联乐观并发校验。
+- `wiki_read(id)` — 按仓库相对路径读取笔记，返回 frontmatter、正文、链接、已解析的链接笔记、内容指纹 `version`、`+08:00` 格式的文件 `mtime`，以及 `modifiedExternally` 标志（文件自本插件上次观察以来在磁盘上被改动时为 `true`，例如 Obsidian 编辑）。插件按绝对路径维护一个 256 条上限的 LRU mtime 表；自身的 `wiki_write` 会刷新记录，因此插件写入永不误报。失败会以结构化错误返回，错误信息只含仓库相对 id（如 `cannot read note "x.md": no such note`），绝不嵌入宿主绝对路径。
+- `wiki_search(query)` — 按标题、id、正文关键词搜索；查询词采用 OR 匹配，并按字段加权的 BM25 式评分排序（标题/id 命中权重最高，稀有词权重更高），另有整段短语加分与被强命中笔记链接的图增强；挂载 `wiki_semantic_search` 时两路排序经 RRF 融合。返回 `{ hits, total, truncated }` 分页结构：每条命中含笔记 id、标题、分数与反向链接；`total` 是 `maxSearchResults` 截断**之前**的全部命中数；`truncated` 为 `true` 表示结果被该上限截断，调用方因此能区分“结果完整”与“还有更多”，而不会误以为仓库里只有这些。无法读取的条目（扫描途中被删除、权限不足）会被跳过并记入日志，而不是让整次调用失败。
+- `wiki_write(id, content, mode?, baseVersion?)` — 创建或追加笔记。追加模式保留 frontmatter 并添加时间戳标题；两种写入模式都会把 `created`/`updated` frontmatter 值归一化为 `+08:00` 秒级精度（不可解析的值原样保留）。把 `wiki_read` 返回的 `version` 作为 `baseVersion` 传入时，若笔记在读取后被其他写入方改动，写入会显式失败。返回值为 `{ id, mode, bytes, version }`，其中 `version` 就是刚发布内容的指纹——可直接作为下一次写入的 `baseVersion`，无需再 `wiki_read` 一次即可串联乐观并发校验。通过仓库内 symlink 写入会更新链接指向的笔记并保留链接本身（损坏的链接会被拒绝）；原子替换会把笔记原有的权限位带到新文件。
 
 ### 安全
 
-所有路径都必须在该次调用解析出的仓库根目录下；越界路径会被拒绝。该插件不通过 `ctx.fs` 访问文件，因此不继承文件沙箱策略；访问权限由 OS 文件权限和本插件的越界检查共同控制。
+所有路径都必须在该次调用解析出的仓库根目录下；越界路径会被拒绝。仓库内的 symlink 会先解析到真实目标并重新做包含校验，因此追加写入落在链接目标上而非替换链接；损坏的 symlink 会被拒绝。错误信息保持仓库相对路径，不嵌入宿主绝对路径。该插件不通过 `ctx.fs` 访问文件，因此不继承文件沙箱策略；访问权限由 OS 文件权限和本插件的越界检查共同控制。
 
 -----
 
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-本包是一个没有运行时服务的 Cordis 函数插件，只在 `ctx.tools` 上注册三个类型化工具。仓库根目录在每次工具调用时解析：优先使用显式 `vaultRoot`（相对路径锚定会话工作区），否则使用 `<session cwd>/.dsh/memory/`，使每个工作区拥有自己的笔记。每个工具都通过 `node:fs/promises` 直接读取 Markdown 文件，并借助 `path.resolve` + 前缀检查保持在解析出的根目录内。YAML frontmatter 使用 `js-yaml` 解析；`[[link|alias]]` 形式的引用会提取管道符前的目标；出现在行内代码或围栏代码块中的 `[[...]]` 是语法示例而非链接，会被忽略。链接目标按 Obsidian 语义对已索引的笔记 id 解析：先精确匹配仓库相对路径，再做路径后缀匹配（`[[notes/foo]]` 可命中 `shared/notes/foo.md`），最后匹配仓库内任意位置的 basename——每一级都容忍目标带或不带扩展名。多重命中时优先路径段最少者，仍并列则取码点序最小的 id，因此解析结果跨平台确定。搜索时从仓库内容构建临时索引并分层排序：OR 匹配的字段加权评分（id/标题 ×3、反向链接 ×1、正文 ×1，含 IDF 使稀有词权重更高、BM25 饱和与长度归一化避免长笔记占优）、整段短语加分，以及被强命中笔记链接的图增强。挂载 `wiki_semantic_search` 时其排序经倒数排名融合并入；语义检索失败时回退到纯词法排序。`wiki_write` 以原子方式发布：正文先写入同级临时文件，再 `rename` 覆盖目标，因此并发读者永远不会读到写了一半的笔记。
+本包是一个没有运行时服务的 Cordis 函数插件，只在 `ctx.tools` 上注册三个类型化工具。仓库根目录在每次工具调用时解析：优先使用显式 `vaultRoot`（相对路径锚定会话工作区），否则使用 `<session cwd>/.dsh/memory/`，使每个工作区拥有自己的笔记。每个工具都通过 `node:fs/promises` 直接读取 Markdown 文件，并借助 `path.resolve` 词法前缀检查加 realpath 包含复检保持在解析出的根目录内。YAML frontmatter 使用 `js-yaml` 解析（开头 `---` 前带 UTF-8 BOM 亦可识别；frontmatter 出现重复键时按“后者胜出”处理，而不是丢弃整个块）；`[[link|alias]]` 形式的引用会提取管道符前的目标；出现在行内代码或围栏代码块中的 `[[...]]` 是语法示例而非链接，会被忽略。链接目标按 Obsidian 语义对已索引的笔记 id 解析：先精确匹配仓库相对路径，再做路径后缀匹配（`[[notes/foo]]` 可命中 `shared/notes/foo.md`），最后匹配仓库内任意位置的 basename——每一级都容忍目标带或不带扩展名。多重命中时优先路径段最少者，仍并列则取码点序最小的 id，因此解析结果跨平台确定。搜索时从仓库内容构建临时索引（无法读取的条目会被跳过并记入日志，单个坏文件不会使整次扫描失败）并分层排序：OR 匹配的字段加权评分（id/标题 ×3、反向链接 ×1、正文 ×1，含 IDF 使稀有词权重更高、BM25 饱和与长度归一化避免长笔记占优）、整段短语加分，以及被强命中笔记链接的图增强。挂载 `wiki_semantic_search` 时其排序经倒数排名融合并入；语义检索失败时回退到纯词法排序。`wiki_write` 以原子方式发布：正文先写入同级临时文件，再 `rename` 覆盖目标，因此并发读者永远不会读到写了一半的笔记；临时文件继承目标笔记的权限位，且写入或 rename 失败时会被清理。
 
 -----
 
@@ -112,6 +112,7 @@ Create a new note or append to an existing note in the wiki vault. The path is r
 - **无向量搜索** — 仅支持关键词搜索。未来可新增 `tool-memory-vector` 包提供基于 embedding 的检索，而无需修改本包。
 - **不支持图片或二进制附件** — 笔记按 UTF-8 文本处理。附件应继续使用 attachment 体系。
 - **无内置写协调** —— 写入是原子的（临时文件 + `rename`），读者不会看到半写文件，但对同一笔记的并发 `wiki_write` 仍可能丢更新。协作调用方可传 `baseVersion` 把丢更新变成显式冲突；挂载 `@jacklika/dsh-memory-queue` 可获得进程内串行化，并可选用心跳刷新的跨进程锁。
+- **无法读取的条目被跳过而非作为数据暴露** —— 进程读不到的笔记或目录会从读取、搜索与链接解析结果中消失，仅通过 logger 警告报告；工具返回值本身不会列出被跳过的条目。
 
 <a id="dev-note"></a>
 ### 开发备注

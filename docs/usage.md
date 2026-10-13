@@ -190,7 +190,7 @@ If you previously installed Bundle versions `0.1.7-rc.5` or older, the default v
 
 The Bundle includes `memory-curator`, which exposes two high-level tools. They register automatically, but the model will not call them on its own unless the `memory-vault` skill is mounted (see [Mount the Skill separately](#mount-the-skill-separately)).
 
-- `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context. Its `total` reports every vault-wide match even when the returned hit list is capped, so the model knows when to narrow a query. Per-turn auto-capture notes from `memory-anchor` are hidden from the hit list and subtracted from `total`, so bookkeeping never crowds out curated knowledge.
+- `memory_recall(query)` — Call this at the start of a development task. It searches the vault for prior notes so the agent can build on existing knowledge instead of asking the user to repeat context. Its `total` reports every vault-wide match even when the returned hit list is capped, and `truncated` is `true` whenever a cap (the search layer's or recall's own 20-hit presentation cap) cut the list, so the model knows when to narrow a query. Per-turn auto-capture notes from `memory-anchor` are hidden from the hit list and subtracted from `total`, so bookkeeping never crowds out curated knowledge.
 - `memory_capture(title, summary, ...)` — Call this at the end of a significant task. It derives a stable note id from the title, checks for conflicting notes, asks for your approval if one exists, and writes the captured knowledge to the shared curated zone.
 
 `memory_capture` defaults to `scope: shared`, which lands under `shared/notes/` and is committed by `memory-git`. Use `scope: private` when the note should stay inside the current agent namespace (`agents/<key>/`).
@@ -267,7 +267,7 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 | Write a note `shared/notes/x.md` | `<workspace>/.plugins/memory/shared/notes/x.md` exists, and `git -C <vault> log --oneline` shows a `wiki_write` commit authored by `dsh-memory-git` |
 | Write a private note `daily/x.md` | Lands under `<vault>/agents/<session id>/daily/x.md` with **no** Git commit |
 | Read the note and follow its `[[links]]` | `wiki_read` returns the linked notes in `linkedNotes` |
-| Search the vault / show the link graph | `wiki_search` returns a capped hit list plus `total` (every match, capped or not); `wiki_graph` returns nodes and edges |
+| Search the vault / show the link graph | `wiki_search` returns a capped hit list plus `total` (every match, capped or not) and `truncated`; `wiki_graph` returns nodes and edges with separate `truncated`/`edgesTruncated` caps |
 
 `<vault>` defaults to `<session workspace>/.plugins/memory/`. Mount `skills/memory-vault` separately (`customSkillDirs`) or the model will not know the read-before-write and `baseVersion` conventions.
 
@@ -276,7 +276,7 @@ The `desktop` Profile is owned by the Electron app — the CLI refuses to boot, 
 The memory suite emits structured runtime diagnostics through the Cordis logger (`ctx.logger`) when the deployment enables the corresponding log level. No metrics, tracing, or telemetry are collected; observability is local logs plus the built-in audit trail.
 
 - `debug` — emitted by `memory-queue` (lock acquire/release, stale-lock reclaim, timeout), `memory-git` (git command invocations and `index.lock` retries), `memory-scope` (id rejection, namespace rewrite, passthrough), and `memory-curator` (recall filter counts and capture target/conflict decisions).
-- `warn` — emitted on registration failures (any plugin), `memory-queue` lock timeouts, `memory-git` git/command failures, and `memory-anchor` auto-capture failures.
+- `warn` — emitted on registration failures (any plugin), `memory-queue` lock timeouts, `memory-git` git/command failures, `memory-anchor` auto-capture failures, and `tool-memory-filesystem`/`tool-memory-graph` skips of unreadable vault entries.
 - Audit trail — `memory-git` commits every matching `wiki_write` to `<vault>/.git` with the note id as the commit subject, and `memory-anchor` writes per-turn `auto-capture` notes under `shared/notes/auto-capture/`. These two artifacts provide a durable timeline of what changed and when.
 
 Enable runtime logs by configuring the DSH/Cordis log level to `debug` in your Profile. The suite intentionally does not log note body content; only ids, counts, version fingerprints, and error messages are recorded.
@@ -292,7 +292,7 @@ Enable runtime logs by configuring the DSH/Cordis log level to `debug` in your P
 | Peer version mismatch | Use a Harness release inside the bounded range declared in [compatibility.md](compatibility.md); do not suppress the peer check. |
 | Git is missing | Install Git and ensure `git --version` works on `PATH`, or omit `memory-git` from a custom Bundle. |
 | Git identity error | The plugin supplies command-local identity with `git -c`; it never edits global config. Inspect the surfaced Git error. |
-| Vault permission error | Select a writable `vaultRoot`; the original filesystem error is returned. |
+| Vault permission error | Select a writable `vaultRoot`; tools return a structured vault-relative error (for example `cannot read note "x.md": permission denied`), and scans skip unreadable entries with a `warn` log instead of failing outright. |
 | Lock timeout | Check for another active writer. A stale lock is reclaimed only after unchanged heartbeat evidence and same-host PID checks. |
 | Skill is absent | Verify `customSkillDirs` points to the directory containing `memory-vault/SKILL.md`; restart a non-HMR Profile. |
 | Vector endpoint error | Verify HTTP(S) URL, model, environment-variable key, timeout, and OpenAI-compatible `data[].embedding` response. |

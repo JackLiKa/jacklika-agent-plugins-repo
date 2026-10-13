@@ -167,12 +167,34 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     const result = await recall(ctx, 'recall-capped', 'zephyr-token', 'agent-1', vault)
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected memory_recall success')
-    const out = JSON.parse(resultText(result)) as { hits: { id: string }[]; total: number }
+    const out = JSON.parse(resultText(result)) as { hits: { id: string }[]; total: number; truncated: boolean }
     // Three notes match but the search layer returns two. Restating the capped
     // length as `total` would tell the model the vault holds only what it saw,
     // which is the under-reporting this passthrough exists to prevent.
     expect(out.hits).toHaveLength(2)
     expect(out.total).toBe(3)
+    // The search layer cut the list, so recall must pass that flag through.
+    expect(out.truncated).toBe(true)
+  })
+
+  it('flags truncated when its own 20-hit cap drops matches the search layer returned', async () => {
+    const vault = await vaultDir()
+    const notes = join(vault, 'shared', 'notes')
+    await mkdir(notes, { recursive: true })
+    for (let index = 0; index < 25; index += 1) {
+      await writeFile(join(notes, `note-${String(index).padStart(2, '0')}.md`), `# Note ${index}\n\nzephyr-token appears here.\n`)
+    }
+    // A search cap above 20 makes the search layer return every match, so any
+    // truncation can only come from memory_recall's own slice.
+    const ctx = await boot(vault, undefined, ['    maxSearchResults: 30'])
+
+    const result = await recall(ctx, 'recall-own-cap', 'zephyr-token', 'agent-1', vault)
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected memory_recall success')
+    const out = JSON.parse(resultText(result)) as { hits: unknown[]; total: number; truncated: boolean }
+    expect(out.hits).toHaveLength(20)
+    expect(out.total).toBe(25)
+    expect(out.truncated).toBe(true)
   })
 
   it('hides auto-capture notes from recall without swallowing notes that merely share the name prefix', async () => {

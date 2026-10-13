@@ -26,4 +26,20 @@ describe('splitFrontmatter', () => {
     const text = 'no frontmatter\n'
     expect(splitFrontmatter(text)).toEqual({ frontmatter: {}, body: text })
   })
+
+  it('strips a leading BOM so the frontmatter block is still recognized', () => {
+    const text = '\uFEFF---\ntitle: BOM note\ntags: [alpha]\n---\n\nBody.\n'
+    const { frontmatter, body } = splitFrontmatter(text)
+    expect(frontmatter.title).toBe('BOM note')
+    expect(frontmatter.tags).toEqual(['alpha'])
+    expect(body).toContain('Body.')
+  })
+
+  it('resolves duplicate frontmatter keys last-one-wins instead of dropping the block', () => {
+    const text = '---\ntitle: First\ntitle: Second\ntags: [alpha]\n---\nBody.\n'
+    const { frontmatter, body } = splitFrontmatter(text)
+    expect(frontmatter.title).toBe('Second')
+    expect(frontmatter.tags).toEqual(['alpha'])
+    expect(body).toBe('Body.\n')
+  })
 })

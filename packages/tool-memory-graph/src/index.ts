@@ -41,6 +41,8 @@ export interface Config {
   maxDepth?: number
   /** Maximum nodes returned in one graph. */
   maxNodes?: number
+  /** Maximum edges returned in one graph. */
+  maxEdges?: number
   /** Descend into dot-directories besides the fixed exclusions while indexing. */
   indexHiddenDirs?: boolean
 }
@@ -51,6 +53,7 @@ export const Config: z<Config> = z.object({
   extensions: z.array(z.string()).default(['.md']),
   maxDepth: z.number().default(1),
   maxNodes: z.number().default(200),
+  maxEdges: z.number().default(1000),
   indexHiddenDirs: z.boolean().default(false),
 })
 
@@ -87,6 +90,8 @@ interface MemoryGraph {
   edges: GraphEdge[]
   /** Whether `maxNodes` truncated the node set. */
   truncated: boolean
+  /** Whether `maxEdges` truncated the edge set. */
+  edgesTruncated: boolean
 }
 
 interface ParsedNote {
@@ -239,20 +244,69 @@ function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>): GraphEd
 async function loadVaultNotes(
   root: string,
   resolved: ResolvedConfig,
-): Promise<{ parsed: ParsedNote[]; parsedById: Map<string, ParsedNote>; linkResolver: ReturnType<typeof createLinkResolver> }> {
-  const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
+  onSkip?: (path: string, error: unknown) => void,
+): Promise<{
+  parsed: ParsedNote[]
+  parsedById: Map<string, ParsedNote>
+  linkResolver: ReturnType<typeof createLinkResolver>
+  skipped: Map<string, unknown>
+}> {
+  const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs, onSkip)
   const ids = paths.map(path => vaultRelativeId(root, path))
   const linkResolver = createLinkResolver(ids)
   const parsed: ParsedNote[] = []
   const parsedById = new Map<string, ParsedNote>()
+  const skipped = new Map<string, unknown>()
   for (const path of paths) {
     const id = vaultRelativeId(root, path)
-    const text = await readFile(path, 'utf8')
+    let text: string
+    try {
+      text = await readFile(path, 'utf8')
+    } catch (error) {
+      // One unreadable note must not fail the graph for the whole vault; the
+      // note is omitted and the loader logs the degradation.
+      skipped.set(id, error)
+      onSkip?.(path, error)
+      continue
+    }
     const note: ParsedNote = { id, path, text, terms: extractTerms(text) }
     parsed.push(note)
     parsedById.set(id, note)
   }
-  return { parsed, parsedById, linkResolver }
+  return { parsed, parsedById, linkResolver, skipped }
+}
+
+/** Build the skip callback that reports unreadable entries to the Loader logger. */
+function skipLogger(ctx: Context, root: string): (path: string, error: unknown) => void {
+  return (path, error) => {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown'
+    ctx.logger?.warn(`tool-memory-graph: skipped unreadable entry ${vaultRelativeId(root, path)} (${code})`)
+  }
+}
+
+/** Validate that at least one note extension is configured. */
+function assertExtensions(extensions: string[]): void {
+  if (extensions.length === 0) {
+    throw new Error('tool-memory-graph: extensions must list at least one file extension')
+  }
+}
+
+/**
+ * Apply the edge budget deterministically: explicit `link` edges are kept
+ * first, then `keyword` edges by descending weight and id order, so the same
+ * vault returns the same subset regardless of directory-listing order. Below
+ * the budget the edge list is returned untouched.
+ */
+function capEdges(edges: GraphEdge[], maxEdges: number): { edges: GraphEdge[]; truncated: boolean } {
+  if (edges.length <= maxEdges) return { edges, truncated: false }
+  const ordered = [...edges].sort((a, b) => {
+    const linkFirst = (a.type === 'keyword' ? 1 : 0) - (b.type === 'keyword' ? 1 : 0)
+    if (linkFirst !== 0) return linkFirst
+    const weightOrder = (b.weight ?? 0) - (a.weight ?? 0)
+    if (weightOrder !== 0) return weightOrder
+    return codeUnitCompare(a.from, b.from) || codeUnitCompare(a.to, b.to)
+  })
+  return { edges: ordered.slice(0, maxEdges), truncated: true }
 }
 
 /**
@@ -263,8 +317,12 @@ async function loadVaultNotes(
  * @param resolved - applied plugin configuration.
  * @returns the full graph, node-capped.
  */
-async function buildGraph(root: string, resolved: ResolvedConfig): Promise<MemoryGraph> {
-  const { parsed, linkResolver } = await loadVaultNotes(root, resolved)
+async function buildGraph(
+  root: string,
+  resolved: ResolvedConfig,
+  onSkip?: (path: string, error: unknown) => void,
+): Promise<MemoryGraph> {
+  const { parsed, linkResolver } = await loadVaultNotes(root, resolved, onSkip)
 
   const truncated = parsed.length > resolved.maxNodes
   const capped = [...parsed].sort((a, b) => codeUnitCompare(a.id, b.id)).slice(0, resolved.maxNodes)
@@ -287,7 +345,8 @@ async function buildGraph(root: string, resolved: ResolvedConfig): Promise<Memor
 
   // Safety: every edge endpoint must be in the returned node set.
   const safeEdges = edges.filter(e => idSet.has(e.from) && idSet.has(e.to))
-  return { nodes, edges: safeEdges, truncated }
+  const budgeted = capEdges(safeEdges, resolved.maxEdges)
+  return { nodes, edges: budgeted.edges, truncated, edgesTruncated: budgeted.truncated }
 }
 
 /**
@@ -304,10 +363,22 @@ async function buildSubgraph(
   resolved: ResolvedConfig,
   startId: string,
   depth: number,
+  onSkip?: (path: string, error: unknown) => void,
 ): Promise<MemoryGraph> {
-  const { parsed, parsedById, linkResolver } = await loadVaultNotes(root, resolved)
+  const { parsed, parsedById, linkResolver, skipped } = await loadVaultNotes(root, resolved, onSkip)
   const startPath = await containedPathReal(root, startId)
   const startNoteId = vaultRelativeId(root, startPath)
+  // A missing path, a directory, or a file outside the configured extensions
+  // resolves fine but has no indexed note; seeding the BFS with it would crash
+  // on the first `parsedById.get(id)!` lookup.
+  if (!parsedById.has(startNoteId)) {
+    const skipError = skipped.get(startNoteId)
+    if (skipError !== undefined) {
+      const code = (skipError as NodeJS.ErrnoException).code ?? 'unknown error'
+      throw new Error(`tool-memory-graph: cannot read note ${JSON.stringify(startNoteId)}: ${code}`)
+    }
+    throw new Error(`tool-memory-graph: note not found: ${startNoteId}`)
+  }
 
   const idSetAll = new Set(parsed.map(p => p.id))
   const adjacency = new Map<string, string[]>()
@@ -371,7 +442,8 @@ async function buildSubgraph(
   const filteredKeywordEdges = keywordEdges.filter(e => idSet.has(e.from) && idSet.has(e.to))
   edges.push(...filteredKeywordEdges)
 
-  return { nodes, edges, truncated }
+  const budgeted = capEdges(edges, resolved.maxEdges)
+  return { nodes, edges: budgeted.edges, truncated, edgesTruncated: budgeted.truncated }
 }
 
 /**
@@ -389,10 +461,12 @@ export function apply(ctx: Context, config: Config): void {
   const resolved = config as ResolvedConfig
   assertPositiveInteger('maxDepth', resolved.maxDepth)
   assertPositiveInteger('maxNodes', resolved.maxNodes)
+  assertPositiveInteger('maxEdges', resolved.maxEdges)
+  assertExtensions(resolved.extensions)
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_graph',
-    description: 'Return the link and keyword graph of the wiki vault: note ids, titles, and directed edges. Explicit `[[link]]` edges are type `link`; edges derived from shared significant terms are type `keyword` with `keywords` and `weight`. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth.',
+    description: 'Return the link and keyword graph of the wiki vault: note ids, titles, and directed edges. Explicit `[[link]]` edges are type `link`; edges derived from shared significant terms are type `keyword` with `keywords` and `weight`. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth. Nodes are capped at maxNodes (`truncated`) and edges at maxEdges (`edgesTruncated`).',
     parameters: {
       id: {
         type: 'string',
@@ -411,9 +485,10 @@ export function apply(ctx: Context, config: Config): void {
       const vaultRoot = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
       const depth = args.depth ?? resolved.maxDepth
       assertPositiveInteger('depth', depth)
+      const onSkip = skipLogger(ctx, vaultRoot)
       const graph = args.id === undefined
-        ? await buildGraph(vaultRoot, resolved)
-        : await buildSubgraph(vaultRoot, resolved, args.id, depth)
+        ? await buildGraph(vaultRoot, resolved, onSkip)
+        : await buildSubgraph(vaultRoot, resolved, args.id, depth, onSkip)
       return graph as unknown as JsonValue
     },
   })))
