@@ -172,17 +172,16 @@ jobs:
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.7.0
+      - name: Upgrade npm for OIDC dist-tag support
+        run: npm install -g npm@11.21.0
 
       - name: Apply dist-tag change
         env:
           # Token fallback for the default path. OIDC mode unsets this variable
-          # so pnpm/npm uses the OIDC token from the runner.
+          # so npm uses the OIDC token from the runner.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Use OIDC trusted publishing; pnpm/npm pick up the runner's OIDC token
+          # Use OIDC trusted publishing; npm picks up the runner's OIDC token
           # when NODE_AUTH_TOKEN is absent.
           unset NODE_AUTH_TOKEN
 
@@ -204,8 +203,8 @@ jobs:
             else
               target="$entry@$version"
             fi
-            echo "pnpm dist-tag $action $target $tag"
-            if output=$(pnpm dist-tag "$action" "$target" "$tag" 2>&1); then
+            echo "npm dist-tag $action $target $tag"
+            if output=$(npm dist-tag "$action" "$target" "$tag" 2>&1); then
               echo "$output"
             else
               # Re-running a cleanup must not fail on an already-absent tag.
