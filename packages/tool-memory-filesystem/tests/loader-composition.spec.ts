@@ -598,6 +598,9 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { id: '../embedding.md' },
     })
     expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected wiki_read failure')
+    expect(result.error.message).toContain('path "../embedding.md" is outside the vault root')
+    expect(result.error.message).not.toContain(vault)
   })
 
   it('rejects reads and writes through a symlink or junction that leaves the vault', async () => {
@@ -614,6 +617,10 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { id: 'escape/secret.md' },
     })
     expect(read.isError).toBe(true)
+    if (!read.isError) throw new Error('expected symlink wiki_read failure')
+    expect(read.error.message).toContain('path "escape/secret.md" resolves outside the vault root')
+    expect(read.error.message).not.toContain(vault)
+    expect(read.error.message).not.toContain(outside)
 
     const write = await ctx.tools.execute({
       signal: new AbortController().signal,
@@ -622,7 +629,34 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       arguments: { id: 'escape/new.md', content: 'must not escape' },
     })
     expect(write.isError).toBe(true)
+    if (!write.isError) throw new Error('expected symlink wiki_write failure')
+    expect(write.error.message).toContain('path "escape/new.md" resolves outside the vault root')
+    expect(write.error.message).not.toContain(vault)
+    expect(write.error.message).not.toContain(outside)
     await expect(readFile(join(outside, 'new.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await rm(outside, { recursive: true, force: true })
+  })
+
+  it.skipIf(process.platform === 'win32')('rejects writing through a file symlink whose target leaves the vault', async () => {
+    const vault = await makeVault()
+    const outside = await mkdtemp(join(tmpdir(), 'dsh-memory-outside-'))
+    const outsideNote = join(outside, 'secret.md')
+    await writeFile(outsideNote, 'outside\n')
+    await symlink(outsideNote, join(vault, 'escape-file.md'))
+    const ctx = await boot(vault)
+
+    const write = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('symlink-file-write'),
+      name: 'wiki_write',
+      arguments: { id: 'escape-file.md', content: 'must not escape' },
+    })
+    expect(write.isError).toBe(true)
+    if (!write.isError) throw new Error('expected wiki_write failure')
+    expect(write.error.message).toContain('path "escape-file.md" resolves outside the vault root')
+    expect(write.error.message).not.toContain(vault)
+    expect(write.error.message).not.toContain(outside)
+    expect(await readFile(outsideNote, 'utf8')).toBe('outside\n')
     await rm(outside, { recursive: true, force: true })
   })
 

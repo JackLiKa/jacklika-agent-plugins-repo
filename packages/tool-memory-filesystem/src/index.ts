@@ -112,7 +112,7 @@ export function containedPath(root: string, candidate: string): string {
   const absolute = resolve(absoluteRoot, candidate)
   const remainder = relative(absoluteRoot, absolute)
   if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
-    throw new Error(`tool-memory-filesystem: path ${candidate} is outside vault root ${root}`)
+    throw new Error(`tool-memory-filesystem: path ${JSON.stringify(candidate)} is outside the vault root`)
   }
   return absolute
 }
@@ -134,7 +134,7 @@ export async function containedPathReal(root: string, candidate: string): Promis
       const canonicalAncestor = await realpath(ancestor)
       const remainder = relative(canonicalRoot, canonicalAncestor)
       if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
-        throw new Error(`tool-memory-filesystem: path ${candidate} resolves outside vault root ${root}`)
+        throw new Error(`tool-memory-filesystem: path ${JSON.stringify(candidate)} resolves outside the vault root`)
       }
       return absolute
     } catch (error) {
@@ -685,7 +685,7 @@ async function resolveSymlinkWriteTarget(root: string, absolutePath: string, id:
   const canonicalRoot = await realpath(resolve(root))
   const remainder = relative(canonicalRoot, canonical)
   if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder)) {
-    throw new Error(`tool-memory-filesystem: path ${id} resolves outside vault root ${root}`)
+    throw new Error(`tool-memory-filesystem: path ${JSON.stringify(id)} resolves outside the vault root`)
   }
   return canonical
 }
