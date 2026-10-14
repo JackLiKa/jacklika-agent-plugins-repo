@@ -8,9 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       bundle_version:
-        description: '@jacklika/dsh-memory version to test'
+        description: '@jacklika/dsh-memory version to test (required for manual runs)'
         required: true
-        default: '0.1.7-rc.12'
       dsh_version:
         description: '@deepseek-ai/dsh runtime version to install'
         required: true
@@ -38,7 +37,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
+
+      - name: Resolve Bundle version
+        id: bundle_version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REQUESTED_VERSION: ${{ inputs.bundle_version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = 'release' ]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "invalid release tag: $RELEASE_TAG"
+              exit 1
+            fi
+            version="${RELEASE_TAG#v}"
+          else
+            version="$REQUESTED_VERSION"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "invalid bundle version: $version"
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Testing @jacklika/dsh-memory@$version"
 
       - name: Create isolated profile
         shell: bash
@@ -66,9 +87,11 @@ jobs:
 
       - name: Install DeepSeek Harness runtime
         shell: bash
+        env:
+          DSH_VERSION: ${{ inputs.dsh_version || '0.2.0-rc.1' }}
         run: |
           cd /tmp/dsh-smoke
-          pnpm add "@deepseek-ai/dsh@${{ github.event.inputs.dsh_version || '0.2.0-rc.1' }}"
+          pnpm add "@deepseek-ai/dsh@$DSH_VERSION"
 
       - name: Initialize profile
         shell: bash
@@ -76,11 +99,44 @@ jobs:
           cd /tmp/dsh-smoke
           pnpm exec dsh plugin --profile smoke root
 
+      - name: Wait for npm release visibility
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          BUNDLE_VERSION: ${{ steps.bundle_version.outputs.version }}
+        run: |
+          for attempt in {1..48}; do
+            if npm view "@jacklika/dsh-memory@$BUNDLE_VERSION" version --prefer-online --fetch-retries=0 > /dev/null 2>&1; then
+              echo "@jacklika/dsh-memory@$BUNDLE_VERSION is available from npm"
+              break
+            fi
+            if [ "$attempt" -eq 48 ]; then
+              echo "@jacklika/dsh-memory@$BUNDLE_VERSION did not become available"
+              exit 1
+            fi
+            sleep 10
+          done
+
       - name: Install Bundle from npm
         shell: bash
+        env:
+          BUNDLE_VERSION: ${{ steps.bundle_version.outputs.version }}
         run: |
           cd /tmp/dsh-smoke
-          pnpm exec dsh plugin --profile smoke add "@jacklika/dsh-memory@${{ github.event.inputs.bundle_version || '0.1.7-rc.12' }}"
+          pnpm exec dsh plugin --profile smoke add "@jacklika/dsh-memory@$BUNDLE_VERSION"
+
+      - name: Verify installed Bundle version
+        shell: bash
+        env:
+          BUNDLE_VERSION: ${{ steps.bundle_version.outputs.version }}
+        run: |
+          cd /tmp/dsh-smoke/.dsh/profiles/smoke
+          installed="$(node -p "require('./node_modules/@jacklika/dsh-memory/package.json').version")"
+          if [ "$installed" != "$BUNDLE_VERSION" ]; then
+            echo "expected @jacklika/dsh-memory@$BUNDLE_VERSION, installed $installed"
+            exit 1
+          fi
+          echo "Verified @jacklika/dsh-memory@$installed in the smoke profile"
 
       - name: Verify profile dump-config
         shell: bash

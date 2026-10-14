@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import yaml from 'js-yaml'
 import { satisfies } from 'semver'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -168,5 +169,26 @@ describe('published package manifests', () => {
     for (const version of ['0.3.0-rc.1', '0.3.0']) {
       expect(satisfies(version, HARNESS_PEER_WINDOW)).toBe(false)
     }
+  })
+
+  it('tests the tagged release bundle in npm smoke without a broken ephemeral-profile cache', async () => {
+    const workflow = yaml.load(await readFile(join(root, '.github', 'workflows', 'npm-smoke.yml'), 'utf8')) as {
+      on: { release: { types: string[] }; workflow_dispatch: { inputs: { bundle_version: { required: boolean; default?: string } } } }
+      jobs: { smoke: { steps: { id?: string; name?: string; uses?: string; with?: Record<string, unknown>; run?: string; env?: Record<string, string> }[] } }
+    }
+    expect(workflow.on.release.types).toContain('published')
+    expect(workflow.on.workflow_dispatch.inputs.bundle_version.required).toBe(true)
+    expect(workflow.on.workflow_dispatch.inputs.bundle_version.default).toBeUndefined()
+    const steps = workflow.jobs.smoke.steps
+    expect(steps.find(step => step.uses === 'actions/setup-node@v4')?.with).not.toHaveProperty('cache')
+    const resolve = steps.find(step => step.id === 'bundle_version')
+    expect(resolve?.env?.RELEASE_TAG).toBe('${{ github.event.release.tag_name }}')
+    expect(resolve?.run).toContain('GITHUB_OUTPUT')
+    expect(resolve?.run).toContain('GITHUB_EVENT_NAME')
+    expect(steps.find(step => step.name === 'Wait for npm release visibility')?.run).toContain('npm view')
+    const install = steps.find(step => step.name === 'Install Bundle from npm')
+    expect(install?.run).toContain('@jacklika/dsh-memory@$BUNDLE_VERSION')
+    expect(install?.run).not.toContain('0.1.7-rc.12')
+    expect(steps.find(step => step.name === 'Verify installed Bundle version')?.run).toContain('node_modules/@jacklika/dsh-memory/package.json')
   })
 })

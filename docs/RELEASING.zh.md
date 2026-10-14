@@ -41,6 +41,7 @@ gh release create v0.1.7-rc.22 --title v0.1.7-rc.22 --notes-file /tmp/dsh-rc22-n
 - tag 名为 `v<version>`，与 Bundle 版本一致；预发布线同样以非 prerelease 的 Release 发布，便于 CI 发布。
 - Release 说明列出包表（名称、版本、变更）、九项门禁结果和后续事项。
 - 预期 CI：`Publish to npm` 工作流（`publish.yml`）先跑 `pnpm pack:all` 与 `pnpm test:pack`，再按工具包在前、Bundle tarball 在后的顺序发布。重跑是安全的：已发布的版本会被跳过。
+- 跨平台 `npm-smoke.yml` 工作流独立运行：Release 事件从 `v<version>` tag 推导 Bundle 版本，等待 npm 可查后，分别在 Linux、macOS、Windows 的全新 Profile 中验证**实际安装版本**。手动 dispatch 必须明确指定 `bundle_version`。临时安装不使用 setup-node 的 pnpm 缓存，以免 Windows 上 pnpm store 路径不一致使收尾步骤失败。
 
 ## registry 复核
 

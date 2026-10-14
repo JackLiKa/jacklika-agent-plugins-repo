@@ -41,6 +41,7 @@ gh release create v0.1.7-rc.22 --title v0.1.7-rc.22 --notes-file /tmp/dsh-rc22-n
 - Tag name is `v<version>` and matches the Bundle version; the pre-release lines stay non-prerelease Releases so CI publishes them.
 - Release notes list the package table (name, version, change), the nine-gate result, and any follow-ups.
 - Expected CI: the `Publish to npm` workflow (`publish.yml`) runs `pnpm pack:all` and `pnpm test:pack`, then publishes tools before the Bundle tarball. Re-running is safe: already-published versions are skipped.
+- The cross-platform `npm-smoke.yml` workflow runs separately: on a Release it derives the Bundle version from the `v<version>` tag, waits for that version to become visible on npm, then verifies the version actually installed in a fresh profile on Linux, macOS, and Windows. Manual dispatch requires an explicit `bundle_version`. Its temporary install does not use setup-node pnpm caching, whose store path can differ on Windows.
 
 ## Registry verification
 
