@@ -195,18 +195,21 @@ function dedupeHits(hits: SearchHit[]): SearchHit[] {
  * @param title - title from this capture; it wins over any stored one.
  * @param tags - tags from this capture; they win over any stored ones.
  * @param now - Beijing-time timestamp used for `created`/`updated`.
- * @returns the merged frontmatter to serialize.
+ * @returns the stored frontmatter and version for a guarded write.
  */
 async function readFrontmatter(
   ctx: Context,
   exec: ToolRunContext,
   id: string,
-): Promise<Record<string, unknown> | undefined> {
+): Promise<{ frontmatter: Record<string, unknown>; version: string } | undefined> {
   try {
-    const note = await callTool<{ frontmatter?: unknown }>(ctx, exec, 'wiki_read', { id })
-    return note !== null && typeof note === 'object' && note.frontmatter !== null && typeof note.frontmatter === 'object'
-      ? note.frontmatter as Record<string, unknown>
-      : {}
+    const note = await callTool<{ frontmatter?: unknown; version: string }>(ctx, exec, 'wiki_read', { id })
+    return {
+      frontmatter: note !== null && typeof note === 'object' && note.frontmatter !== null && typeof note.frontmatter === 'object'
+        ? note.frontmatter as Record<string, unknown>
+        : {},
+      version: note.version,
+    }
   } catch (error) {
     // Only a missing note means a first capture: `wiki_read` reports it as
     // "no such note". Any other failure (permission denied, a directory in the
@@ -223,13 +226,13 @@ async function overwriteFrontmatter(
   title: string,
   tags: string[],
   now: string,
-): Promise<Record<string, unknown>> {
+): Promise<{ frontmatter: Record<string, unknown>; baseVersion?: string }> {
   const existing = await readFrontmatter(ctx, exec, id)
-  const frontmatter: Record<string, unknown> = { ...existing, title, tags }
-  const created = existing?.created
+  const frontmatter: Record<string, unknown> = { ...existing?.frontmatter, title, tags }
+  const created = existing?.frontmatter.created
   frontmatter.created = typeof created === 'string' && created !== '' ? created : now
   if (existing !== undefined) frontmatter.updated = now
-  return frontmatter
+  return { frontmatter, ...(existing !== undefined ? { baseVersion: existing.version } : {}) }
 }
 
 /**
@@ -302,7 +305,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_capture',
-    description: 'Persist durable knowledge to the memory vault. Call this at the end of a significant task to capture decisions, discovered APIs, project conventions, fixes, or user preferences. It checks for conflicting notes, asks for approval when a conflict is found, and writes the captured note to the shared curated zone by default. Set requireExisting to declare an update: the capture then only modifies a note that already exists and needs no conflict approval.',
+    description: 'Persist durable knowledge to the memory vault. Call this at the end of a significant task to capture decisions, discovered APIs, project conventions, fixes, or user preferences. It checks for conflicting notes, asks for approval when a conflict is found, and writes the captured note to the shared curated zone by default. Set requireExisting to replace an existing note with one current version without conflict approval; use mode: append only for genuinely additive material.',
     parameters: {
       title: {
         type: 'string',
@@ -312,7 +315,7 @@ export function apply(ctx: Context, config: Config): void {
       summary: {
         type: 'string',
         required: true,
-        description: 'The durable knowledge to record: the decision, API, convention, or fix in concise Markdown.',
+        description: 'The durable knowledge to record in concise Markdown. For a correction using requireExisting, provide the complete current conclusion, not only the changed fragment.',
       },
       details: {
         type: 'string',
@@ -335,7 +338,7 @@ export function apply(ctx: Context, config: Config): void {
       mode: {
         type: 'string',
         enum: ['append', 'overwrite'],
-        description: 'When a conflict is approved or the note exists, append adds a timestamped section; overwrite replaces the whole body. Defaults to append.',
+        description: 'Use overwrite when the new summary supersedes an old conclusion; it replaces the whole body. Use append only for genuinely additive material: it adds a timestamped section and leaves the old text visible. Defaults to overwrite with requireExisting, otherwise append.',
       },
       conflictPolicy: {
         type: 'string',
@@ -344,7 +347,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       requireExisting: {
         type: 'boolean',
-        description: 'Update-only capture: the note must already exist, and a conflict needs no approval because updating that note is the declared intent. A missing note fails instead of creating one.',
+        description: 'Update-only capture: the note must exist and needs no conflict approval. Defaults to overwrite with a complete replacement summary; pass mode: append explicitly for additive material. A missing note fails instead of creating one.',
       },
     },
     output: {
@@ -355,8 +358,8 @@ export function apply(ctx: Context, config: Config): void {
       const scope = args.scope ?? resolved.defaultScope
       const notesDir = scope === 'shared' ? resolved.notesDir : ''
       const targetId = resolveNoteId(args.id, args.title, scope, notesDir)
-      const mode = args.mode ?? 'append'
       const requireExisting = args.requireExisting === true
+      const mode = args.mode ?? (requireExisting ? 'overwrite' : 'append')
       const tags = Array.isArray(args.tags) ? args.tags.map(String) : []
 
       const [titleSearch, idSearch] = await Promise.all([
@@ -366,7 +369,7 @@ export function apply(ctx: Context, config: Config): void {
 
       const conflicts = dedupeHits(findConflicts(targetId, args.title, [...titleSearch.hits, ...idSearch.hits]))
       const conflictExists = conflicts.length > 0
-      const finalId = conflicts[0]?.id ?? targetId
+      const finalId = requireExisting ? targetId : conflicts[0]?.id ?? targetId
 
       // A declared update-only capture targets an existing note by
       // construction, so the approval that guards against accidentally
@@ -395,9 +398,9 @@ export function apply(ctx: Context, config: Config): void {
           agent: exec.agent as Agent,
           toolName: 'memory_capture',
           callId: exec.callId,
-          reason: `memory_capture conflicts with existing note(s):\n${conflictList}\nProposed action: ${mode === 'append' ? 'append a new section to' : 'overwrite'} "${finalId}".`,
+          reason: `memory_capture conflicts with existing note(s):\n${conflictList}\nProposed action: ${mode === 'append' ? 'append a new section (old text remains visible) to' : 'replace the entire body of'} "${finalId}".`,
           displayReason: {
-            en: `Memory capture conflicts with existing note(s):\n${conflictList}\nAllow ${mode} to "${finalId}"?`,
+            en: `Memory capture conflicts with existing note(s):\n${conflictList}\nAllow ${mode} to "${finalId}"? ${mode === 'append' ? 'Old conclusions remain visible.' : 'The old body is replaced.'}`,
           },
           signal: exec.signal,
         })
@@ -416,25 +419,26 @@ export function apply(ctx: Context, config: Config): void {
       const detailsText = args.details ? `\n\n## Details\n\n${args.details}` : ''
       const appendContent = `${args.summary}${detailsText}\n`
 
-      // A conflict already proves the note exists, so the write appends. An
-      // update-only capture without a detected conflict has to ask the vault
-      // instead of the search: a note missed by the ranking must be appended
-      // to, and one that is genuinely absent fails the write rather than
-      // replacing it. The other path stays conflict-driven so an ordinary new
-      // capture keeps creating its note.
+      // A conflict suggests the note exists, but update-only writes use the
+      // exact target id and ask the vault instead of relying on search ranking.
+      // A missing note fails the write; other captures stay conflict-driven
+      // and create new notes. Overwrites carry the read version to wiki_write
+      // so an intervening change is refused rather than silently replaced.
+      // Append remains available when the caller requests additive material.
       const exists = requireExisting ? (await readFrontmatter(ctx, exec, finalId)) !== undefined : conflictExists
       const appending = exists && mode === 'append'
       const writeMode: 'append' | 'overwrite' = appending ? 'append' : 'overwrite'
       ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode} requireExisting=${requireExisting}`)
-      const frontmatter = appending ? undefined : await overwriteFrontmatter(ctx, exec, finalId, args.title, tags, now)
+      const overwrite = appending ? undefined : await overwriteFrontmatter(ctx, exec, finalId, args.title, tags, now)
       const content = appending
         ? appendContent
-        : `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
+        : `---\n${yaml.dump(overwrite?.frontmatter).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
 
       const writeResult = await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: finalId,
         content,
         mode: writeMode,
+        ...(overwrite?.baseVersion !== undefined ? { baseVersion: overwrite.baseVersion } : {}),
         ...(requireExisting ? { requireExisting: true } : {}),
       })
 

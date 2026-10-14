@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
@@ -35,7 +35,7 @@ async function vaultDir(): Promise<string> {
   return dir
 }
 
-async function boot(vaultRoot: string, approval?: { request: () => Promise<string> }, filesystemConfig: string[] = []): Promise<Context> {
+async function boot(vaultRoot: string, approval?: { request: (details: { reason: string; displayReason: { en: string } }) => Promise<string> }, filesystemConfig: string[] = []): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-curator-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
@@ -244,6 +244,24 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(text).not.toContain('Added regression test.')
   })
 
+  it('warns an approver that default append retains old conclusions', async () => {
+    const vault = await vaultDir()
+    const reasons: string[] = []
+    const ctx = await boot(vault, { request: async details => {
+      reasons.push(details.reason, details.displayReason.en)
+      return 'allowed-once'
+    } })
+    await capture(ctx, 'approval-first', 'Deploy runbook', 'Old conclusion.', 'agent-1', vault)
+
+    const result = await capture(ctx, 'approval-second', 'Deploy runbook', 'Additional material.', 'agent-1', vault)
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(resultText(result))).toMatchObject({ mode: 'append', conflict: true })
+    expect(reasons).toEqual([expect.stringContaining('old text remains visible'), expect.stringContaining('Old conclusions remain visible')])
+    const text = await readFile(join(vault, 'shared', 'notes', 'deploy-runbook.md'), 'utf8')
+    expect(text).toContain('Old conclusion.')
+    expect(text).toContain('Additional material.')
+  })
+
   it('fails an update-only capture for a note that does not exist', async () => {
     const vault = await vaultDir()
     const ctx = await boot(vault)
@@ -263,20 +281,80 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(first.isError).toBe(false)
 
     // Without an approval service a conflicting capture would refuse; a
-    // declared update is not a conflict, so it appends.
-    const update = await capture(ctx, 'c-require-update', 'Release checklist', 'Added smoke check.', 'agent-1', vault, { requireExisting: true })
+    // declared update is not a conflict, so it replaces the old conclusion.
+    const update = await capture(ctx, 'c-require-update', 'Release checklist', 'Revised checklist with smoke check.', 'agent-1', vault, { requireExisting: true })
     expect(update.isError).toBe(false)
     if (update.isError) throw new Error('expected memory_capture success')
-    const out = JSON.parse(resultText(update)) as { written: boolean; conflict: boolean; id: string; mode: string }
+    const out = JSON.parse(resultText(update)) as { written: boolean; conflict: boolean; id: string; mode: string; updated?: string }
     expect(out.written).toBe(true)
     expect(out.conflict).toBe(false)
     expect(out.id).toBe('shared/notes/release-checklist.md')
-    expect(out.mode).toBe('append')
+    expect(out.mode).toBe('overwrite')
+    expect(out.updated).toMatch(/\+08:00$/)
 
+    const read = await readNote(ctx, 'require-read', out.id, 'agent-1', vault)
+    expect(read.isError).toBe(false)
+    const note = JSON.parse(resultText(read)) as { body: string }
+    expect(note.body).not.toContain('Initial checklist.')
+    expect(note.body).toContain('Revised checklist with smoke check.')
+    expect(note.body.match(/# Release checklist/g)).toHaveLength(1)
+    const recalled = await recall(ctx, 'require-recall', 'Release checklist smoke', 'agent-1', vault)
+    expect(recalled.isError).toBe(false)
+    expect((JSON.parse(resultText(recalled)) as { hits: { id: string }[] }).hits.map(hit => hit.id)).toContain(out.id)
+  })
+
+  it('still appends new material to an existing note when append is explicit', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    await capture(ctx, 'append-first', 'Release checklist', 'Initial checklist.', 'agent-1', vault)
+
+    const update = await capture(ctx, 'append-update', 'Release checklist', 'Added smoke check.', 'agent-1', vault, { requireExisting: true, mode: 'append' })
+    expect(update.isError).toBe(false)
+    const out = JSON.parse(resultText(update)) as { mode: string; conflict: boolean }
+    expect(out).toMatchObject({ mode: 'append', conflict: false })
     const text = await readFile(join(vault, 'shared', 'notes', 'release-checklist.md'), 'utf8')
     expect(text).toContain('Initial checklist.')
     expect(text).toContain('Added smoke check.')
     expect(text.match(/# Release checklist/g)).toHaveLength(1)
+  })
+
+  it('does not redirect an update-only capture to another note with the same title', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    await capture(ctx, 'target-first', 'Deploy runbook', 'Keep this note.', 'agent-1', vault)
+
+    const result = await capture(ctx, 'target-missing', 'Deploy runbook', 'Must not replace another note.', 'agent-1', vault, {
+      id: 'missing-target.md', requireExisting: true,
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected missing target failure')
+    expect(result.error.message).toContain('does not exist')
+    const text = await readFile(join(vault, 'shared', 'notes', 'deploy-runbook.md'), 'utf8')
+    expect(text).toContain('Keep this note.')
+    expect(text).not.toContain('Must not replace another note.')
+  })
+
+  it('rejects an update-only overwrite when the note changes after frontmatter is read', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    const id = 'shared/notes/deploy-runbook.md'
+    await capture(ctx, 'race-first', 'Deploy runbook', 'First conclusion.', 'agent-1', vault)
+    const execute = ctx.tools.execute.bind(ctx.tools)
+    const spy = vi.spyOn(ctx.tools, 'execute').mockImplementation(async args => {
+      if (args.name === 'wiki_write' && args.arguments?.mode === 'overwrite') {
+        await writeFile(join(vault, id), '---\ntitle: Deploy runbook\n---\n\n# Deploy runbook\n\nConcurrent conclusion.\n')
+      }
+      return execute(args)
+    })
+    try {
+      const update = await capture(ctx, 'race-update', 'Deploy runbook', 'Stale conclusion.', 'agent-1', vault, { requireExisting: true })
+      expect(update.isError).toBe(true)
+      if (!update.isError) throw new Error('expected stale update failure')
+      expect(update.error.message).toContain('changed since it was read')
+      expect(await readFile(join(vault, id), 'utf8')).toContain('Concurrent conclusion.')
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('derives distinct readable ids for non-Latin and mixed-script titles', async () => {

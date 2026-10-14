@@ -482,10 +482,11 @@ function findCaptureConflicts(targetId, title, hits) {
 
 async function captureFrontmatter(id, title, tags, now) {
   let existing
-  let existed = false
+  let version
   try {
-    existing = splitFrontmatter(await readFile(await containedPathReal(id), 'utf8')).frontmatter
-    existed = true
+    const text = await readFile(await containedPathReal(id), 'utf8')
+    existing = splitFrontmatter(text).frontmatter
+    version = noteVersion(text)
   } catch (error) {
     // Only a missing note means a first capture; any other failure must not be
     // mistaken for one.
@@ -494,8 +495,8 @@ async function captureFrontmatter(id, title, tags, now) {
   const frontmatter = { ...existing, title, tags }
   const created = existing?.created
   frontmatter.created = typeof created === 'string' && created !== '' ? created : now
-  if (existed) frontmatter.updated = now
-  return { frontmatter, existed }
+  if (version !== undefined) frontmatter.updated = now
+  return { frontmatter, existed: version !== undefined, version }
 }
 
 /**
@@ -505,7 +506,7 @@ async function captureFrontmatter(id, title, tags, now) {
  * declares `requireExisting: true`, which makes updating an existing note the
  * stated intent and needs no approval. A capture without that flag always
  * writes a full-note replacement — the approve-then-append path stays
- * unreachable — while an update-only capture appends to the note it found.
+ * unreachable — while an update-only capture replaces the note by default.
  * `committed` is absent because MCP writes never run memory-git.
  */
 async function captureNote(a = {}) {
@@ -518,8 +519,8 @@ async function captureNote(a = {}) {
   const hits = [...new Map([...titleHits, ...idHits].map(hit => [hit.id, hit])).values()]
   const conflicts = findCaptureConflicts(targetId, a.title, hits)
   const conflictExists = conflicts.length > 0
-  const finalId = conflicts[0]?.id ?? targetId
   const requireExisting = a.requireExisting === true
+  const finalId = requireExisting ? targetId : conflicts[0]?.id ?? targetId
 
   if (conflictExists && !requireExisting) {
     if (a.conflictPolicy === 'skip') {
@@ -536,17 +537,17 @@ async function captureNote(a = {}) {
   const now = formatBeijingTime(new Date())
   const detailsText = typeof a.details === 'string' && a.details !== '' ? `\n\n## Details\n\n${a.details}` : ''
   const appendContent = `${a.summary}${detailsText}\n`
-  // A declared update appends to the note it found, so a second capture adds a
-  // section instead of replacing the first. Without one the capture keeps the
-  // replace shape MCP always produced, or — when the note is genuinely absent —
-  // writeNote refuses it under requireExisting.
-  const { existed, frontmatter } = await captureFrontmatter(finalId, a.title, tags, now)
-  const appending = requireExisting && existed
+  // A declared update replaces the old conclusion unless append is explicit.
+  // Without one the capture keeps the replace shape MCP always produced, or —
+  // when the note is genuinely absent — writeNote refuses it under requireExisting.
+  // Overwrites pass the captured version to reject intervening changes.
+  const { existed, frontmatter, version } = await captureFrontmatter(finalId, a.title, tags, now)
+  const appending = requireExisting && existed && a.mode === 'append'
   const content = appending
     ? appendContent
     : `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${a.title}\n\n${appendContent}`
   const writeMode = appending ? 'append' : 'overwrite'
-  const write = await writeNote(finalId, content, writeMode, undefined, requireExisting)
+  const write = await writeNote(finalId, content, writeMode, appending ? undefined : version, requireExisting)
   const response = {
     written: true,
     id: write.id,
@@ -653,17 +654,18 @@ const TOOLS = [
   },
   {
     name: 'memory_capture',
-    description: 'Persist durable knowledge to the vault, mirroring the dsh memory_capture tool: derives the note id from the title when omitted, merges frontmatter on an existing note, and returns the same fields minus committed, which requires memory-git. MCP has no approval channel, so a conflicting capture refuses the write and points at conflictPolicy: "skip" — unless requireExisting declares an update, which needs no approval and refuses to create a missing note.',
+    description: 'Persist durable knowledge to the vault, mirroring the dsh memory_capture tool: derives the note id from the title when omitted, merges frontmatter on an existing note, and returns the same fields minus committed, which requires memory-git. MCP has no approval channel, so a conflicting capture refuses the write and points at conflictPolicy: "skip" — unless requireExisting declares an update, which replaces the note by default without approval and refuses to create a missing note.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short human-readable title; used to derive the note id when id is omitted.' },
-        summary: { type: 'string', description: 'The durable knowledge to record, in concise Markdown.' },
+        summary: { type: 'string', description: 'The durable knowledge to record, in concise Markdown. For a correction using requireExisting, provide the complete current conclusion.' },
         details: { type: 'string', description: 'Optional additional Markdown context (error traces, alternatives, links).' },
+        mode: { type: 'string', enum: ['append', 'overwrite'], description: 'Use overwrite to replace an old conclusion; append preserves old text and adds a timestamped section. Update-only captures default to overwrite; pass append explicitly for additive material.' },
         id: { type: 'string', description: 'Optional explicit vault-relative note id; a path without a shared/ prefix lands under the notes dir.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for the note frontmatter.' },
         conflictPolicy: { type: 'string', enum: ['ask', 'skip'], description: 'ask (default) refuses a conflicting capture; skip skips it silently.' },
-        requireExisting: { type: 'boolean', description: 'Update-only capture: the note must already exist, and a conflict needs no approval. A missing note fails instead of creating one.' },
+        requireExisting: { type: 'boolean', description: 'Update-only capture: the note must exist and needs no approval. Defaults to overwrite with a complete replacement summary; pass mode: append for additive material. A missing note fails.' },
       },
       required: ['title', 'summary'],
     },
