@@ -1,6 +1,6 @@
 # @jacklika/dsh-memory-mcp
 
-MCP stdio 服务器，把 memory vault 暴露给任意 MCP 客户端（Claude Code、Cursor、Obsidian 桥、`dsh-mcp-client`）。单一进程持有所有写操作，因此客户端通过服务器串行化，而不是自己协商文件系统锁——这是 memory 套件的“单写者”部署形态。
+MCP stdio 服务器，把 memory vault 暴露给任意 MCP 客户端（Claude Code、Cursor、Obsidian 桥、`dsh-mcp-client`）。每个进程串行处理自身请求，并通过按笔记分区的 vault 锁与 dsh memory queue 协调写入；直接编辑文件的程序不参与该协议。
 
 ## 运行
 
@@ -17,6 +17,8 @@ npx dsh-memory-mcp --vault /path/to/vault
 ## 暴露面
 
 工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph` —— 与 `@jacklika/dsh-tool-memory-filesystem` / `-graph` 的契约相同，写操作带 `baseVersion` 乐观并发控制，读操作返回 `mtime` + `modifiedExternally`，写入归一化 `created`/`updated` 为 `+08:00`。`memory_capture` 与 dsh 策展工具对齐：省略 `id` 时由标题推导笔记 id，覆盖既有笔记时合并 frontmatter，返回 `{written, id, mode, conflict, version, created?, updated?}`。有两处有意差异：MCP 写入不跑 memory-git，因此永不返回 `committed`；MCP 没有 agent 命名空间，因此不提供 `scope`。MCP 无审批通道，冲突捕获按 dsh 工具的无头行为 fail closed——`written: false`、`conflict: true`，reason 指向 `conflictPolicy: 'skip'`——这也使“批准后追加”分支不可达：不带 `requireExisting` 而真正落盘的捕获总是整篇覆盖写。`requireExisting: true` 则表示严格更新标题推导或显式给出的目标 `id`（不会重定向到同标题的其他笔记）：默认以完整当前结论覆盖已存在笔记的正文，无需审批，笔记缺失时失败而非创建。只有新增材料才显式传 `mode: 'append'`，以保留旧正文；`wiki_write` 同样支持 `requireExisting`，但保留自身默认追加模式。笔记 id 拒绝反斜杠，失败信息只含仓库相对 id，不嵌入宿主路径。资源：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
+
+`memory_correct(id, baseVersion, summary, details?, tags?)` 在 `wiki_read` 后覆盖精确的既有笔记，保留未指定的元数据，拒绝过期版本，绝不新建或追加。`memory_capture` 会独立于截断搜索检查精确目标，未指定明确 id 且同标题候选歧义时拒绝写入。MCP 纠错结果不含 `committed` 字段。
 
 ## 客户端配置
 
@@ -35,7 +37,7 @@ npx dsh-memory-mcp --vault /path/to/vault
 
 ## 协调约定
 
-- 单个服务器进程串行化**自身**的写入；这是主要的健壮性保证。
-- 独立的服务器进程或直接文件系统写入者不会被串行化——`baseVersion` 冲突错误与原子重命名仍能保护正确性，而 dsh 侧的 `memory-git` 插件会在 dsh 工具调用路径上覆盖审计/历史。
+- 每个服务器进程串行处理**自身**请求；写入还会取得与 dsh memory queue 相同的按笔记分区锁，因此遵守协议的 MCP/dsh 进程不会交错写入同一 id。持锁超时会拒绝写入；MCP 不会自行回收废弃锁。
+- 直接编辑文件的程序不使用该锁。`baseVersion` 只能发现受保护写入前可见的修改，不能对不遵守协议的编辑器提供事务保证；原子重命名可防止文件内容写入一半。dsh 侧 `memory-git` 仅审计 dsh 工具调用路径。
 - 通过 MCP 的写入**不会**产生 git 提交；如果需要记录 MCP 来源写入的历史，请在 dsh 侧挂载 `dsh-memory-git` 或在外部提交 vault。
 - 完全本地：仅 stdio，无网络监听，无遥测。

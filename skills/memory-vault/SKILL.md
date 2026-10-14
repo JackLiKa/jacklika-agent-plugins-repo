@@ -5,7 +5,7 @@ description: Use when the session needs durable cross-session memory — reading
 
 # Memory vault workflow
 
-The vault is an Obsidian-compatible Markdown store under `.plugins/memory/` of the session workspace (or the configured `vaultRoot`). Four tools operate on it: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` (plus `wiki_semantic_search` when enabled). A curator layer also provides `memory_recall` and `memory_capture`; prefer those for routine task-start/task-end memory work.
+The vault is an Obsidian-compatible Markdown store under `.plugins/memory/` of the session workspace (or the configured `vaultRoot`). Four tools operate on it: `wiki_read`, `wiki_search`, `wiki_write`, `wiki_graph` (plus `wiki_semantic_search` when enabled). A curator layer also provides `memory_recall`, `memory_capture`, and `memory_correct`; prefer those for routine recall, new knowledge, and corrections.
 
 ## Task-start recall
 
@@ -16,7 +16,8 @@ The vault is an Obsidian-compatible Markdown store under `.plugins/memory/` of t
 ## Task-end capture
 
 - At the end of a significant task — especially when you reached a decision, fixed a bug, discovered an API, or clarified a convention — call `memory_capture(title, summary, ...)`.
-- It will derive a stable note id from the title, check for conflicts with existing notes, ask the user for approval if one exists, and write the captured knowledge to the shared curated zone.
+- It will derive a stable note id from the title, check the exact target and search for related notes, ask the user for approval if one exists, and write the captured knowledge to the shared curated zone. If search is incomplete or same-title targets are ambiguous, supply a precise id after checking it; never guess a target.
+- When the user corrects an old conclusion, first `wiki_read` its exact id and use `memory_correct(id, baseVersion: <version>, summary: <complete current truth>)`; never append a contradictory conclusion. A changed version means re-read and reconsider the correction, not retry blindly.
 - Use `scope: shared` (the default) for knowledge meant for every agent and future session. Use `scope: private` only for notes that must stay inside the current agent namespace.
 
 ## Multi-step progress
@@ -33,13 +34,13 @@ Keep `todo_write` current as well, for the in-session display. The two are not r
 
 ## Direct vault tools
 
-Use `wiki_read`, `wiki_search`, `wiki_write`, and `wiki_graph` directly only when the curator tools do not fit (for example, reading a specific linked note, updating an existing note with a known id, or inspecting the link graph).
+Use `wiki_read` to obtain the version before a correction. Use `wiki_search`, `wiki_write`, and `wiki_graph` directly when the curator tools do not fit (for example, adding a log section to a known note or inspecting the link graph).
 
 ## Where notes land
 
 - `memory_capture` with `scope: shared` writes under `shared/notes/` by default.
 - Private notes land under `agents/<your key>/` automatically — do not add the prefix yourself.
-- Prefer one note per concept; `memory_capture` will append a timestamped section to an existing note when the same title already exists and is approved.
+- Prefer one note per concept; an approved legacy `memory_capture` still appends a timestamped section by default. Use that for genuinely additive material, not corrections.
 
 ## Safe write protocol
 
@@ -57,6 +58,6 @@ Use `wiki_read`, `wiki_search`, `wiki_write`, and `wiki_graph` directly only whe
 
 ## What is already handled for you
 
-- Concurrent writes to the same note are serialized; you do not need to wait or retry for lock reasons.
+- Cooperating dsh and MCP writes to the same note share a per-note vault lock; a timed-out lock or stale version fails closed. Direct filesystem editors do not participate in that lock.
 - `shared/` writes are committed to the vault's own git history — your writes are auditable and recoverable.
 - Files publish atomically; a reader never sees a half-written note.

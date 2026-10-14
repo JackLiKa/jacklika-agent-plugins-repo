@@ -1,5 +1,6 @@
 // Smoke test: spawn the server, drive initialize + tools/call over stdio.
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -65,7 +66,21 @@ async function runSmoke() {
     assert(init.serverInfo.name === 'dsh-memory-mcp', 'initialize serverInfo')
 
     const list = await Promise.race([call('tools/list'), earlyExit])
-    assert(list.tools.length === 5, `tools/list count ${list.tools.length}`)
+    assert(list.tools.length === 6 && list.tools.some(tool => tool.name === 'memory_correct'), `tools/list correction tool ${list.tools.length}`)
+
+    const lockedId = 'concepts/coordination.md'
+    const lockKey = createHash('sha1').update(lockedId).digest('hex')
+    const lockDir = join(vault, '.memory-queue.lock.lanes', `${lockKey}.lock`)
+    await mkdir(lockDir, { recursive: true })
+    const waitingWrite = call('tools/call', { name: 'wiki_write', arguments: { id: lockedId, content: '# Coordinated' } })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 150))
+      assert(!(await readFile(join(vault, lockedId), 'utf8').then(() => true, () => false)), 'MCP respects the shared DSH write lock')
+    } finally {
+      await rm(lockDir, { recursive: true, force: true })
+    }
+    await Promise.race([waitingWrite, earlyExit])
+    assert((await readFile(join(vault, lockedId), 'utf8')).includes('Coordinated'), 'MCP writes after lock release')
 
     const w = await Promise.race([call('tools/call', {
       name: 'wiki_write',
@@ -255,6 +270,13 @@ async function runSmoke() {
       arguments: { title: 'Unsafe', summary: 's', id: '../escape' },
     }), earlyExit]).then(() => null, e => e)
     assert(badCaptureId !== null, 'unsafe capture id must error')
+    await writeFile(join(vault, 'shared', 'notes', 'ambiguous-one.md'), '---\ntitle: Ambiguous decision\n---\n\nFirst.\n')
+    await writeFile(join(vault, 'shared', 'notes', 'ambiguous-two.md'), '---\ntitle: Ambiguous decision\n---\n\nSecond.\n')
+    const ambiguous = await Promise.race([call('tools/call', {
+      name: 'memory_capture', arguments: { title: 'Ambiguous decision', summary: 'Must not choose.', conflictPolicy: 'skip' },
+    }), earlyExit])
+    const ambiguousResult = JSON.parse(ambiguous.content[0].text)
+    assert(ambiguousResult.written === false && ambiguousResult.reason.includes('ambiguous'), 'ambiguous MCP title fails closed')
 
     // Update-only writes: a declared update replaces the old conclusion and
     // needs no approval, while one aimed at a missing note refuses instead of
@@ -279,6 +301,23 @@ async function runSmoke() {
     assert(JSON.parse(appended.content[0].text).mode === 'append', 'explicit append retains its mode')
     const appendedText = await readFile(join(vault, 'shared', 'notes', 'mcp-parity-capture.md'), 'utf8')
     assert(appendedText.includes('declared update') && appendedText.includes('additional context'), 'explicit append retains both sections')
+
+    const current = await Promise.race([call('tools/call', {
+      name: 'wiki_read', arguments: { id: capResult.id },
+    }), earlyExit])
+    const currentVersion = JSON.parse(current.content[0].text).version
+    const corrected = await Promise.race([call('tools/call', {
+      name: 'memory_correct', arguments: { id: capResult.id, baseVersion: currentVersion, summary: 'One current conclusion.' },
+    }), earlyExit])
+    const correctedResult = JSON.parse(corrected.content[0].text)
+    assert(correctedResult.written === true && correctedResult.mode === 'overwrite', 'MCP explicit correction succeeds')
+    const correctedText = await readFile(join(vault, 'shared', 'notes', 'mcp-parity-capture.md'), 'utf8')
+    assert(correctedText.includes('One current conclusion.') && !correctedText.includes('declared update'), 'MCP corrected body is current only')
+    const staleCorrection = await Promise.race([call('tools/call', {
+      name: 'memory_correct', arguments: { id: capResult.id, baseVersion: currentVersion, summary: 'Stale conclusion.' },
+    }), earlyExit]).then(() => null, e => e)
+    assert(staleCorrection !== null && String(staleCorrection.message).includes('changed since it was read'), 'stale MCP correction fails closed')
+    assert(!(await readFile(join(vault, 'shared', 'notes', 'mcp-parity-capture.md'), 'utf8')).includes('Stale conclusion.'), 'stale correction leaves note unchanged')
 
     const updateMissing = await Promise.race([call('tools/call', {
       name: 'memory_capture',

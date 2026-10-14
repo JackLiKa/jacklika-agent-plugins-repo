@@ -55,7 +55,40 @@ try {
   const recovery = start('write', 'after-crash')
   const recoveryExit = await exited(recovery)
   if (recoveryExit.code !== 0) throw new Error(`stale-lock recovery failed: ${recoveryExit.stderr}`)
-  process.stdout.write('multi-process same-note serialization and stale-lock recovery verified\n')
+
+  const briefHolder = start('hold-brief', 'mcp-coordination')
+  const briefExit = exited(briefHolder)
+  await waitForPath(join(vault, '.memory-queue.lock.lanes', `${lane}.lock`))
+  const server = join(root, 'packages', 'memory-mcp', 'src', 'server.mjs')
+  const mcp = spawn(process.execPath, [server, '--vault', vault], { stdio: ['pipe', 'pipe', 'pipe'] })
+  const serverExit = exited(mcp)
+  try {
+    const reply = new Promise((resolveReply, rejectReply) => {
+      let output = ''
+      mcp.stdout.on('data', chunk => {
+        output += chunk.toString()
+        const newline = output.indexOf('\n')
+        if (newline < 0) return
+        try { resolveReply(JSON.parse(output.slice(0, newline))) } catch (error) { rejectReply(error) }
+      })
+    })
+    mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+      name: 'wiki_write', arguments: { id: 'shared/concurrent.md', content: 'mcp-coordinated' },
+    } }) + '\n')
+    await new Promise(resolveWait => setTimeout(resolveWait, 100))
+    if ((await readFile(join(vault, 'shared', 'concurrent.md'), 'utf8')).includes('mcp-coordinated')) {
+      throw new Error('MCP wrote while dsh held the same note lock')
+    }
+    const response = await Promise.race([reply, serverExit.then(exit => { throw new Error(`MCP server exited before replying: ${exit.stderr}`) })])
+    if (response.error !== undefined) throw new Error(`MCP write failed: ${response.error.message}`)
+    if ((await briefExit).code !== 0) throw new Error('brief dsh holder failed')
+    if (!(await readFile(join(vault, 'shared', 'concurrent.md'), 'utf8')).includes('mcp-coordinated')) throw new Error('coordinated MCP write missing')
+    mcp.stdin.end()
+    if ((await serverExit).code !== 0) throw new Error('coordinated MCP server failed to exit')
+  } finally {
+    if (mcp.exitCode === null) mcp.kill()
+  }
+  process.stdout.write('multi-process serialization, stale-lock recovery, and dsh/MCP coordination verified\n')
 } finally {
   await rm(vault, { recursive: true, force: true })
 }

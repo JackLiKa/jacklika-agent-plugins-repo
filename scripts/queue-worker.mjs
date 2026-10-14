@@ -10,7 +10,7 @@ const ctx = new Context()
 await ctx.plugin(SystemPrompt)
 await ctx.plugin(ToolRuntime)
 await ctx.plugin(MemoryQueue, {
-  toolNames: mode === 'hold' ? ['slow_tool'] : ['wiki_write'],
+  toolNames: mode === 'hold' || mode === 'hold-brief' ? ['slow_tool'] : ['wiki_write'],
   vaultRoot: vault,
   crossProcessLock: true,
   laneArgument: 'id',
@@ -19,14 +19,14 @@ await ctx.plugin(MemoryQueue, {
   lockTimeoutMs: 5000,
   lockRetryMs: 50,
 })
-if (mode === 'hold') {
+if (mode === 'hold' || mode === 'hold-brief') {
   ctx.tools.register(defineTool({
     name: 'slow_tool',
     description: 'Hold the queue lock until the parent terminates this worker.',
     parameters: { id: { type: 'string', required: true, description: 'Lock lane.' } },
     output: { schema: { type: 'json' }, render: () => [] },
     async execute() {
-      await new Promise(resolve => setTimeout(resolve, 30000))
+      await new Promise(resolve => setTimeout(resolve, mode === 'hold-brief' ? 800 : 30000))
       return {}
     },
   }))
@@ -36,8 +36,8 @@ if (mode === 'hold') {
 const result = await ctx.tools.execute({
   signal: new AbortController().signal,
   callId: ToolCallId(`${mode}-${marker}`),
-  name: mode === 'hold' ? 'slow_tool' : 'wiki_write',
-  arguments: mode === 'hold' ? { id: 'shared/concurrent.md' } : { id: 'shared/concurrent.md', content: marker },
+  name: mode === 'hold' || mode === 'hold-brief' ? 'slow_tool' : 'wiki_write',
+  arguments: mode === 'hold' || mode === 'hold-brief' ? { id: 'shared/concurrent.md' } : { id: 'shared/concurrent.md', content: marker },
 })
 await ctx.fiber.dispose()
 if (result.isError) process.exitCode = 1

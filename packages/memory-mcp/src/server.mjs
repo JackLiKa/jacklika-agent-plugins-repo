@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * @jacklika/dsh-memory-mcp — an MCP stdio server exposing the memory vault to
- * any MCP client. One process owns all writes, so clients serialize through
- * the server instead of negotiating filesystem locks.
+ * any MCP client. Each server serializes its own requests and coordinates
+ * same-note writes with dsh through the vault's per-note lock directories.
  *
  * Usage: dsh-memory-mcp [--vault <path>] [--max-link-depth N] [--notes-dir DIR]
  *   --vault defaults to <cwd>/.plugins/memory/ to match the Bundle default.
@@ -11,6 +11,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
@@ -31,6 +32,7 @@ const VAULT = resolve(argValue('--vault', join(process.cwd(), '.plugins', 'memor
 const MAX_LINK_DEPTH = Number(argValue('--max-link-depth', '1'))
 const NOTES_DIR = (argValue('--notes-dir', 'shared/notes') || 'shared/notes').replace(/\/+$/, '')
 const EXTENSIONS = ['.md']
+const MAX_SEARCH_RESULTS = 20
 const EXCLUDE_DIRS = new Set(['.git', 'node_modules', '.obsidian'])
 
 /** Return a POSIX-style vault-relative id from an absolute path. */
@@ -331,7 +333,7 @@ async function readNote(absolutePath, depth, visited = new Set(), resolve) {
   return { id, frontmatter, body, links, version: noteVersion(text), linkedNotes }
 }
 
-async function searchNotes(query, maxResults = 20) {
+async function searchNotes(query, maxResults = MAX_SEARCH_RESULTS) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
   const notes = []
   for (const path of await listNotePaths()) {
@@ -353,7 +355,70 @@ async function searchNotes(query, maxResults = 20) {
   return hits.slice(0, maxResults).map(({ id, title }) => ({ id, title }))
 }
 
+async function acquireWriteLock(id) {
+  const key = id.normalize('NFC').toLowerCase().replace(/\/+/g, '/').replace(/^\//, '').replace(/\/$/, '')
+  const lockDir = join(VAULT, '.memory-queue.lock.lanes', `${createHash('sha1').update(key).digest('hex')}.lock`)
+  await mkdir(VAULT, { recursive: true })
+  await containedPathReal('.memory-queue.lock.lanes')
+  await mkdir(dirname(lockDir), { recursive: true })
+  await containedPathReal('.memory-queue.lock.lanes')
+  const deadline = Date.now() + 30_000
+  for (;;) {
+    try {
+      await mkdir(lockDir)
+      break
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw noteIoError('write', id, error)
+      if (Date.now() >= deadline) throw new Error(`memory-mcp: timed out waiting for vault lock for ${JSON.stringify(id)}`)
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+  }
+  const token = randomUUID()
+  const ownerPath = join(lockDir, 'owner.json')
+  const heartbeatPath = join(lockDir, 'heartbeat')
+  let timer
+  try {
+    await writeFile(ownerPath, JSON.stringify({ token, hostname: hostname(), pid: process.pid, startedAt: new Date().toISOString() }), 'utf8')
+    await writeFile(heartbeatPath, '0', 'utf8')
+    let counter = 0
+    timer = setInterval(() => {
+      counter += 1
+      writeFile(heartbeatPath, String(counter), 'utf8').catch(() => undefined)
+    }, 2000)
+    timer.unref()
+  } catch (error) {
+    await rm(lockDir, { recursive: true, force: true })
+    throw noteIoError('write', id, error)
+  }
+  return async () => {
+    clearInterval(timer)
+    const owner = await readFile(ownerPath, 'utf8').then(text => {
+      try { return JSON.parse(text) } catch { return null }
+    }, () => null)
+    if (owner?.token !== token) return
+    const released = `${lockDir}.release-${token}`
+    try {
+      await rename(lockDir, released)
+      await rm(released, { recursive: true, force: true })
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw noteIoError('write', id, error)
+    }
+  }
+}
+
 async function writeNote(id, content, mode = 'append', baseVersion, requireExisting = false) {
+  if (typeof id !== 'string' || !EXTENSIONS.some(ext => id.endsWith(ext))) {
+    throw new Error(`note id must end with one of ${EXTENSIONS.join(', ')}`)
+  }
+  const release = await acquireWriteLock(id)
+  try {
+    return await writeNoteUnlocked(id, content, mode, baseVersion, requireExisting)
+  } finally {
+    await release()
+  }
+}
+
+async function writeNoteUnlocked(id, content, mode = 'append', baseVersion, requireExisting = false) {
   if (!EXTENSIONS.some(ext => id.endsWith(ext))) {
     throw new Error(`note id must end with one of ${EXTENSIONS.join(', ')}`)
   }
@@ -515,12 +580,19 @@ async function captureNote(a = {}) {
   const targetId = captureTargetId(a.id, a.title)
   const tags = Array.isArray(a.tags) ? a.tags.map(String) : []
 
-  const [titleHits, idHits] = await Promise.all([searchNotes(a.title), searchNotes(targetId)])
-  const hits = [...new Map([...titleHits, ...idHits].map(hit => [hit.id, hit])).values()]
+  const now = formatBeijingTime(new Date())
+  const [titleHits, idHits, target] = await Promise.all([
+    searchNotes(a.title), searchNotes(targetId), captureFrontmatter(targetId, a.title, tags, now),
+  ])
+  const hits = [...new Map([...(target.existed ? [{ id: targetId, title: a.title }] : []), ...titleHits, ...idHits].map(hit => [hit.id, hit])).values()]
   const conflicts = findCaptureConflicts(targetId, a.title, hits)
   const conflictExists = conflicts.length > 0
   const requireExisting = a.requireExisting === true
-  const finalId = requireExisting ? targetId : conflicts[0]?.id ?? targetId
+  const explicitId = typeof a.id === 'string' && a.id !== ''
+  const finalId = requireExisting || explicitId || target.existed ? targetId : conflicts[0]?.id ?? targetId
+  if (!requireExisting && !explicitId && !target.existed && (titleHits.length === MAX_SEARCH_RESULTS || idHits.length === MAX_SEARCH_RESULTS || conflicts.length > 1)) {
+    return { written: false, id: targetId, conflict: true, reason: 'ambiguous or truncated conflict search; provide the exact existing note id before writing' }
+  }
 
   if (conflictExists && !requireExisting) {
     if (a.conflictPolicy === 'skip') {
@@ -534,20 +606,21 @@ async function captureNote(a = {}) {
     }
   }
 
-  const now = formatBeijingTime(new Date())
   const detailsText = typeof a.details === 'string' && a.details !== '' ? `\n\n## Details\n\n${a.details}` : ''
   const appendContent = `${a.summary}${detailsText}\n`
   // A declared update replaces the old conclusion unless append is explicit.
   // Without one the capture keeps the replace shape MCP always produced, or —
   // when the note is genuinely absent — writeNote refuses it under requireExisting.
   // Overwrites pass the captured version to reject intervening changes.
-  const { existed, frontmatter, version } = await captureFrontmatter(finalId, a.title, tags, now)
+  const { existed, frontmatter, version } = finalId === targetId
+    ? target
+    : await captureFrontmatter(finalId, a.title, tags, now)
   const appending = requireExisting && existed && a.mode === 'append'
   const content = appending
     ? appendContent
     : `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${a.title}\n\n${appendContent}`
   const writeMode = appending ? 'append' : 'overwrite'
-  const write = await writeNote(finalId, content, writeMode, appending ? undefined : version, requireExisting)
+  const write = await writeNote(finalId, content, writeMode, version ?? noteVersion(''), requireExisting)
   const response = {
     written: true,
     id: write.id,
@@ -558,6 +631,34 @@ async function captureNote(a = {}) {
   if (write.created !== undefined) response.created = write.created
   if (write.updated !== undefined) response.updated = write.updated
   return response
+}
+
+async function correctNote(a = {}) {
+  if (typeof a.id !== 'string' || !a.id.endsWith('.md')) throw new Error('memory-mcp: correction requires a vault-relative .md note id')
+  if (typeof a.baseVersion !== 'string' || typeof a.summary !== 'string') throw new Error('memory-mcp: correction requires baseVersion and complete summary')
+  let text
+  try {
+    text = await readFile(await containedPathReal(a.id), 'utf8')
+  } catch (error) {
+    if (typeof error?.code === 'string') throw noteIoError('read', a.id, error)
+    throw error
+  }
+  if (noteVersion(text) !== a.baseVersion) throw new Error(`note ${a.id} changed since it was read; re-read it before correcting`)
+  const { frontmatter: existing, body } = splitFrontmatter(text)
+  const now = formatBeijingTime(new Date())
+  const heading = /^#\s+(.+)$/m.exec(body)?.[1]
+  const title = typeof existing.title === 'string' && existing.title !== '' ? existing.title : heading ?? a.id.replace(/\.md$/, '')
+  const frontmatter = {
+    ...existing,
+    title,
+    ...(a.tags !== undefined ? { tags: a.tags.map(String) } : {}),
+    created: typeof existing.created === 'string' && existing.created !== '' ? existing.created : now,
+    updated: now,
+  }
+  const details = a.details ? `\n\n## Details\n\n${a.details}` : ''
+  const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${title}\n\n${a.summary}${details}\n`
+  const written = await writeNote(a.id, content, 'overwrite', a.baseVersion, true)
+  return { written: true, id: written.id, mode: 'overwrite', conflict: false, version: written.version, created: written.created, updated: written.updated }
 }
 
 async function buildGraph(id, depth = 1, maxNodes = 200) {
@@ -670,6 +771,21 @@ const TOOLS = [
       required: ['title', 'summary'],
     },
   },
+  {
+    name: 'memory_correct',
+    description: 'Replace exactly one existing note with a complete current conclusion. First wiki_read the exact id, then pass its version as baseVersion. Missing or changed notes fail; this never appends or selects by title.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Exact vault-relative id from wiki_read.' },
+        baseVersion: { type: 'string', description: 'Version from wiki_read; concurrent changes fail.' },
+        summary: { type: 'string', description: 'Complete current conclusion in Markdown.' },
+        details: { type: 'string', description: 'Optional context included in the new body.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Optional replacement tags; omitted tags are preserved.' },
+      },
+      required: ['id', 'baseVersion', 'summary'],
+    },
+  },
 ]
 
 async function callTool(name, a = {}) {
@@ -699,6 +815,8 @@ async function callTool(name, a = {}) {
       return buildGraph(a.id, a.depth ?? 1)
     case 'memory_capture':
       return captureNote(a)
+    case 'memory_correct':
+      return correctNote(a)
     default:
       throw new Error(`unknown tool ${name}`)
   }

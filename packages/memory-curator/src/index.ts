@@ -189,12 +189,12 @@ function dedupeHits(hits: SearchHit[]): SearchHit[] {
  * replaces the whole file, so the note's existing fields have to be carried
  * over here or an update silently drops whatever another writer recorded and
  * resets `created` to the update time.
+ * Capture the note version before approval so any later change makes the
+ * guarded write fail. Never treat a non-ENOENT read error as a missing note.
  * @param ctx - registrant context carrying the tool registry.
  * @param exec - the run context the nested read is dispatched under.
  * @param id - vault-relative note id about to be overwritten.
- * @param title - title from this capture; it wins over any stored one.
- * @param tags - tags from this capture; they win over any stored ones.
- * @param now - Beijing-time timestamp used for `created`/`updated`.
+ * Existing frontmatter fields are preserved by the subsequent merge.
  * @returns the stored frontmatter and version for a guarded write.
  */
 async function readFrontmatter(
@@ -219,20 +219,17 @@ async function readFrontmatter(
   }
 }
 
-async function overwriteFrontmatter(
-  ctx: Context,
-  exec: ToolRunContext,
-  id: string,
+function overwriteFrontmatter(
+  existing: { frontmatter: Record<string, unknown>; version: string } | undefined,
   title: string,
   tags: string[],
   now: string,
-): Promise<{ frontmatter: Record<string, unknown>; baseVersion?: string }> {
-  const existing = await readFrontmatter(ctx, exec, id)
+): Record<string, unknown> {
   const frontmatter: Record<string, unknown> = { ...existing?.frontmatter, title, tags }
   const created = existing?.frontmatter.created
   frontmatter.created = typeof created === 'string' && created !== '' ? created : now
   if (existing !== undefined) frontmatter.updated = now
-  return { frontmatter, ...(existing !== undefined ? { baseVersion: existing.version } : {}) }
+  return frontmatter
 }
 
 /**
@@ -359,17 +356,30 @@ export function apply(ctx: Context, config: Config): void {
       const notesDir = scope === 'shared' ? resolved.notesDir : ''
       const targetId = resolveNoteId(args.id, args.title, scope, notesDir)
       const requireExisting = args.requireExisting === true
+      const explicitId = typeof args.id === 'string' && args.id !== ''
       const mode = args.mode ?? (requireExisting ? 'overwrite' : 'append')
       const tags = Array.isArray(args.tags) ? args.tags.map(String) : []
 
-      const [titleSearch, idSearch] = await Promise.all([
+      const [titleSearch, idSearch, targetNote] = await Promise.all([
         callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.title }),
         callTool<SearchPage>(ctx, exec, 'wiki_search', { query: targetId }),
+        readFrontmatter(ctx, exec, targetId),
       ])
 
-      const conflicts = dedupeHits(findConflicts(targetId, args.title, [...titleSearch.hits, ...idSearch.hits]))
+      const targetHit: SearchHit[] = targetNote === undefined ? [] : [{ id: targetId, title: args.title, score: 0, backlinks: [] }]
+      const conflicts = dedupeHits(findConflicts(targetId, args.title, [...targetHit, ...titleSearch.hits, ...idSearch.hits]))
       const conflictExists = conflicts.length > 0
-      const finalId = requireExisting ? targetId : conflicts[0]?.id ?? targetId
+      const finalId = requireExisting || explicitId || targetNote !== undefined ? targetId : conflicts[0]?.id ?? targetId
+      if (!requireExisting && !explicitId && targetNote === undefined && (titleSearch.truncated || idSearch.truncated || conflicts.length > 1)) {
+        return {
+          written: false,
+          id: targetId,
+          conflict: true,
+          reason: 'ambiguous or truncated conflict search; provide the exact existing note id before writing',
+        } as unknown as JsonValue
+      }
+      const selectedNote = finalId === targetId ? targetNote : await readFrontmatter(ctx, exec, finalId)
+      const approvedVersion = selectedNote?.version
 
       // A declared update-only capture targets an existing note by
       // construction, so the approval that guards against accidentally
@@ -425,21 +435,21 @@ export function apply(ctx: Context, config: Config): void {
       // and create new notes. Overwrites carry the read version to wiki_write
       // so an intervening change is refused rather than silently replaced.
       // Append remains available when the caller requests additive material.
-      const exists = requireExisting ? (await readFrontmatter(ctx, exec, finalId)) !== undefined : conflictExists
+      const exists = requireExisting ? targetNote !== undefined : conflictExists
       const appending = exists && mode === 'append'
       const writeMode: 'append' | 'overwrite' = appending ? 'append' : 'overwrite'
       ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode} requireExisting=${requireExisting}`)
-      const overwrite = appending ? undefined : await overwriteFrontmatter(ctx, exec, finalId, args.title, tags, now)
+      const overwrite = appending ? undefined : overwriteFrontmatter(selectedNote, args.title, tags, now)
       const content = appending
         ? appendContent
-        : `---\n${yaml.dump(overwrite?.frontmatter).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
+        : `---\n${yaml.dump(overwrite).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
 
       const writeResult = await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: finalId,
         content,
         mode: writeMode,
-        ...(overwrite?.baseVersion !== undefined ? { baseVersion: overwrite.baseVersion } : {}),
-        ...(requireExisting ? { requireExisting: true } : {}),
+        baseVersion: approvedVersion ?? createHash('sha1').update('').digest('hex'),
+        ...(requireExisting || (conflictExists && !explicitId) ? { requireExisting: true } : {}),
       })
 
       const response: Record<string, unknown> = {
@@ -455,6 +465,49 @@ export function apply(ctx: Context, config: Config): void {
       if (typeof writeResult.updated === 'string' && writeResult.updated !== '') response.updated = writeResult.updated
       if (typeof writeResult.committed === 'boolean') response.committed = writeResult.committed
       return response as unknown as JsonValue
+    },
+  })))
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'memory_correct',
+    description: 'Replace one existing curated note with a single complete current conclusion. Read the note with wiki_read first, then provide its exact id and version as baseVersion. Refuses a missing or changed note; never appends or selects a note by title.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Exact vault-relative id returned by wiki_read; never inferred from a title.' },
+      baseVersion: { type: 'string', required: true, description: 'Version from wiki_read. A concurrent change refuses the correction.' },
+      summary: { type: 'string', required: true, description: 'Complete current conclusion in Markdown, replacing the old body.' },
+      details: { type: 'string', description: 'Optional additional context included in the new current body.' },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Optional replacement tags; omitted tags retain existing tags.' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      if (!isSafeNoteId(args.id) || !args.id.endsWith('.md')) throw new Error('memory-curator: correction requires a safe vault-relative .md note id')
+      const note = await callTool<{ frontmatter: Record<string, unknown>; body: string; version: string }>(ctx, exec, 'wiki_read', { id: args.id })
+      if (note.version !== args.baseVersion) throw new Error(`memory-curator: note ${args.id} changed since it was read; re-read it before correcting`)
+      const now = formatBeijingTime(new Date())
+      const existing = note.frontmatter ?? {}
+      const heading = /^#\s+(.+)$/m.exec(note.body)?.[1]
+      const title = typeof existing.title === 'string' && existing.title !== '' ? existing.title : heading ?? args.id.replace(/\.md$/, '')
+      const frontmatter: Record<string, unknown> = {
+        ...existing,
+        title,
+        ...(args.tags !== undefined ? { tags: args.tags.map(String) } : {}),
+        created: typeof existing.created === 'string' && existing.created !== '' ? existing.created : now,
+        updated: now,
+      }
+      const details = args.details ? `\n\n## Details\n\n${args.details}` : ''
+      const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${title}\n\n${args.summary}${details}\n`
+      const written = await callTool<WriteResult>(ctx, exec, 'wiki_write', {
+        id: args.id, content, mode: 'overwrite', requireExisting: true, baseVersion: args.baseVersion,
+      })
+      return {
+        written: true, id: written.id, mode: 'overwrite', conflict: false, version: written.version,
+        ...(written.created !== undefined ? { created: written.created } : {}),
+        ...(written.updated !== undefined ? { updated: written.updated } : {}),
+        ...(written.committed !== undefined ? { committed: written.committed } : {}),
+      } as unknown as JsonValue
     },
   })))
 }

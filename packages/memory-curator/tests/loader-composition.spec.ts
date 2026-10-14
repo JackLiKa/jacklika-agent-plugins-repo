@@ -357,6 +357,119 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     }
   })
 
+  it('still requires approval when capped searches omit an existing target', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    await capture(ctx, 'cap-first', 'Deploy runbook', 'Existing truth.', 'agent-1', vault)
+    const execute = ctx.tools.execute.bind(ctx.tools)
+    const spy = vi.spyOn(ctx.tools, 'execute').mockImplementation(async args => {
+      if (args.name === 'wiki_search') {
+        const page = { hits: [], total: 50, truncated: true }
+        return { isError: false, value: page, content: [{ type: 'text', text: JSON.stringify(page) }] } as Awaited<ReturnType<typeof execute>>
+      }
+      return execute(args)
+    })
+    try {
+      const result = await capture(ctx, 'cap-second', 'Deploy runbook', 'Should need approval.', 'agent-1', vault)
+      expect(result.isError).toBe(false)
+      expect(JSON.parse(resultText(result))).toMatchObject({ written: false, conflict: true })
+      expect(await readFile(join(vault, 'shared', 'notes', 'deploy-runbook.md'), 'utf8')).not.toContain('Should need approval.')
+      const explicit = await capture(ctx, 'cap-explicit', 'Independent runbook', 'New note with exact id.', 'agent-1', vault, { id: 'independent-runbook.md' })
+      expect(explicit.isError).toBe(false)
+      expect(JSON.parse(resultText(explicit))).toMatchObject({ written: true, id: 'shared/notes/independent-runbook.md' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('refuses ambiguous title matches rather than selecting a ranked note', async () => {
+    const vault = await vaultDir()
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'one.md'), '---\ntitle: Shared decision\n---\n\nFirst note.\n')
+    await writeFile(join(vault, 'shared', 'notes', 'two.md'), '---\ntitle: Shared decision\n---\n\nSecond note.\n')
+    const ctx = await boot(vault, { request: async () => 'allowed-once' })
+    const result = await capture(ctx, 'ambiguous', 'Shared decision', 'Must not guess.', 'agent-1', vault)
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(resultText(result))).toMatchObject({ written: false, conflict: true })
+    expect(await readFile(join(vault, 'shared', 'notes', 'one.md'), 'utf8')).not.toContain('Must not guess.')
+    expect(await readFile(join(vault, 'shared', 'notes', 'two.md'), 'utf8')).not.toContain('Must not guess.')
+  })
+
+  it('rejects an approved append if the note changed during approval', async () => {
+    const vault = await vaultDir()
+    const id = 'shared/notes/deploy-runbook.md'
+    const ctx = await boot(vault, { request: async () => {
+      await writeFile(join(vault, id), '---\ntitle: Deploy runbook\n---\n\n# Deploy runbook\n\nChanged during approval.\n')
+      return 'allowed-once'
+    } })
+    await capture(ctx, 'approval-version-first', 'Deploy runbook', 'First conclusion.', 'agent-1', vault)
+    const result = await capture(ctx, 'approval-version-second', 'Deploy runbook', 'Unapproved against new body.', 'agent-1', vault)
+    expect(result.isError).toBe(true)
+    expect(await readFile(join(vault, id), 'utf8')).toContain('Changed during approval.')
+    expect(await readFile(join(vault, id), 'utf8')).not.toContain('Unapproved against new body.')
+  })
+
+  it('refuses to create over a concurrently added note', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    const id = 'shared/notes/new-decision.md'
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    const execute = ctx.tools.execute.bind(ctx.tools)
+    const spy = vi.spyOn(ctx.tools, 'execute').mockImplementation(async args => {
+      if (args.name === 'wiki_write') await writeFile(join(vault, id), '# Another writer\n')
+      return execute(args)
+    })
+    try {
+      const result = await capture(ctx, 'create-race', 'New decision', 'Do not overwrite.', 'agent-1', vault)
+      expect(result.isError).toBe(true)
+      expect(await readFile(join(vault, id), 'utf8')).toBe('# Another writer\n')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('corrects a versioned note without changing legacy append behavior', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    const original = await capture(ctx, 'correct-first', 'Deploy runbook', 'Old procedure.', 'agent-1', vault)
+    expect(original.isError).toBe(false)
+    const id = 'shared/notes/deploy-runbook.md'
+    const prior = JSON.parse(resultText(await readNote(ctx, 'correct-read', id, 'agent-1', vault))) as { version: string; frontmatter: { created: string } }
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('correct-call'),
+      name: 'memory_correct',
+      arguments: { id, baseVersion: prior.version, summary: 'New procedure.' },
+      agent: agent('agent-1', vault),
+    })
+    expect(result.isError).toBe(false)
+    const out = JSON.parse(resultText(result)) as { written: boolean; mode: string; version: string; conflict: boolean }
+    expect(out).toMatchObject({ written: true, mode: 'overwrite', conflict: false })
+    expect(out.version).not.toBe(prior.version)
+    const note = JSON.parse(resultText(await readNote(ctx, 'correct-after', id, 'agent-1', vault))) as { body: string; frontmatter: { created: string } }
+    expect(note.body).toContain('New procedure.')
+    expect(note.body).not.toContain('Old procedure.')
+    expect(note.frontmatter.created).toBe(prior.frontmatter.created)
+    const stale = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('correct-stale'), name: 'memory_correct', arguments: { id, baseVersion: prior.version, summary: 'Stale.' }, agent: agent('agent-1', vault) })
+    expect(stale.isError).toBe(true)
+    expect(await readFile(join(vault, id), 'utf8')).not.toContain('Stale.')
+  })
+
+  it('preserves owner, tags, and created when correcting an existing note', async () => {
+    const vault = await vaultDir()
+    const id = 'shared/notes/deploy-runbook.md'
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, id), '---\ntitle: Deploy runbook\ntags:\n  - durable\ncreated: 2020-01-02T03:04:05+08:00\nowner: agent-7\n---\n\n# Deploy runbook\n\nOld.\n')
+    const ctx = await boot(vault)
+    const before = JSON.parse(resultText(await readNote(ctx, 'fm-before', id, 'agent-1', vault))) as { version: string }
+    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('fm-correct'), name: 'memory_correct', arguments: { id, baseVersion: before.version, summary: 'Current.' }, agent: agent('agent-1', vault) })
+    expect(result.isError).toBe(false)
+    const after = JSON.parse(resultText(await readNote(ctx, 'fm-after', id, 'agent-1', vault))) as { frontmatter: Record<string, unknown>; body: string }
+    expect(after.frontmatter).toMatchObject({ owner: 'agent-7', tags: ['durable'], created: '2020-01-02T03:04:05+08:00' })
+    expect(after.body).toContain('Current.')
+    expect(after.body).not.toContain('Old.')
+  })
+
   it('derives distinct readable ids for non-Latin and mixed-script titles', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-curator-vault-'))
     const ctx = await boot(vault)
@@ -522,5 +635,7 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
 
     const result = await capture(ctx, 'after-unload', 'Title', 'Summary', 'agent-1', vault)
     expect(result.isError).toBe(true)
+    const correction = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('correct-after-unload'), name: 'memory_correct', arguments: { id: 'shared/notes/absent.md', baseVersion: '0'.repeat(40), summary: 'x' }, agent: agent('agent-1', vault) })
+    expect(correction.isError).toBe(true)
   })
 })
