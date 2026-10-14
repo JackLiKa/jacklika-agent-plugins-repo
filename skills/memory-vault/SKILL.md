@@ -16,7 +16,7 @@ The vault is an Obsidian-compatible Markdown store under `.plugins/memory/` of t
 ## Task-end capture
 
 - At the end of a significant task — especially when you reached a decision, fixed a bug, discovered an API, or clarified a convention — call `memory_capture(title, summary, ...)`.
-- It will derive a stable note id from the title, check the exact target and search for related notes, ask the user for approval if one exists, and write the captured knowledge to the shared curated zone. If search is incomplete or same-title targets are ambiguous, supply a precise id after checking it; never guess a target.
+- It will derive a stable note id from the title, check the exact target and search for related notes, ask the user for approval if one exists, and write the captured knowledge to the shared curated zone. Broad keyword search may be truncated, but capture checks exact titles across the vault before applying the cap. If multiple notes have that exact title, supply a precise id after checking it; never guess a target.
 - When the user corrects an old conclusion, first `wiki_read` its exact id and use `memory_correct(id, baseVersion: <version>, summary: <complete current truth>)`; never append a contradictory conclusion. A changed version means re-read and reconsider the correction, not retry blindly.
 - Use `scope: shared` (the default) for knowledge meant for every agent and future session. Use `scope: private` only for notes that must stay inside the current agent namespace.
 

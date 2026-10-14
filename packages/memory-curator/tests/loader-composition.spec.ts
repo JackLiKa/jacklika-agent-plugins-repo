@@ -10,6 +10,7 @@ import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as MemoryCurator from '@jacklika/dsh-memory-curator'
+import * as MemoryScope from '@jacklika/dsh-memory-scope'
 import * as ToolMemoryFilesystem from '@jacklika/dsh-tool-memory-filesystem'
 
 let root: string | undefined
@@ -35,12 +36,13 @@ async function vaultDir(): Promise<string> {
   return dir
 }
 
-async function boot(vaultRoot: string, approval?: { request: (details: { reason: string; displayReason: { en: string } }) => Promise<string> }, filesystemConfig: string[] = []): Promise<Context> {
+async function boot(vaultRoot: string, approval?: { request: (details: { reason: string; displayReason: { en: string } }) => Promise<string> }, filesystemConfig: string[] = [], withScope = false): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-curator-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-system-prompt'",
     "- name: '@deepseek-ai/dsh-tools'",
+    ...(withScope ? ["- name: '@jacklika/dsh-memory-scope'"] : []),
     "- name: '@jacklika/dsh-memory-curator'",
     "- name: '@jacklika/dsh-tool-memory-filesystem'",
     '  config:',
@@ -60,6 +62,7 @@ async function boot(vaultRoot: string, approval?: { request: (details: { reason:
   const modules = new Map<string, unknown>([
     ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
     ['@deepseek-ai/dsh-tools', ToolRuntime],
+    ['@jacklika/dsh-memory-scope', MemoryScope],
     ['@jacklika/dsh-memory-curator', MemoryCurator],
     ['@jacklika/dsh-tool-memory-filesystem', ToolMemoryFilesystem],
   ])
@@ -355,6 +358,34 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('creates shared and scoped private notes despite unrelated capped keyword matches', async () => {
+    const vault = await vaultDir()
+    const notes = join(vault, 'shared', 'notes')
+    await mkdir(notes, { recursive: true })
+    for (let index = 0; index < 25; index += 1) {
+      await writeFile(join(notes, `noise-${index}.md`), `# Noise ${index}\n\nDSH rc25 private shared common terms.\n`)
+    }
+    const ctx = await boot(vault, undefined, ['    maxSearchResults: 2'], true)
+    const broad = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('broad-private-search'), name: 'wiki_search', arguments: { query: 'DSH rc25 private unique' }, agent: agent('agent-1', vault) })
+    expect((JSON.parse(resultText(broad)) as { truncated: boolean }).truncated).toBe(true)
+
+    const privateCapture = await capture(ctx, 'private-common-title', 'DSH rc25 private unique', 'Private conclusion.', 'agent-1', vault, { scope: 'private' })
+    expect(privateCapture.isError).toBe(false)
+    const privateOut = JSON.parse(resultText(privateCapture)) as { written: boolean; id: string }
+    expect(privateOut).toMatchObject({ written: true, id: 'agents/agent-1/dsh-rc25-private-unique.md' })
+    const privateRead = await readNote(ctx, 'private-common-read', privateOut.id, 'agent-1', vault)
+    const privateVersion = (JSON.parse(resultText(privateRead)) as { version: string }).version
+    const correction = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('private-common-correct'), name: 'memory_correct', arguments: { id: privateOut.id, baseVersion: privateVersion, summary: 'Private current conclusion.' }, agent: agent('agent-1', vault) })
+    expect(correction.isError).toBe(false)
+    const privateBody = (JSON.parse(resultText(await readNote(ctx, 'private-current-read', privateOut.id, 'agent-1', vault))) as { body: string }).body
+    expect(privateBody).toContain('Private current conclusion.')
+    expect(privateBody).not.toContain('Private conclusion.')
+
+    const shared = await capture(ctx, 'shared-common-title', 'DSH rc25 shared unique', 'Shared conclusion.', 'agent-1', vault)
+    expect(shared.isError).toBe(false)
+    expect(JSON.parse(resultText(shared))).toMatchObject({ written: true, id: 'shared/notes/dsh-rc25-shared-unique.md' })
   })
 
   it('still requires approval when capped searches omit an existing target', async () => {

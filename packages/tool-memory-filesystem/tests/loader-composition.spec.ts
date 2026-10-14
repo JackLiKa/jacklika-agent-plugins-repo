@@ -275,6 +275,19 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(single.truncated).toBe(false)
   })
 
+  it('finds an exact title across the full vault independently of broad search caps', async () => {
+    const vault = await makeWideVault(25)
+    await writeFile(join(vault, 'zz-current.md'), '---\ntitle: 用户偏好\n---\n\nzephyr-token.\n')
+    const ctx = await boot(vault, false, 2)
+    const broad = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('broad-title'), name: 'wiki_search', arguments: { query: 'zephyr-token' } })
+    expect(searchPage(broad).truncated).toBe(true)
+    const exact = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('exact-title'), name: 'wiki_search', arguments: { query: 'zephyr-token', exactTitle: '用户偏好' } })
+    expect(exact.isError).toBe(false)
+    expect(searchPage<{ id: string }>(exact)).toMatchObject({ hits: [{ id: 'zz-current.md' }], total: 1, truncated: false })
+    const empty = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('exact-empty'), name: 'wiki_search', arguments: { query: 'zephyr-token', exactTitle: '不存在的标题' } })
+    expect(searchPage(empty)).toMatchObject({ hits: [], total: 0, truncated: false })
+  })
+
   it('fails wiki_search when the semantic layer returns malformed output', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)

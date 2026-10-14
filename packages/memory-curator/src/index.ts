@@ -360,17 +360,16 @@ export function apply(ctx: Context, config: Config): void {
       const mode = args.mode ?? (requireExisting ? 'overwrite' : 'append')
       const tags = Array.isArray(args.tags) ? args.tags.map(String) : []
 
-      const [titleSearch, idSearch, targetNote] = await Promise.all([
-        callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.title }),
-        callTool<SearchPage>(ctx, exec, 'wiki_search', { query: targetId }),
+      const [titleSearch, targetNote] = await Promise.all([
+        callTool<SearchPage>(ctx, exec, 'wiki_search', { query: args.title, exactTitle: args.title }),
         readFrontmatter(ctx, exec, targetId),
       ])
 
       const targetHit: SearchHit[] = targetNote === undefined ? [] : [{ id: targetId, title: args.title, score: 0, backlinks: [] }]
-      const conflicts = dedupeHits(findConflicts(targetId, args.title, [...targetHit, ...titleSearch.hits, ...idSearch.hits]))
+      const conflicts = dedupeHits(findConflicts(targetId, args.title, [...targetHit, ...titleSearch.hits]))
       const conflictExists = conflicts.length > 0
       const finalId = requireExisting || explicitId || targetNote !== undefined ? targetId : conflicts[0]?.id ?? targetId
-      if (!requireExisting && !explicitId && targetNote === undefined && (titleSearch.truncated || idSearch.truncated || conflicts.length > 1)) {
+      if (!requireExisting && !explicitId && targetNote === undefined && (titleSearch.truncated || conflicts.length > 1)) {
         return {
           written: false,
           id: targetId,
@@ -454,7 +453,7 @@ export function apply(ctx: Context, config: Config): void {
 
       const response: Record<string, unknown> = {
         written: true,
-        id: finalId,
+        id: writeResult.id,
         mode: writeMode,
         // A declared update is not a conflict: the caller named the note it
         // meant to change, so nothing required approval or a skip decision.

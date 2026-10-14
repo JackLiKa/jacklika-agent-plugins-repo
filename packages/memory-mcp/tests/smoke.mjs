@@ -241,6 +241,17 @@ async function runSmoke() {
     assert(/title:.*MCP Parity: Capture!/.test(capText), `capture frontmatter title: ${capText}`)
     assert(capText.includes('# MCP Parity: Capture!'), 'capture heading')
     assert(capText.includes('- smoke'), 'capture tags')
+    for (let index = 0; index < 25; index += 1) {
+      await writeFile(join(vault, 'shared', 'notes', `noise-${index}.md`), `# Noise ${index}\n\nDSH rc25 private unique shared common terms.\n`)
+    }
+    const broadPrivate = await Promise.race([call('tools/call', {
+      name: 'wiki_search', arguments: { query: 'DSH rc25 private unique' },
+    }), earlyExit])
+    assert(JSON.parse(broadPrivate.content[0].text).length === 20, 'broad MCP keyword search is capped')
+    const newPrivateTitle = await Promise.race([call('tools/call', {
+      name: 'memory_capture', arguments: { title: 'DSH rc25 private unique', summary: 'New curated knowledge.' },
+    }), earlyExit])
+    assert(JSON.parse(newPrivateTitle.content[0].text).written === true, 'capped unrelated MCP search does not prevent first capture')
 
     // An explicit id without a shared/ prefix lands under the notes dir, the
     // same rewrite the curator's shared scope performs.

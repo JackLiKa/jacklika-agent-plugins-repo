@@ -333,8 +333,9 @@ async function readNote(absolutePath, depth, visited = new Set(), resolve) {
   return { id, frontmatter, body, links, version: noteVersion(text), linkedNotes }
 }
 
-async function searchNotes(query, maxResults = MAX_SEARCH_RESULTS) {
+async function searchNotes(query, maxResults = MAX_SEARCH_RESULTS, exactTitle) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const folded = exactTitle === undefined ? undefined : foldTitle(exactTitle)
   const notes = []
   for (const path of await listNotePaths()) {
     const text = await readFile(path, 'utf8')
@@ -348,6 +349,7 @@ async function searchNotes(query, maxResults = MAX_SEARCH_RESULTS) {
     notes.push({ id, title, links: extractLinks(text), body })
   }
   const hits = notes.filter(n => {
+    if (folded !== undefined) return folded !== '' && foldTitle(n.title) === folded
     const haystack = `${n.id} ${n.title} ${n.body}`.toLowerCase()
     return terms.every(t => haystack.includes(t))
   })
@@ -581,16 +583,16 @@ async function captureNote(a = {}) {
   const tags = Array.isArray(a.tags) ? a.tags.map(String) : []
 
   const now = formatBeijingTime(new Date())
-  const [titleHits, idHits, target] = await Promise.all([
-    searchNotes(a.title), searchNotes(targetId), captureFrontmatter(targetId, a.title, tags, now),
+  const [titleHits, target] = await Promise.all([
+    searchNotes(a.title, MAX_SEARCH_RESULTS, a.title), captureFrontmatter(targetId, a.title, tags, now),
   ])
-  const hits = [...new Map([...(target.existed ? [{ id: targetId, title: a.title }] : []), ...titleHits, ...idHits].map(hit => [hit.id, hit])).values()]
+  const hits = [...new Map([...(target.existed ? [{ id: targetId, title: a.title }] : []), ...titleHits].map(hit => [hit.id, hit])).values()]
   const conflicts = findCaptureConflicts(targetId, a.title, hits)
   const conflictExists = conflicts.length > 0
   const requireExisting = a.requireExisting === true
   const explicitId = typeof a.id === 'string' && a.id !== ''
   const finalId = requireExisting || explicitId || target.existed ? targetId : conflicts[0]?.id ?? targetId
-  if (!requireExisting && !explicitId && !target.existed && (titleHits.length === MAX_SEARCH_RESULTS || idHits.length === MAX_SEARCH_RESULTS || conflicts.length > 1)) {
+  if (!requireExisting && !explicitId && !target.existed && (titleHits.length === MAX_SEARCH_RESULTS || conflicts.length > 1)) {
     return { written: false, id: targetId, conflict: true, reason: 'ambiguous or truncated conflict search; provide the exact existing note id before writing' }
   }
 

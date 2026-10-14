@@ -723,6 +723,10 @@ function assertPositiveInteger(name: string, value: number): void {
   }
 }
 
+function foldSearchTitle(title: string): string {
+  return title.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
 /**
  * Register the `wiki_read`, `wiki_search`, and `wiki_write` tools on
  * `ctx.tools`.
@@ -785,12 +789,16 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_search',
-    description: 'Search the wiki vault by note title or body keyword. Terms are OR-matched; results are ranked by field-weighted relevance (title/id hits outrank body hits, rare terms weigh more, notes linked from strong hits get a boost, and results may be fused with semantic search when available). Returns { hits, total, truncated }: each hit carries the note id, title, score, and backlinks, total counts every match before the result cap, and truncated is true when that cap cut the list. Use this before asking the user which note to read.',
+    description: 'Search the wiki vault by note title or body keyword. Terms are OR-matched and ranked by relevance. Optional exactTitle instead matches folded titles across the full vault before applying the result cap, without semantic ranking; use it to check for an exact title independently of broad keyword hits. Returns { hits, total, truncated }: each hit carries id, title, score, and backlinks; total counts matches before the cap.',
     parameters: {
       query: {
         type: 'string',
         required: true,
         description: 'Keyword or phrase to match against note titles and bodies.',
+      },
+      exactTitle: {
+        type: 'string',
+        description: 'Optional exact title lookup across the full vault, using NFC case folding and collapsed separators instead of ranked keyword matching. Results retain the usual cap and total count.',
       },
     },
     output: {
@@ -820,6 +828,15 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
       const index = await buildIndex(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot))
+      if (args.exactTitle !== undefined) {
+        const folded = foldSearchTitle(args.exactTitle)
+        const exact = folded === '' ? [] : [...index.values()]
+          .filter(note => foldSearchTitle(note.title) === folded)
+          .sort((a, b) => codeUnitCompare(a.id, b.id))
+        const hits = exact.slice(0, resolved.maxSearchResults)
+          .map(note => ({ id: note.id, title: note.title, score: 1, backlinks: note.backlinks }))
+        return { hits, total: exact.length, truncated: hits.length < exact.length }
+      }
       let hits = rankNotes(index, args.query)
       // Optional semantic layer: when `wiki_semantic_search` is mounted, fuse
       // both rankings via reciprocal rank fusion. Only the dispatch is
