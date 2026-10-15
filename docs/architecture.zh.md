@@ -21,6 +21,14 @@ Vault          <workspace>/.plugins/memory/     — Obsidian 兼容的 Markdown 
 
 所有存入 Vault、给人看的时间戳都使用 **Asia/Shanghai（`+08:00`）** 时间，包括笔记 frontmatter 的 `created` 和 append 追加小节的标题。这保证了本地审计日志的可读性，也避免 UTC `Z` 与本地时间混用。
 
+## 图谱可观测性与归档
+
+`wiki_graph` 在构建节点、解析 `[[link]]` 目标和生成关键词边**之前**排除 `excludeDirs`（默认 `['archive']`）。仅指向已归档目标的链接变为不可解析，不会重定向到 `archive/`。归档 id 仍可由 `wiki_read` 直接读取；以存在但被排除的笔记为图谱中心会得到可区分的排除错误。返回的 `excludedDirs` 表示配置策略，而不是被排除笔记的数量。
+
+`wiki_graph` 除既有的 `truncated`/`edgesTruncated` 外还返回 `nodesTotal`/`nodesReturned` 和 `edgesTotal`/`edgesReturned`/`edgesDropped`。`edgesTotal` 是**已返回节点之间**边上限应用前的边数；被节点上限裁掉的节点所关联的边不计入其中。仅当 `truncated:false` **且** `edgesTruncated:false` 时，返回图谱才可视为穷尽。单次 `maxNodes`/`maxEdges` 覆盖可提高验收预算，但受配置 `maxNodesLimit`/`maxEdgesLimit` 钳制；`effectiveMaxNodes`/`effectiveMaxEdges` 明确返回实际生效上限。提高预算需防止工具响应过大。
+
+全库归档隔离验收应使用 `wiki_graph_audit()`：它在输出截断之前检查索引及边端点，返回 `archiveExcluded`、`complete`、`scanStable`、`skippedEntries` 与内容指纹。`complete:false` 不能作为隔离证据。若要逐页读取完整节点/边列表而不放大单次模型响应，可调用 `wiki_graph_page(kind:'nodes'|'edges', pageSize, cursor?)`。分页顺序确定、每次响应有上限；每页重建并复核 Vault，指纹过期会拒绝而非静默混合版本。这是乐观一致性，不是针对外部写入的原子快照；超大图可能超过服务端工作量上限。
+
 ## 写协调链（tool-calling 路径）
 
 ```

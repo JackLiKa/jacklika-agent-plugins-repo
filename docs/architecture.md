@@ -21,6 +21,14 @@ Vault          <workspace>/.plugins/memory/     — Obsidian-compatible Markdown
 
 All human-facing timestamps stored in the vault use **Asia/Shanghai (`+08:00`)** time, including note `created` frontmatter and append-section headings. This keeps the local audit log readable for the project maintainer and avoids mixing UTC `Z` with local wall-clock dates.
 
+## Graph observability and archives
+
+`wiki_graph` removes `excludeDirs` (default `['archive']`) **before** constructing nodes, resolving `[[link]]` targets, or deriving keyword edges. A link to an archived-only target remains unresolved; it is not redirected to `archive/`. Direct `wiki_read` still works for an archived id, while centering `wiki_graph` on an existing excluded note returns a distinct exclusion error. The result's `excludedDirs` reports the configured policy, not the number of notes excluded.
+
+`wiki_graph` reports `nodesTotal`/`nodesReturned` and `edgesTotal`/`edgesReturned`/`edgesDropped`, plus the existing `truncated`/`edgesTruncated`. `edgesTotal` counts edges **among the returned nodes** before the edge cap; edges involving nodes lost to the node cap are not counted. Only `truncated:false` **and** `edgesTruncated:false` prove the returned graph is exhaustive. Per-call `maxNodes`/`maxEdges` overrides can raise the default budgets for an audit, but are clamped to configured `maxNodesLimit`/`maxEdgesLimit`; `effectiveMaxNodes`/`effectiveMaxEdges` disclose the applied caps. Raise budgets carefully to avoid oversized tool responses.
+
+For vault-wide archive isolation, use `wiki_graph_audit()`: it checks the index and edge endpoints before output capping and returns `archiveExcluded` with `complete`, `scanStable`, `skippedEntries`, and a content fingerprint. A false `complete` is not evidence of isolation. To consume the actual complete node/edge lists without expanding one model response, use `wiki_graph_page(kind:'nodes'|'edges', pageSize, cursor?)`. Pages are ordered deterministically and bounded per response; each rebuilds and rechecks the vault, rejecting a stale fingerprint instead of silently mixing revisions. This is optimistic consistency, not an atomic snapshot against external writers; very large scans can exceed server-work limits.
+
 ## Write-coordination chain (tool-calling path)
 
 ```

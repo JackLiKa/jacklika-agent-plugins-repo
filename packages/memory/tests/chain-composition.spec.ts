@@ -441,9 +441,15 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     })
     expect(graph.isError).toBe(false)
     if (graph.isError) throw new Error(resultText(graph))
-    const parsed = JSON.parse(resultText(graph)) as { nodes: { id: string }[]; edges: { from: string; to: string }[] }
+    const parsed = JSON.parse(resultText(graph)) as {
+      nodes: { id: string }[]; edges: { from: string; to: string }[];
+      edgesTotal: number; edgesReturned: number; edgesDropped: number;
+      truncated: boolean; edgesTruncated: boolean; excludedDirs: string[]
+    }
     expect(parsed.nodes.map(node => node.id)).not.toContain(`archive/${forgottenId}`)
     expect(parsed.edges.some(edge => edge.to.startsWith('archive/'))).toBe(false)
+    expect(parsed).toMatchObject({ truncated: false, edgesTruncated: false, excludedDirs: ['archive'] })
+    expect(parsed.edgesReturned + parsed.edgesDropped).toBe(parsed.edgesTotal)
   })
 
   it('keeps distinct non-Latin titles in distinct notes across the whole ladder', async () => {

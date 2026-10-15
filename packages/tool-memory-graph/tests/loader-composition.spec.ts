@@ -13,12 +13,14 @@ import * as ToolMemoryGraph from '@jacklika/dsh-tool-memory-graph'
 
 let root: string | undefined
 let context: Context | undefined
+const vaults: string[] = []
 
 afterEach(async () => {
   await context?.fiber.dispose()
   context = undefined
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
+  await Promise.all(vaults.splice(0).map(vault => rm(vault, { recursive: true, force: true })))
 })
 
 function resultText(result: { content: { type: string; text?: string }[] }): string {
@@ -67,6 +69,7 @@ async function boot(vaultRoot: string, extraConfig: string[] = []): Promise<Cont
 
 async function makeVault(): Promise<string> {
   const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-graph-vault-'))
+  vaults.push(vaultRoot)
   const concepts = join(vaultRoot, 'concepts')
   await mkdir(concepts)
   await writeFile(join(concepts, 'RAG.md'), '# Retrieval-Augmented Generation\n\nRAG combines [[embedding]] retrieval with LLM generation.\n')
@@ -77,6 +80,7 @@ async function makeVault(): Promise<string> {
 
 async function makeKeywordVault(): Promise<string> {
   const vaultRoot = await mkdtemp(join(tmpdir(), 'dsh-graph-keyword-'))
+  vaults.push(vaultRoot)
   const notes = join(vaultRoot, 'notes')
   await mkdir(notes)
   await writeFile(join(notes, 'b.md'), '# B\n\nB contains word1.\n')
@@ -91,6 +95,14 @@ interface Graph {
   edges: { from: string; to: string; type?: 'link' | 'keyword'; keywords?: string[]; weight?: number }[]
   truncated: boolean
   edgesTruncated: boolean
+  nodesTotal: number
+  nodesReturned: number
+  edgesTotal: number
+  edgesReturned: number
+  edgesDropped: number
+  effectiveMaxNodes: number
+  effectiveMaxEdges: number
+  excludedDirs: string[]
   depth?: number
 }
 
@@ -124,6 +136,8 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     const ctx = await boot(vault)
     const names = ctx.tools.schemas().map(s => s.name)
     expect(names).toContain('wiki_graph')
+    expect(names).toContain('wiki_graph_audit')
+    expect(names).toContain('wiki_graph_page')
   })
 
   it('withdraws wiki_graph when its Loader fiber unloads', async () => {
@@ -134,6 +148,8 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     if (entry?.fiber === undefined) throw new Error('active graph entry missing')
     await entry.fiber.dispose()
     expect(tools.schemas().some(schema => schema.name === 'wiki_graph')).toBe(false)
+    expect(tools.schemas().some(schema => schema.name === 'wiki_graph_audit')).toBe(false)
+    expect(tools.schemas().some(schema => schema.name === 'wiki_graph_page')).toBe(false)
   })
 
   it('returns the full vault graph with nodes and resolved edges', async () => {
@@ -180,6 +196,31 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
         name: 'wiki_graph', arguments: { id: 'archive/shared/notes/target.md', depth: 1 },
       })
       expect(archived.isError).toBe(true)
+      if (!archived.isError) throw new Error('expected excluded archive center to fail')
+      expect(archived.error.message).toContain('excluded by excludeDirs')
+      expect(archived.error.message).toContain('archive/shared/notes/target.md')
+      const missing = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId('archive-missing-center'),
+        name: 'wiki_graph', arguments: { id: 'archive/shared/notes/missing.md', depth: 1 },
+      })
+      expect(missing.isError).toBe(true)
+      if (!missing.isError) throw new Error('expected missing archive center to fail')
+      expect(missing.error.message).toContain('note not found')
+      expect(whole.excludedDirs).toContain('archive')
+      expect(subgraph.excludedDirs).toContain('archive')
+      expect(subgraph.edgesTruncated).toBe(false)
+      const auditResult = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId('archive-audit'),
+        name: 'wiki_graph_audit', arguments: {},
+      })
+      expect(auditResult.isError).toBe(false)
+      if (auditResult.isError) throw new Error(auditResult.error.message)
+      expect(JSON.parse(resultText(auditResult))).toMatchObject({
+        indexedNodes: 1, checkedLinks: 1, excludedDirsApplied: ['archive'],
+        excludedNodesInIndex: 0, excludedEdgeEndpoints: 0,
+        skippedEntries: 0, scanStable: true, complete: true,
+        snapshotId: expect.stringMatching(/^[a-f0-9]{64}$/),
+      })
     } finally {
       await context?.fiber.dispose()
       context = undefined
@@ -221,6 +262,7 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     const graph = await graphAll(ctx, 'graph-cap')
     expect(graph.truncated).toBe(true)
     expect(graph.nodes.map(node => node.id)).toEqual(['notes-x.md', 'notes/mmm.md'])
+    expect(graph).toMatchObject({ nodesTotal: 3, nodesReturned: 2, edgesTotal: 0, edgesReturned: 0, edgesDropped: 0 })
   })
 
   it('truncates a subgraph by distance from the center, keeping the center and its nearest notes', async () => {
@@ -236,6 +278,7 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     // dropping the direct link target would leave the center unconnected.
     expect(graph.nodes.map(node => node.id)).toEqual(['center.md', 'zeta.md'])
     expect(graph.edges).toEqual([{ from: 'center.md', to: 'zeta.md' }])
+    expect(graph).toMatchObject({ nodesTotal: 3, nodesReturned: 2, edgesTotal: 1, edgesReturned: 1, edgesDropped: 0 })
     for (const edge of graph.edges) {
       expect(graph.nodes.some(node => node.id === edge.from)).toBe(true)
       expect(graph.nodes.some(node => node.id === edge.to)).toBe(true)
@@ -312,6 +355,13 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
       expect(result.isError).toBe(true)
       if (!result.isError) throw new Error('expected wiki_graph failure')
       expect(result.error.message).toContain('cannot read note "island.md"')
+      const audit = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId('graph-skip-audit'),
+        name: 'wiki_graph_audit', arguments: {},
+      })
+      expect(audit.isError).toBe(false)
+      if (audit.isError) throw new Error(audit.error.message)
+      expect(JSON.parse(resultText(audit))).toMatchObject({ complete: false, skippedEntries: 1 })
     } finally {
       await chmod(island, 0o644)
     }
@@ -330,6 +380,242 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     expect(graph.edges[0]?.to).toBe('notes/c.md')
     expect(graph.edges[0]?.type).toBe('keyword')
     expect(graph.edges[0]?.keywords).toEqual(['contains', 'word1'])
+    expect(graph).toMatchObject({
+      nodesTotal: 3, nodesReturned: 3, edgesTotal: 2, edgesReturned: 1, edgesDropped: 1,
+      effectiveMaxNodes: 200, effectiveMaxEdges: 1, excludedDirs: ['archive'],
+    })
+    expect(graph.edgesReturned + graph.edgesDropped).toBe(graph.edgesTotal)
+  })
+
+  it('clamps per-call edge and node budgets and reports the effective caps', async () => {
+    const vault = await makeKeywordVault()
+    const ctx = await boot(vault, ['    maxNodes: 2', '    maxNodesLimit: 3', '    maxEdges: 1', '    maxEdgesLimit: 4'])
+    const query = async (callId: string, args: Record<string, number>) => {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId(callId), name: 'wiki_graph', arguments: args,
+      })
+      expect(result.isError).toBe(false)
+      if (result.isError) throw new Error(result.error.message)
+      return JSON.parse(resultText(result)) as Graph
+    }
+    const capped = await query('budget-default', {})
+    expect(capped).toMatchObject({ nodesTotal: 3, nodesReturned: 2, truncated: true, effectiveMaxNodes: 2, effectiveMaxEdges: 1 })
+    const exhaustive = await query('budget-exhaustive', { maxNodes: 3, maxEdges: 4 })
+    expect(exhaustive).toMatchObject({
+      nodesTotal: 3, nodesReturned: 3, truncated: false, effectiveMaxNodes: 3,
+      edgesTotal: 2, edgesReturned: 2, edgesDropped: 0, edgesTruncated: false, effectiveMaxEdges: 4,
+    })
+    const clamped = await query('budget-clamped', { maxNodes: 9999, maxEdges: 9999 })
+    expect(clamped).toMatchObject({ effectiveMaxNodes: 3, effectiveMaxEdges: 4, nodesTotal: 3, edgesTotal: 2 })
+    expect(clamped.edges).toEqual(exhaustive.edges)
+    expect(await query('budget-repeat', { maxNodes: 3, maxEdges: 4 })).toEqual(exhaustive)
+    for (const graph of [capped, exhaustive, clamped]) {
+      expect(graph.nodesReturned).toBe(graph.nodes.length)
+      expect(graph.edgesReturned).toBe(graph.edges.length)
+      expect(graph.edgesReturned + graph.edgesDropped).toBe(graph.edgesTotal)
+    }
+  })
+
+  it('pages complete graph nodes and edges with a stable content cursor', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, ['    pageSizeLimit: 2'])
+    const call = async (callId: string, args: Record<string, unknown>) => {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId(callId),
+        name: 'wiki_graph_page', arguments: args,
+      })
+      expect(result.isError).toBe(false)
+      if (result.isError) throw new Error(result.error.message)
+      return JSON.parse(resultText(result)) as {
+        kind: string; nodes?: { id: string }[]; edges?: { from: string; to: string }[];
+        total: number; pageSize: number; offset: number; snapshotId: string; nextCursor: string | null
+      }
+    }
+    const graph = await graphAll(ctx, 'page-expected-graph')
+    const nodeIds: string[] = []
+    const edgeKeys: string[] = []
+    for (const kind of ['nodes', 'edges'] as const) {
+      let cursor: string | null = null
+      let pages = 0
+      do {
+        const args = { kind, pageSize: 1, ...(cursor === null ? {} : { cursor }) }
+        const page = await call(`page-${kind}-${pages}`, args)
+        expect(page.kind).toBe(kind)
+        expect(page.pageSize).toBe(1)
+        expect(page.total).toBe(kind === 'nodes' ? graph.nodes.length : graph.edges.length)
+        expect(page.snapshotId).toMatch(/^[a-f0-9]{64}$/)
+        nodeIds.push(...(page.nodes ?? []).map(node => node.id))
+        edgeKeys.push(...(page.edges ?? []).map(edge => `${edge.from}->${edge.to}`))
+        cursor = page.nextCursor
+        pages++
+        expect(pages).toBeLessThan(20)
+      } while (cursor !== null)
+    }
+    expect(nodeIds).toEqual(graph.nodes.map(node => node.id))
+    expect(edgeKeys.sort()).toEqual(graph.edges.map(edge => `${edge.from}->${edge.to}`).sort())
+    const clamped = await call('page-clamped', { kind: 'nodes', pageSize: 9999 })
+    expect(clamped.pageSize).toBe(2)
+    expect(clamped.nodes).toHaveLength(2)
+    expect(await call('page-repeat', { kind: 'nodes', pageSize: 9999 })).toEqual(clamped)
+    expect(clamped.nextCursor).not.toBeNull()
+    for (const args of [
+      { kind: 'nodes', cursor: 'not-a-cursor' },
+      { kind: 'edges', cursor: clamped.nextCursor },
+    ]) {
+      const invalid = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId(`page-invalid-${args.kind}`),
+        name: 'wiki_graph_page', arguments: args,
+      })
+      expect(invalid.isError).toBe(true)
+      if (!invalid.isError) throw new Error('expected invalid graph cursor')
+      expect(invalid.error.message).toContain('invalid graph cursor')
+    }
+    await writeFile(join(vault, 'embedding.md'), '# Embedding changed\n\nNew text.\n')
+    const stale = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('page-stale'),
+      name: 'wiki_graph_page', arguments: { kind: 'nodes', pageSize: 2, cursor: clamped.nextCursor },
+    })
+    expect(stale.isError).toBe(true)
+    if (!stale.isError) throw new Error('expected stale graph cursor')
+    expect(stale.error.message).toContain('stale graph snapshot')
+  })
+
+  it('continues a stateless cursor in a fresh plugin context', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const first = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('fresh-page-first'),
+      name: 'wiki_graph_page', arguments: { kind: 'nodes', pageSize: 1 },
+    })
+    expect(first.isError).toBe(false)
+    if (first.isError) throw new Error(first.error.message)
+    const cursor = (JSON.parse(resultText(first)) as { nextCursor: string | null }).nextCursor
+    expect(cursor).not.toBeNull()
+    const fresh = new Context()
+    try {
+      await fresh.plugin(SystemPrompt)
+      await fresh.plugin(ToolRuntime)
+      await fresh.plugin(ToolMemoryGraph, { vaultRoot: vault })
+      const second = await fresh.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId('fresh-page-second'),
+        name: 'wiki_graph_page', arguments: { kind: 'nodes', pageSize: 1, cursor },
+      })
+      expect(second.isError).toBe(false)
+      if (second.isError) throw new Error(second.error.message)
+      expect(JSON.parse(resultText(second))).toMatchObject({ offset: 1, pageSize: 1 })
+    } finally {
+      await fresh.fiber.dispose()
+    }
+  })
+
+  it('keeps subgraph paging cursors bound to the center and depth', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const id = 'concepts/RAG.md'
+    const first = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('subgraph-page-first'),
+      name: 'wiki_graph_page', arguments: { kind: 'edges', id, depth: 1, pageSize: 1 },
+    })
+    expect(first.isError).toBe(false)
+    if (first.isError) throw new Error(first.error.message)
+    const page = JSON.parse(resultText(first)) as { nextCursor: string | null; total: number; edges: unknown[] }
+    expect(page.total).toBeGreaterThan(1)
+    expect(page.edges).toHaveLength(1)
+    expect(page.nextCursor).not.toBeNull()
+    const second = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('subgraph-page-second'),
+      name: 'wiki_graph_page', arguments: { kind: 'edges', id, depth: 1, pageSize: 1, cursor: page.nextCursor },
+    })
+    expect(second.isError).toBe(false)
+    for (const args of [
+      { kind: 'edges', id, depth: 2, cursor: page.nextCursor },
+      { kind: 'edges', id: 'embedding.md', depth: 1, cursor: page.nextCursor },
+    ]) {
+      const wrong = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId(`subgraph-page-mismatch-${args.depth}-${args.id}`),
+        name: 'wiki_graph_page', arguments: args,
+      })
+      expect(wrong.isError).toBe(true)
+      if (!wrong.isError) throw new Error('expected mismatched graph cursor')
+      expect(wrong.error.message).toContain('invalid graph cursor')
+    }
+  })
+
+  it('pages beyond legacy single-call caps without returning an unbounded page', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, [
+      '    maxNodes: 1', '    maxNodesLimit: 1', '    maxEdges: 1', '    maxEdgesLimit: 1',
+      '    pageSizeLimit: 2', '    pageScanNodesLimit: 3', '    pageScanEdgesLimit: 100',
+    ])
+    const capped = await graphAll(ctx, 'legacy-cap')
+    expect(capped.nodes).toHaveLength(1)
+    const page = async (kind: string, cursor?: string, pageSize = 100) => {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId(`beyond-cap-${kind}-${cursor === undefined ? 0 : 1}`),
+        name: 'wiki_graph_page', arguments: { kind, pageSize, ...(cursor === undefined ? {} : { cursor }) },
+      })
+      expect(result.isError).toBe(false)
+      if (result.isError) throw new Error(result.error.message)
+      return JSON.parse(resultText(result)) as { nodes: { id: string }[]; edges: unknown[]; total: number; pageSize: number; nextCursor: string | null }
+    }
+    const nodes = await page('nodes')
+    expect(nodes).toMatchObject({ total: 3, pageSize: 2 })
+    expect(nodes.nodes).toHaveLength(2)
+    expect(nodes.nextCursor).not.toBeNull()
+    expect((await page('nodes', nodes.nextCursor!)).nodes).toHaveLength(1)
+    const edges = await page('edges', undefined, 1)
+    expect(edges.total).toBeGreaterThan(1)
+    expect(edges.edges).toHaveLength(1)
+    expect(edges.nextCursor).not.toBeNull()
+    expect((await page('edges', edges.nextCursor!, 1)).edges).toHaveLength(1)
+  })
+
+  it('refuses page scans above the configured node limit', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, ['    pageScanNodesLimit: 2'])
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('page-scan-limit'),
+      name: 'wiki_graph_page', arguments: { kind: 'edges' },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected bounded graph scan failure')
+    expect(result.error.message).toContain('pageScanNodesLimit')
+  })
+
+  it('refuses page scans above the configured edge limit without blocking the compact audit', async () => {
+    const vault = await makeKeywordVault()
+    const ctx = await boot(vault, ['    pageScanEdgesLimit: 1'])
+    const page = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('page-edge-scan-limit'),
+      name: 'wiki_graph_page', arguments: { kind: 'edges' },
+    })
+    expect(page.isError).toBe(true)
+    if (!page.isError) throw new Error('expected bounded edge scan failure')
+    expect(page.error.message).toContain('pageScanEdgesLimit')
+    const audit = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('page-limit-audit'),
+      name: 'wiki_graph_audit', arguments: {},
+    })
+    expect(audit.isError).toBe(false)
+    if (audit.isError) throw new Error(audit.error.message)
+    expect(JSON.parse(resultText(audit))).toMatchObject({ complete: true, archiveExcluded: true })
+  })
+
+  it('reports archive inclusion instead of claiming isolation when exclusions are disabled', async () => {
+    const vault = await makeVault()
+    await mkdir(join(vault, 'archive'))
+    await writeFile(join(vault, 'archive', 'memory.md'), '# Embedding\n\nRAG embedding memory.\n')
+    const ctx = await boot(vault, ['    excludeDirs: []'])
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('archive-included-audit'),
+      name: 'wiki_graph_audit', arguments: {},
+    })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error(result.error.message)
+    expect(JSON.parse(resultText(result))).toMatchObject({
+      indexedNodes: 4, excludedDirsApplied: [], archiveNodesInIndex: 1,
+      complete: true, archiveExcluded: false,
+    })
   })
 
   it('clamps a requested depth to maxDepthLimit and reports the effective depth', async () => {
@@ -363,6 +649,26 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     const graph = await graphFrom(ctx, 'graph-depth-default-clamp', 'center.md', 3)
     expect(graph.depth).toBe(1)
     expect(graph.nodes.map(node => node.id).sort()).toEqual(['center.md', 'zeta.md'])
+  })
+
+  it('refuses nonpositive per-call budgets', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    for (const args of [{ maxNodes: 0 }, { maxEdges: 0 }]) {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId(`invalid-budget-${Object.keys(args)[0]}`),
+        name: 'wiki_graph', arguments: args,
+      })
+      expect(result.isError).toBe(true)
+      if (!result.isError) throw new Error('expected invalid budget to fail')
+      expect(result.error.message).toContain('must be a positive integer')
+    }
+  })
+
+  it('refuses to register wiki_graph with an invalid hard edge limit', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, ['    maxEdgesLimit: 0'])
+    expect(ctx.tools.schemas().some(schema => schema.name === 'wiki_graph')).toBe(false)
   })
 
   it('refuses to register wiki_graph when maxDepthLimit is below maxDepth', async () => {

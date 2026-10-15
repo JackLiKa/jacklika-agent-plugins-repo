@@ -12,7 +12,8 @@
  * @module @jacklika/dsh-tool-memory-graph
  */
 
-import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFile, stat } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -47,8 +48,13 @@ export interface Config {
   maxDepthLimit?: number
   /** Maximum nodes returned in one graph. */
   maxNodes?: number
+  maxNodesLimit?: number
   /** Maximum edges returned in one graph. */
   maxEdges?: number
+  maxEdgesLimit?: number
+  pageSizeLimit?: number
+  pageScanNodesLimit?: number
+  pageScanEdgesLimit?: number
   /** Descend into dot-directories besides the fixed exclusions while indexing. */
   indexHiddenDirs?: boolean
   excludeDirs?: string[]
@@ -61,7 +67,12 @@ export const Config: z<Config> = z.object({
   maxDepth: z.number().default(1),
   maxDepthLimit: z.number().default(20),
   maxNodes: z.number().default(200),
+  maxNodesLimit: z.number().default(2000),
   maxEdges: z.number().default(1000),
+  maxEdgesLimit: z.number().default(20000),
+  pageSizeLimit: z.number().default(250),
+  pageScanNodesLimit: z.number().default(5000),
+  pageScanEdgesLimit: z.number().default(250000),
   indexHiddenDirs: z.boolean().default(false),
   excludeDirs: z.array(z.string()).default(['archive']),
 })
@@ -101,6 +112,14 @@ interface MemoryGraph {
   truncated: boolean
   /** Whether `maxEdges` truncated the edge set. */
   edgesTruncated: boolean
+  nodesTotal: number
+  nodesReturned: number
+  edgesTotal: number
+  edgesReturned: number
+  edgesDropped: number
+  effectiveMaxNodes: number
+  effectiveMaxEdges: number
+  excludedDirs: string[]
   /** Depth actually traversed, after clamping to `maxDepthLimit`; present on subgraph results. */
   depth?: number
 }
@@ -212,7 +231,7 @@ function noteTitleFromText(text: string, id: string): string {
  * share one or more terms receives two directed edges (A→B and B→A) carrying
  * the sorted shared keywords and a combined weight.
  */
-function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>): GraphEdge[] {
+function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>, maxPairs?: number): GraphEdge[] {
   const inverted = new Map<string, string[]>()
   for (const [id, terms] of noteTerms) {
     for (const term of terms.keys()) {
@@ -232,7 +251,11 @@ function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>): GraphEd
         const [first, second] = codeUnitCompare(a, b) <= 0 ? [a, b] : [b, a]
         const weight = (noteTerms.get(a)?.get(term) ?? 0) + (noteTerms.get(b)?.get(term) ?? 0)
         const key = `${first}\x00${second}`
-        const entry = pairData.get(key) ?? { keywords: [], weight: 0 }
+        const existing = pairData.get(key)
+        if (existing === undefined && maxPairs !== undefined && pairData.size >= maxPairs) {
+          throw new Error('tool-memory-graph: graph page scan exceeds pageScanEdgesLimit')
+        }
+        const entry = existing ?? { keywords: [], weight: 0 }
         entry.keywords.push(term)
         entry.weight += weight
         pairData.set(key, entry)
@@ -287,6 +310,36 @@ async function loadVaultNotes(
   return { parsed, parsedById, linkResolver, skipped }
 }
 
+type LoadedNotes = Awaited<ReturnType<typeof loadVaultNotes>>
+
+function snapshotHash(loaded: LoadedNotes, resolved: ResolvedConfig): string {
+  const hash = createHash('sha256')
+  hash.update(JSON.stringify([resolved.extensions, resolved.excludeDirs, resolved.indexHiddenDirs]))
+  for (const note of [...loaded.parsed].sort((a, b) => codeUnitCompare(a.id, b.id))) {
+    hash.update(JSON.stringify([note.id, note.text]))
+  }
+  return hash.digest('hex')
+}
+
+async function loadStableNotes(
+  root: string, resolved: ResolvedConfig, onSkip: (path: string, error: unknown) => void,
+): Promise<{ loaded: LoadedNotes; snapshotId: string; verify: () => Promise<{ scanStable: boolean; skippedEntries: number }> }> {
+  const skipped = new Set<string>()
+  const trackSkip = (path: string, error: unknown): void => {
+    skipped.add(path)
+    onSkip(path, error)
+  }
+  const loaded = await loadVaultNotes(root, resolved, trackSkip)
+  const snapshotId = snapshotHash(loaded, resolved)
+  return {
+    loaded, snapshotId,
+    verify: async () => {
+      const confirmation = await loadVaultNotes(root, resolved, trackSkip)
+      return { scanStable: snapshotId === snapshotHash(confirmation, resolved), skippedEntries: skipped.size }
+    },
+  }
+}
+
 /** Build the skip callback that reports unreadable entries to the Loader logger. */
 function skipLogger(ctx: Context, root: string): (path: string, error: unknown) => void {
   return (path, error) => {
@@ -308,16 +361,33 @@ function assertExtensions(extensions: string[]): void {
  * vault returns the same subset regardless of directory-listing order. Below
  * the budget the edge list is returned untouched.
  */
+function compareEdges(a: GraphEdge, b: GraphEdge): number {
+  const linkFirst = (a.type === 'keyword' ? 1 : 0) - (b.type === 'keyword' ? 1 : 0)
+  if (linkFirst !== 0) return linkFirst
+  const weightOrder = (b.weight ?? 0) - (a.weight ?? 0)
+  if (weightOrder !== 0) return weightOrder
+  return codeUnitCompare(a.from, b.from) || codeUnitCompare(a.to, b.to)
+}
+
 function capEdges(edges: GraphEdge[], maxEdges: number): { edges: GraphEdge[]; truncated: boolean } {
   if (edges.length <= maxEdges) return { edges, truncated: false }
-  const ordered = [...edges].sort((a, b) => {
-    const linkFirst = (a.type === 'keyword' ? 1 : 0) - (b.type === 'keyword' ? 1 : 0)
-    if (linkFirst !== 0) return linkFirst
-    const weightOrder = (b.weight ?? 0) - (a.weight ?? 0)
-    if (weightOrder !== 0) return weightOrder
-    return codeUnitCompare(a.from, b.from) || codeUnitCompare(a.to, b.to)
-  })
-  return { edges: ordered.slice(0, maxEdges), truncated: true }
+  return { edges: [...edges].sort(compareEdges).slice(0, maxEdges), truncated: true }
+}
+
+function graphResult(
+  nodes: GraphNode[], edges: GraphEdge[], nodesTotal: number,
+  maxNodes: number, maxEdges: number, excludedDirs: string[], depth?: number,
+): MemoryGraph {
+  const budgeted = capEdges(edges, maxEdges)
+  return {
+    nodes, edges: budgeted.edges,
+    truncated: nodes.length < nodesTotal, edgesTruncated: budgeted.truncated,
+    nodesTotal, nodesReturned: nodes.length,
+    edgesTotal: edges.length, edgesReturned: budgeted.edges.length,
+    edgesDropped: edges.length - budgeted.edges.length,
+    effectiveMaxNodes: maxNodes, effectiveMaxEdges: maxEdges, excludedDirs,
+    ...(depth === undefined ? {} : { depth }),
+  }
 }
 
 /**
@@ -331,12 +401,15 @@ function capEdges(edges: GraphEdge[], maxEdges: number): { edges: GraphEdge[]; t
 async function buildGraph(
   root: string,
   resolved: ResolvedConfig,
+  maxNodes: number,
+  maxEdges: number,
   onSkip?: (path: string, error: unknown) => void,
+  loaded?: LoadedNotes,
+  maxKeywordPairs?: number,
 ): Promise<MemoryGraph> {
-  const { parsed, linkResolver } = await loadVaultNotes(root, resolved, onSkip)
+  const { parsed, linkResolver } = loaded ?? await loadVaultNotes(root, resolved, onSkip)
 
-  const truncated = parsed.length > resolved.maxNodes
-  const capped = [...parsed].sort((a, b) => codeUnitCompare(a.id, b.id)).slice(0, resolved.maxNodes)
+  const capped = [...parsed].sort((a, b) => codeUnitCompare(a.id, b.id)).slice(0, maxNodes)
   const idSet = new Set(capped.map(p => p.id))
 
   const nodes: GraphNode[] = capped.map(p => ({ id: p.id, title: noteTitleFromText(p.text, p.id) }))
@@ -352,12 +425,11 @@ async function buildGraph(
   }
 
   const noteTerms = new Map(capped.map(p => [p.id, p.terms]))
-  edges.push(...buildKeywordEdges(noteTerms))
+  edges.push(...buildKeywordEdges(noteTerms, maxKeywordPairs))
 
   // Safety: every edge endpoint must be in the returned node set.
   const safeEdges = edges.filter(e => idSet.has(e.from) && idSet.has(e.to))
-  const budgeted = capEdges(safeEdges, resolved.maxEdges)
-  return { nodes, edges: budgeted.edges, truncated, edgesTruncated: budgeted.truncated }
+  return graphResult(nodes, safeEdges, parsed.length, maxNodes, maxEdges, resolved.excludeDirs)
 }
 
 /**
@@ -374,15 +446,24 @@ async function buildSubgraph(
   resolved: ResolvedConfig,
   startId: string,
   depth: number,
+  maxNodes: number,
+  maxEdges: number,
   onSkip?: (path: string, error: unknown) => void,
+  loaded?: LoadedNotes,
+  maxKeywordPairs?: number,
 ): Promise<MemoryGraph> {
-  const { parsed, parsedById, linkResolver, skipped } = await loadVaultNotes(root, resolved, onSkip)
+  const { parsed, parsedById, linkResolver, skipped } = loaded ?? await loadVaultNotes(root, resolved, onSkip)
   const startPath = await containedPathReal(root, startId)
   const startNoteId = vaultRelativeId(root, startPath)
   // A missing path, a directory, or a file outside the configured extensions
   // resolves fine but has no indexed note; seeding the BFS with it would crash
   // on the first `parsedById.get(id)!` lookup.
   if (!parsedById.has(startNoteId)) {
+    const excluded = startNoteId.split('/').some(segment => resolved.excludeDirs.includes(segment))
+    const supported = resolved.extensions.some(ext => startNoteId.endsWith(ext.startsWith('.') ? ext : `.${ext}`))
+    if (excluded && supported && await stat(startPath).then(info => info.isFile(), () => false)) {
+      throw new Error(`tool-memory-graph: note excluded by excludeDirs: ${startNoteId}`)
+    }
     const skipError = skipped.get(startNoteId)
     if (skipError !== undefined) {
       const code = (skipError as NodeJS.ErrnoException).code ?? 'unknown error'
@@ -406,7 +487,7 @@ async function buildSubgraph(
   }
 
   const noteTerms = new Map(parsed.map(p => [p.id, p.terms]))
-  const keywordEdges = buildKeywordEdges(noteTerms)
+  const keywordEdges = buildKeywordEdges(noteTerms, maxKeywordPairs)
   for (const { from, to } of keywordEdges) {
     const list = adjacency.get(from) ?? []
     if (!list.includes(to)) list.push(to)
@@ -428,10 +509,9 @@ async function buildSubgraph(
     frontier = next
   }
 
-  const truncated = visited.size > resolved.maxNodes
   const ids = [...visited.keys()]
     .sort((a, b) => (visited.get(a) ?? 0) - (visited.get(b) ?? 0) || codeUnitCompare(a, b))
-    .slice(0, resolved.maxNodes)
+    .slice(0, maxNodes)
   const idSet = new Set(ids)
 
   const nodes: GraphNode[] = ids.map(id => {
@@ -453,8 +533,136 @@ async function buildSubgraph(
   const filteredKeywordEdges = keywordEdges.filter(e => idSet.has(e.from) && idSet.has(e.to))
   edges.push(...filteredKeywordEdges)
 
-  const budgeted = capEdges(edges, resolved.maxEdges)
-  return { nodes, edges: budgeted.edges, truncated, edgesTruncated: budgeted.truncated, depth }
+  return graphResult(nodes, edges, visited.size, maxNodes, maxEdges, resolved.excludeDirs, depth)
+}
+
+async function auditGraph(root: string, resolved: ResolvedConfig, onSkip: (path: string, error: unknown) => void) {
+  const { loaded, snapshotId, verify } = await loadStableNotes(root, resolved, onSkip)
+  const ids = new Set(loaded.parsed.map(note => note.id))
+  const isExcluded = (id: string): boolean => id.split('/').some(segment => resolved.excludeDirs.includes(segment))
+  const isArchived = (id: string): boolean => id.startsWith('archive/')
+  let checkedLinks = 0
+  let linkErrors = 0
+  let excludedEdgeEndpoints = 0
+  let archiveEdgeEndpoints = 0
+  for (const note of loaded.parsed) {
+    for (const link of extractLinks(note.text)) {
+      checkedLinks++
+      let targetPath
+      try {
+        targetPath = await resolveLinkTarget(root, resolved.extensions, link, loaded.linkResolver)
+      } catch (error) {
+        linkErrors++
+        onSkip(note.path, error)
+        continue
+      }
+      if (targetPath === undefined) continue
+      const targetId = vaultRelativeId(root, targetPath)
+      if (!ids.has(targetId)) continue
+      if (isExcluded(note.id) || isExcluded(targetId)) excludedEdgeEndpoints++
+      if (isArchived(note.id) || isArchived(targetId)) archiveEdgeEndpoints++
+    }
+  }
+  const excludedNodesInIndex = loaded.parsed.filter(note => isExcluded(note.id)).length
+  const archiveNodesInIndex = loaded.parsed.filter(note => isArchived(note.id)).length
+  if (excludedNodesInIndex > 0 || archiveNodesInIndex > 0) {
+    const noteTerms = new Map(loaded.parsed.map(note => [note.id, note.terms]))
+    for (const edge of buildKeywordEdges(noteTerms)) {
+      if (isExcluded(edge.from) || isExcluded(edge.to)) excludedEdgeEndpoints++
+      if (isArchived(edge.from) || isArchived(edge.to)) archiveEdgeEndpoints++
+    }
+  }
+  const { scanStable, skippedEntries } = await verify()
+  const skipped = skippedEntries + linkErrors
+  const complete = scanStable && skipped === 0
+  return {
+    indexedNodes: loaded.parsed.length, checkedLinks, excludedDirsApplied: resolved.excludeDirs,
+    excludedNodesInIndex,
+    excludedEdgeEndpoints, archiveNodesInIndex, archiveEdgeEndpoints,
+    skippedEntries: skipped, scanStable, complete,
+    archiveExcluded: complete && resolved.excludeDirs.includes('archive') && archiveNodesInIndex === 0 && archiveEdgeEndpoints === 0,
+    snapshotId,
+  }
+}
+
+interface GraphCursor {
+  v: number
+  kind: 'nodes' | 'edges'
+  id: string | null
+  depth: number | null
+  offset: number
+  snapshotId: string
+}
+
+function parseCursor(cursor: string): GraphCursor {
+  const invalid = (): never => { throw new Error('tool-memory-graph: invalid graph cursor') }
+  if (cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor)) invalid()
+  let value: unknown
+  try {
+    value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+  } catch {
+    invalid()
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid()
+  const parsed = value as Partial<GraphCursor>
+  if (parsed.v !== 1 || !['nodes', 'edges'].includes(parsed.kind ?? '')
+    || (parsed.id !== null && typeof parsed.id !== 'string')
+    || (parsed.depth !== null && !Number.isSafeInteger(parsed.depth))
+    || !Number.isSafeInteger(parsed.offset) || (parsed.offset ?? -1) < 0
+    || typeof parsed.snapshotId !== 'string' || !/^[a-f0-9]{64}$/.test(parsed.snapshotId)) invalid()
+  return parsed as GraphCursor
+}
+
+async function pageGraph(
+  root: string, resolved: ResolvedConfig,
+  kind: 'nodes' | 'edges', id: string | undefined, depth: number,
+  pageSize: number, cursor: string | undefined,
+  onSkip: (path: string, error: unknown) => void,
+) {
+  const parsedCursor = cursor === undefined ? undefined : parseCursor(cursor)
+  const scopeId = id ?? null
+  const scopeDepth = id === undefined ? null : depth
+  if (parsedCursor !== undefined && (parsedCursor.kind !== kind || parsedCursor.id !== scopeId || parsedCursor.depth !== scopeDepth)) {
+    throw new Error('tool-memory-graph: invalid graph cursor for this query')
+  }
+  const { loaded, snapshotId, verify } = await loadStableNotes(root, resolved, onSkip)
+  if (loaded.parsed.length > resolved.pageScanNodesLimit) {
+    throw new Error(`tool-memory-graph: graph page scan exceeds pageScanNodesLimit (${resolved.pageScanNodesLimit})`)
+  }
+  const maxPairs = Math.floor(resolved.pageScanEdgesLimit / 2)
+  const graph = id === undefined
+    ? await buildGraph(root, resolved, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, onSkip, loaded, maxPairs)
+    : await buildSubgraph(root, resolved, id, depth, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, onSkip, loaded, maxPairs)
+  if (graph.edgesTotal > resolved.pageScanEdgesLimit) {
+    throw new Error(`tool-memory-graph: graph page scan exceeds pageScanEdgesLimit (${resolved.pageScanEdgesLimit})`)
+  }
+  const nodes = graph.nodes
+  const edges = [...graph.edges].sort(compareEdges)
+  const hash = createHash('sha256').update(snapshotId).update(JSON.stringify([scopeId, scopeDepth]))
+  for (const node of nodes) hash.update(JSON.stringify(node))
+  for (const edge of edges) hash.update(JSON.stringify(edge))
+  const graphSnapshot = hash.digest('hex')
+  const { scanStable, skippedEntries } = await verify()
+  if (!scanStable || skippedEntries > 0) throw new Error('tool-memory-graph: graph snapshot unavailable; vault changed or contains unreadable entries')
+  if (parsedCursor !== undefined && parsedCursor.snapshotId !== graphSnapshot) {
+    throw new Error('tool-memory-graph: stale graph snapshot; restart pagination')
+  }
+  const all = kind === 'nodes' ? nodes : edges
+  const offset = parsedCursor?.offset ?? 0
+  if (offset > all.length || (offset === all.length && all.length > 0)) {
+    throw new Error('tool-memory-graph: invalid graph cursor offset')
+  }
+  const appliedSize = Math.min(pageSize, resolved.pageSizeLimit)
+  const items = all.slice(offset, offset + appliedSize)
+  const nextOffset = offset + items.length
+  const nextCursor = nextOffset < all.length
+    ? Buffer.from(JSON.stringify({ v: 1, kind, id: scopeId, depth: scopeDepth, offset: nextOffset, snapshotId: graphSnapshot } satisfies GraphCursor)).toString('base64url')
+    : null
+  return {
+    kind, nodes: kind === 'nodes' ? items : [], edges: kind === 'edges' ? items : [],
+    total: all.length, offset, pageSize: appliedSize, nextCursor, snapshotId: graphSnapshot,
+    excludedDirs: resolved.excludeDirs,
+  }
 }
 
 /**
@@ -476,12 +684,17 @@ export function apply(ctx: Context, config: Config): void {
     throw new Error('tool-memory-graph: maxDepthLimit must be >= maxDepth')
   }
   assertPositiveInteger('maxNodes', resolved.maxNodes)
+  assertPositiveInteger('maxNodesLimit', resolved.maxNodesLimit)
   assertPositiveInteger('maxEdges', resolved.maxEdges)
+  assertPositiveInteger('maxEdgesLimit', resolved.maxEdgesLimit)
+  assertPositiveInteger('pageSizeLimit', resolved.pageSizeLimit)
+  assertPositiveInteger('pageScanNodesLimit', resolved.pageScanNodesLimit)
+  assertPositiveInteger('pageScanEdgesLimit', resolved.pageScanEdgesLimit)
   assertExtensions(resolved.extensions)
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_graph',
-    description: 'Return the link and keyword graph of the wiki vault: note ids, titles, and directed edges. Explicit `[[link]]` edges are type `link`; edges derived from shared significant terms are type `keyword` with `keywords` and `weight`. Without an id it returns the whole vault graph (node-capped); with an id it returns the subgraph reachable from that note within the given depth. Nodes are capped at maxNodes (`truncated`) and edges at maxEdges (`edgesTruncated`); a subgraph result also reports the effective `depth` after clamping the request to maxDepthLimit.',
+    description: 'Return the link and keyword graph of the wiki vault. Explicit `[[link]]` edges have from/to (no type); keyword edges have type `keyword`, keywords and weight. Optional id/depth selects a subgraph. Per-call maxNodes/maxEdges are clamped to configured maxNodesLimit/maxEdgesLimit and reported as effectiveMaxNodes/effectiveMaxEdges. Returns nodesTotal/nodesReturned and edgesTotal/edgesReturned/edgesDropped; edgesTotal counts edges between returned nodes before the edge cap, not edges lost to a node cap. truncated/edgesTruncated retain their meanings. excludedDirs reports directory names omitted before link resolution; an existing excluded center fails with a distinct error. Only when both truncation flags are false is the returned graph exhaustive.',
     parameters: {
       id: {
         type: 'string',
@@ -491,6 +704,14 @@ export function apply(ctx: Context, config: Config): void {
         type: 'integer',
         description: 'Maximum link or keyword hops from the center note; defaults to the configured maxDepth and is capped at the configured maxDepthLimit.',
       },
+      maxNodes: {
+        type: 'integer',
+        description: 'Optional node result cap, clamped to configured maxNodesLimit; the applied cap is returned as effectiveMaxNodes.',
+      },
+      maxEdges: {
+        type: 'integer',
+        description: 'Optional edge result cap, clamped to configured maxEdgesLimit; the applied cap is returned as effectiveMaxEdges.',
+      },
     },
     output: {
       schema: { type: 'json' },
@@ -499,13 +720,60 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, exec) {
       const vaultRoot = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
       const requestedDepth = args.depth ?? resolved.maxDepth
+      const requestedNodes = args.maxNodes ?? resolved.maxNodes
+      const requestedEdges = args.maxEdges ?? resolved.maxEdges
       assertPositiveInteger('depth', requestedDepth)
+      assertPositiveInteger('maxNodes', requestedNodes)
+      assertPositiveInteger('maxEdges', requestedEdges)
       const depth = Math.min(requestedDepth, resolved.maxDepthLimit)
+      const maxNodes = Math.min(requestedNodes, resolved.maxNodesLimit)
+      const maxEdges = Math.min(requestedEdges, resolved.maxEdgesLimit)
       const onSkip = skipLogger(ctx, vaultRoot)
       const graph = args.id === undefined
-        ? await buildGraph(vaultRoot, resolved, onSkip)
-        : await buildSubgraph(vaultRoot, resolved, args.id, depth, onSkip)
+        ? await buildGraph(vaultRoot, resolved, maxNodes, maxEdges, onSkip)
+        : await buildSubgraph(vaultRoot, resolved, args.id, depth, maxNodes, maxEdges, onSkip)
       return graph as unknown as JsonValue
+    },
+  })))
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'wiki_graph_audit',
+    description: 'Read-only vault-wide graph isolation audit without returning graph edges. Reports indexedNodes, checkedLinks, excludedDirsApplied, excludedNodesInIndex, excludedEdgeEndpoints, archiveNodesInIndex, archiveEdgeEndpoints, skippedEntries, scanStable, complete, archiveExcluded and snapshotId. complete is false if files were skipped or two scans differed; archiveExcluded is true only when complete and archive/ was actually excluded from the index and edge endpoints.',
+    parameters: {},
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(_args, exec) {
+      const root = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
+      return await auditGraph(root, resolved, skipLogger(ctx, root)) as unknown as JsonValue
+    },
+  })))
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'wiki_graph_page',
+    description: 'Read-only, content-snapshot-validated paging of graph nodes or edges. Choose kind nodes or edges; optional id/depth selects a subgraph, pageSize defaults to 100 and is clamped to pageSizeLimit. Pass nextCursor with the same query and kind for the next page. A changed vault yields stale graph snapshot instead of silently skipping or duplicating results. Returns { kind, nodes, edges, total, offset, pageSize, nextCursor, snapshotId, excludedDirs }. Each page rescans the vault and rebuilds the graph; very large scans are refused by pageScanNodesLimit/pageScanEdgesLimit.',
+    parameters: {
+      kind: { type: 'string', enum: ['nodes', 'edges'], required: true, description: 'Page graph nodes or edges.' },
+      id: { type: 'string', description: 'Optional vault-relative center id; must match on every cursor request.' },
+      depth: { type: 'integer', description: 'Optional subgraph depth; must match on every cursor request.' },
+      pageSize: { type: 'integer', description: 'Optional page size (default 100), clamped to pageSizeLimit.' },
+      cursor: { type: 'string', description: 'Opaque nextCursor returned by the preceding page.' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const root = resolveMemoryVaultRoot(resolved.vaultRoot, exec)
+      const requestedDepth = args.depth ?? resolved.maxDepth
+      const requestedSize = args.pageSize ?? 100
+      assertPositiveInteger('depth', requestedDepth)
+      assertPositiveInteger('pageSize', requestedSize)
+      return await pageGraph(
+        root, resolved, args.kind, args.id, Math.min(requestedDepth, resolved.maxDepthLimit),
+        requestedSize, args.cursor, skipLogger(ctx, root),
+      ) as unknown as JsonValue
     },
   })))
 }
