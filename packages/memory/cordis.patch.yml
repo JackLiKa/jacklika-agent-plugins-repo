@@ -15,7 +15,7 @@
         vaultRoot: '.plugins/memory'
         crossProcessLock: true
         laneArgument: id
-        toolNames: ['wiki_write', 'memory_forget', 'memory_compact']
+        toolNames: ['wiki_write', 'wiki_restore', 'memory_forget', 'memory_compact']
 
     - id: memory-git
       name: '@jacklika/dsh-memory-git'
@@ -23,7 +23,7 @@
         vaultRoot: '.plugins/memory'
         prefixes: ['shared/', 'agents/']
         nestedRepo: init
-        toolNames: ['wiki_write', 'memory_forget']
+        toolNames: ['wiki_write', 'wiki_restore', 'memory_forget']
 
     - id: tool-memory-filesystem
       name: '@jacklika/dsh-tool-memory-filesystem'

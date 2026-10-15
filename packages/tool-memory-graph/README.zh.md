@@ -39,6 +39,7 @@ kind: "package-reference"
 | `vaultRoot` | `string` | `''` → `<session cwd>/.dsh/memory/` | 仓库根。留空时使用按工作区隔离的记忆目录；相对路径相对于会话工作区解析。 |
 | `extensions` | `string[]` | `['.md']` | 视为笔记的文件扩展名。 |
 | `indexHiddenDirs` | `boolean` | `false` | 是否索引以 `.` 开头的目录（`.git` 与 `node_modules` 始终排除）。当 `vaultRoot` 指向工作区根时开启，以纳入 `.dsh/memory/`。 |
+| `excludeDirs` | `string[]` | `['archive']` | 建图前排除这些目录名及其笔记、链接目标和关键词边；归档笔记仍可由 `wiki_read` 按 id 直接读取。 |
 | `maxDepth` | `number` | `1` | 指定中心笔记时 BFS 的最大深度。 |
 | `maxDepthLimit` | `number` | `20` | 生效 `depth` 的硬上限。请求更大值时会被钳制到该值，子图报告实际遍历的深度。必须 `>= maxDepth`。 |
 | `maxNodes` | `number` | `200` | 单次图查询返回的最大节点数。 |

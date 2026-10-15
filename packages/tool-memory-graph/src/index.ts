@@ -51,6 +51,7 @@ export interface Config {
   maxEdges?: number
   /** Descend into dot-directories besides the fixed exclusions while indexing. */
   indexHiddenDirs?: boolean
+  excludeDirs?: string[]
 }
 
 /** Schemastery configuration for the memory graph tool consumer. */
@@ -62,6 +63,7 @@ export const Config: z<Config> = z.object({
   maxNodes: z.number().default(200),
   maxEdges: z.number().default(1000),
   indexHiddenDirs: z.boolean().default(false),
+  excludeDirs: z.array(z.string()).default(['archive']),
 })
 
 /** The shape after schemastery applied the defaults. */
@@ -260,7 +262,7 @@ async function loadVaultNotes(
   linkResolver: ReturnType<typeof createLinkResolver>
   skipped: Map<string, unknown>
 }> {
-  const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs, onSkip)
+  const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs, onSkip, resolved.excludeDirs)
   const ids = paths.map(path => vaultRelativeId(root, path))
   const linkResolver = createLinkResolver(ids)
   const parsed: ParsedNote[] = []

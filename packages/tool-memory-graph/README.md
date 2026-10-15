@@ -39,6 +39,7 @@ It resolves the same vault root per call as `tool-memory-filesystem`: an explici
 | `vaultRoot` | `string` | `''` → `<session cwd>/.dsh/memory/` | Vault root. Empty selects the per-workspace memory directory; a relative path resolves against the session workspace. |
 | `extensions` | `string[]` | `['.md']` | File extensions treated as notes. |
 | `indexHiddenDirs` | `boolean` | `false` | Index directories whose names start with `.` (`.git` and `node_modules` stay excluded). Enable when `vaultRoot` points at the workspace root so `.dsh/memory/` notes are included. |
+| `excludeDirs` | `string[]` | `['archive']` | Exclude these directory names before graph nodes, link targets, and keyword edges are built. Archived notes remain directly readable with `wiki_read`. |
 | `maxDepth` | `number` | `1` | Maximum BFS depth when a center id is given. |
 | `maxDepthLimit` | `number` | `20` | Hard upper bound for the effective `depth`. A call asking for more is clamped to this value, and the subgraph reports the depth actually traversed. Must be `>= maxDepth`. |
 | `maxNodes` | `number` | `200` | Maximum nodes returned in one graph. |

@@ -45,7 +45,7 @@ Mount after `dsh-memory-queue` so commits run inside the vault lock:
 | `nestedRepo` | `'init' \| 'inherit' \| 'own'` | `'init'` | `init`: vault owns its `.git`, never joining an enclosing repo. `inherit`: join the nearest enclosing repo (init only when none exists). `own`: require an existing `<vault>/.git`, fail otherwise. |
 | `autoInit` | `boolean` | `true` | Permit `git init` when the selected `nestedRepo` mode allows it. |
 | `authorName` / `authorEmail` | `string` | `dsh-memory-git` / `dsh-memory-git@localhost` | Commit identity passed via `git -c`. |
-| `commitPrefix` | `string` | `'wiki_write'` | Commit message prefix; the note id follows it. |
+| `commitPrefix` | `string` | `'wiki_write'` | Commit message prefix for ordinary writes; `wiki_restore` and `memory_forget` use their own tool names. |
 | `indexLockRetries` / `indexLockRetryMs` | `number` | `30` / `100` | Retries when `.git/index.lock` is held by another git process. |
 
 -----

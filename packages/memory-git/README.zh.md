@@ -45,7 +45,7 @@ kind: "package-reference"
 | `nestedRepo` | `'init' \| 'inherit' \| 'own'` | `'init'` | `init`：vault 拥有自己的 `.git`，不并入外层仓库；`inherit`：并入最近的外层仓库（找不到时才 init）；`own`：要求 `<vault>/.git` 已存在，否则报错。 |
 | `autoInit` | `boolean` | `true` | 在所选 `nestedRepo` 模式允许时执行 `git init`。 |
 | `authorName` / `authorEmail` | `string` | `dsh-memory-git` / `dsh-memory-git@localhost` | 经 `git -c` 传入的提交身份。 |
-| `commitPrefix` | `string` | `'wiki_write'` | 提交信息前缀，后接笔记 id。 |
+| `commitPrefix` | `string` | `'wiki_write'` | 普通写入的提交信息前缀；`wiki_restore` 和 `memory_forget` 使用各自工具名。 |
 | `indexLockRetries` / `indexLockRetryMs` | `number` | `30` / `100` | `.git/index.lock` 被其他 git 进程占用时的重试次数与间隔。 |
 
 -----

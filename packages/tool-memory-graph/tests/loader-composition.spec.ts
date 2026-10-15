@@ -161,6 +161,32 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     expect(graph.edgesTruncated).toBe(false)
   })
 
+  it('excludes archived nodes and does not redirect links into the archive', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-graph-archive-'))
+    try {
+      await mkdir(join(vault, 'archive', 'shared', 'notes'), { recursive: true })
+      await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+      await writeFile(join(vault, 'shared', 'notes', 'link.md'), '# Link\n\n[[shared/notes/target.md]]\n')
+      await writeFile(join(vault, 'archive', 'shared', 'notes', 'target.md'), '# Target\n\nArchived token.\n')
+      const ctx = await boot(vault)
+      const whole = await graphAll(ctx, 'archive-whole')
+      const subgraph = await graphFrom(ctx, 'archive-subgraph', 'shared/notes/link.md', 1)
+      for (const graph of [whole, subgraph]) {
+        expect(graph.nodes.map(node => node.id)).toEqual(['shared/notes/link.md'])
+        expect(graph.edges).toEqual([])
+      }
+      const archived = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId('archive-center'),
+        name: 'wiki_graph', arguments: { id: 'archive/shared/notes/target.md', depth: 1 },
+      })
+      expect(archived.isError).toBe(true)
+    } finally {
+      await context?.fiber.dispose()
+      context = undefined
+      await rm(vault, { recursive: true, force: true })
+    }
+  })
+
   it('returns only the reachable subgraph for a center note and depth', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)

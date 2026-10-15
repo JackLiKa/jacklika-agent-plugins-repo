@@ -366,6 +366,86 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     expect(parsed.edges).toContainEqual({ from: 'shared/a.md', to: 'shared/b.md' })
   })
 
+  it('commits restores and excludes forgotten notes from search and graph in the shipped patch', async () => {
+    const workspace = await temp('dsh-chain-ws-')
+    const ctx = await boot()
+    const vault = vaultOf(workspace)
+    const id = 'shared/notes/restore-target.md'
+    const forgottenId = 'shared/notes/forget-target.md'
+    const read = async (callId: string, noteId: string) => {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal, callId: ToolCallId(callId), name: 'wiki_read',
+        arguments: { id: noteId }, agent: agent('agent-1', workspace),
+      })
+      expect(result.isError).toBe(false)
+      if (result.isError) throw new Error(resultText(result))
+      return JSON.parse(resultText(result)) as { version: string; body: string; modifiedExternally: boolean }
+    }
+    const first = await write(ctx, 'restore-first', id, workspace, '# Versioned\n\nfirst\n')
+    expect(first.isError).toBe(false)
+    expect((await write(ctx, 'restore-second', id, workspace, '# Versioned\n\nsecond\n')).isError).toBe(false)
+    const before = await read('restore-before', id)
+    const history = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('restore-history-before'), name: 'wiki_history',
+      arguments: { id }, agent: agent('agent-1', workspace),
+    })
+    expect(history.isError).toBe(false)
+    if (history.isError) throw new Error(resultText(history))
+    const commits = (JSON.parse(resultText(history)) as { commits: { hash: string }[] }).commits
+    expect(commits).toHaveLength(2)
+    const restored = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('restore-run'), name: 'wiki_restore',
+      arguments: { id, hash: commits[1]!.hash, baseVersion: before.version }, agent: agent('agent-1', workspace),
+    })
+    expect(restored.isError).toBe(false)
+    if (restored.isError) throw new Error(resultText(restored))
+    expect(JSON.parse(resultText(restored))).toMatchObject({ id, committed: true })
+    const after = await read('restore-after', id)
+    expect(after.body).toContain('first')
+    expect(after.modifiedExternally).toBe(false)
+    const { stdout: historyAfter } = await execFileAsync('git', ['-C', vault, 'log', '--format=%s', '--', id])
+    expect(historyAfter.trim().split('\n')).toHaveLength(3)
+    expect(historyAfter).toContain(`wiki_restore: ${id}`)
+    const historyResult = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('restore-history-after'), name: 'wiki_history',
+      arguments: { id }, agent: agent('agent-1', workspace),
+    })
+    expect(historyResult.isError).toBe(false)
+    if (historyResult.isError) throw new Error(resultText(historyResult))
+    expect((JSON.parse(resultText(historyResult)) as { commits: { message: string }[] }).commits[0]?.message)
+      .toBe(`wiki_restore: ${id}`)
+    const { stdout: status } = await execFileAsync('git', ['-C', vault, 'status', '--short', '--', id])
+    expect(status).toBe('')
+
+    expect((await write(ctx, 'forget-target', forgottenId, workspace, '# Forgotten\n\narchive-only-token\n')).isError).toBe(false)
+    expect((await write(ctx, 'forget-link', 'shared/notes/link.md', workspace, `# Link\n\n[[${forgottenId}]]\n`)).isError).toBe(false)
+    const target = await read('forget-read', forgottenId)
+    const forget = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('forget-run'), name: 'memory_forget',
+      arguments: { id: forgottenId, baseVersion: target.version }, agent: agent('agent-1', workspace),
+    })
+    expect(forget.isError).toBe(false)
+    const archived = await read('archive-read', `archive/${forgottenId}`)
+    expect(archived.body).toContain('archive-only-token')
+    const search = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('archive-search'), name: 'wiki_search',
+      arguments: { query: 'archive-only-token' }, agent: agent('agent-1', workspace),
+    })
+    expect(search.isError).toBe(false)
+    if (search.isError) throw new Error(resultText(search))
+    expect((JSON.parse(resultText(search)) as { hits: { id: string }[] }).hits.map(hit => hit.id))
+      .not.toContain(`archive/${forgottenId}`)
+    const graph = await ctx.tools.execute({
+      signal: new AbortController().signal, callId: ToolCallId('graph-after-forget'), name: 'wiki_graph',
+      arguments: { id: 'shared/notes/link.md', depth: 1 }, agent: agent('agent-1', workspace),
+    })
+    expect(graph.isError).toBe(false)
+    if (graph.isError) throw new Error(resultText(graph))
+    const parsed = JSON.parse(resultText(graph)) as { nodes: { id: string }[]; edges: { from: string; to: string }[] }
+    expect(parsed.nodes.map(node => node.id)).not.toContain(`archive/${forgottenId}`)
+    expect(parsed.edges.some(edge => edge.to.startsWith('archive/'))).toBe(false)
+  })
+
   it('keeps distinct non-Latin titles in distinct notes across the whole ladder', async () => {
     const workspace = await temp('dsh-chain-ws-')
     const ctx = await boot()

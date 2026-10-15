@@ -994,7 +994,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_restore',
-    description: 'Restore one note to the content it had at a specific git commit hash. The current note must still exist and its version must match baseVersion. The restored content is written as a new forward commit, so git history is not rewritten. Returns { id, restoredFrom, version }.',
+    description: 'Restore one note to the content it had at a specific git commit hash. The current note must still exist and its version must match baseVersion. When memory-git handles wiki_restore, it records a new forward commit without rewriting history; otherwise the result is an uncommitted working-tree write. Returns { id, restoredFrom, version, committed? }.',
     parameters: {
       id: {
         type: 'string',
@@ -1037,6 +1037,8 @@ export function apply(ctx: Context, config: Config): void {
       const { stdout } = await execFileAsync('git', ['-C', vaultRoot, 'show', `${args.hash}:${args.id}`])
         .catch(error => { throw new Error(`tool-memory-filesystem: cannot restore ${JSON.stringify(args.id)} from ${args.hash}: ${error instanceof Error ? error.message : String(error)}`) })
       await writeAtomic(absolutePath, stdout).catch(error => { throw noteIoError('write', args.id, error) })
+      const info = await stat(absolutePath).catch(error => { throw noteIoError('read', args.id, error) })
+      recordMtime(absolutePath, info.mtimeMs)
       return {
         id: args.id,
         restoredFrom: args.hash,

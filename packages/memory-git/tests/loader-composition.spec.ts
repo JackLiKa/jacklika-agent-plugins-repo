@@ -360,12 +360,14 @@ describe('memory-git real Loader composition through cordis.yml', () => {
     })
     expect(finalRead.isError).toBe(false)
     if (finalRead.isError) throw new Error('expected wiki_read success')
-    const finalNote = JSON.parse(resultText(finalRead)) as { body: string; version: string }
+    const finalNote = JSON.parse(resultText(finalRead)) as { body: string; version: string; modifiedExternally: boolean }
     expect(finalNote.body).toContain('first')
     expect(finalNote.version).toBe(restored.version)
+    expect(finalNote.modifiedExternally).toBe(false)
 
     const log = await gitLog(dir)
     expect(log).toContain('wiki_write: shared/notes/versioned.md')
-    expect(log.match(/wiki_write: shared\/notes\/versioned\.md/g)).toHaveLength(4)
+    expect(log.match(/wiki_write: shared\/notes\/versioned\.md/g)).toHaveLength(3)
+    expect(log).toContain('wiki_restore: shared/notes/versioned.md')
   })
 })

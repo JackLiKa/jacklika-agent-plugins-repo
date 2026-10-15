@@ -166,7 +166,7 @@ async function ensureRepo(vault: string, resolved: ResolvedConfig, signal: Abort
  * @param id - vault-relative note id as reported by the tool call.
  * @param resolved - applied plugin configuration.
  */
-async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger']): Promise<void> {
+async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger'], prefix = resolved.commitPrefix): Promise<void> {
   containedPath(vault, id)
   await ensureRepo(vault, resolved, signal, logger)
   const status = await git(vault, ['status', '--porcelain', '--', id], resolved, signal, logger)
@@ -175,7 +175,7 @@ async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, 
   await git(vault, [
     '-c', `user.name=${resolved.authorName}`,
     '-c', `user.email=${resolved.authorEmail}`,
-    'commit', '-m', `${resolved.commitPrefix}: ${id}`, '--', id,
+    'commit', '-m', `${prefix}: ${id}`, '--', id,
   ], resolved, signal, logger)
   logger?.debug(`memory-git: committed ${id}`)
 }
@@ -262,7 +262,7 @@ export function apply(ctx: Context, config: Config): void {
         }
         await enqueue(() => commitForget(vault, id, archivedTo, resolved, exec.signal, ctx.logger))
       } else {
-        await enqueue(() => commitWrite(vault, id, resolved, exec.signal, ctx.logger))
+        await enqueue(() => commitWrite(vault, id, resolved, exec.signal, ctx.logger, exec.name === 'wiki_restore' ? 'wiki_restore' : resolved.commitPrefix))
       }
     } catch (error) {
       // `next()` already put the note on disk, so a commit failure leaves the
