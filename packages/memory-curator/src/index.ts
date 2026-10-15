@@ -43,6 +43,28 @@ export interface Config {
   defaultScope?: 'shared' | 'private'
   /** Vault-relative directory where shared curated notes live. */
   notesDir?: string
+  /**
+   * Optional compaction of per-turn auto-capture notes. Disabled by default;
+   * when enabled, old session captures are archived and no longer appear in
+   * default search results.
+   */
+  autoCaptureCompact?: AutoCaptureCompactConfig
+}
+
+/** Configuration for the optional auto-capture compaction pass. */
+export interface AutoCaptureCompactConfig {
+  /**
+   * Whether the compaction pass is active. Default false: without explicit
+   * opt-in, `memory_compact` is a no-op so a caller cannot accidentally archive
+   * human-written notes.
+   */
+  enabled?: boolean
+  /**
+   * How many recent auto-capture sessions to keep in the active vault. Older
+   * captures are moved to `archive/` by `memory_forget`. Must be >= 1 when
+   * enabled.
+   */
+  keepSessions?: number
 }
 
 /** Schemastery configuration for the memory curator consumer. */
@@ -50,10 +72,24 @@ export const Config: z<Config> = z.object({
   conflictPolicy: z.union(['ask', 'skip']).default('ask'),
   defaultScope: z.union(['shared', 'private']).default('shared'),
   notesDir: z.string().default('shared/notes'),
+  autoCaptureCompact: z.object({
+    enabled: z.boolean().default(false),
+    keepSessions: z.number().default(0),
+  }).default({ enabled: false, keepSessions: 0 }),
 })
 
 /** The shape after schemastery applied the defaults. */
-type ResolvedConfig = Required<Config>
+type ResolvedConfig = Required<Config> & {
+  autoCaptureCompact: Required<AutoCaptureCompactConfig>
+}
+
+/** Result of archiving one auto-capture note via `memory_forget`. */
+interface ForgetResult {
+  forgotten: boolean
+  id: string
+  archivedTo: string
+  version: string
+}
 
 /** One hit returned by `wiki_search`. */
 interface SearchHit {
@@ -219,13 +255,28 @@ async function readFrontmatter(
   }
 }
 
+interface ProvenanceFields {
+  source_session?: string
+  commit?: string
+  verified?: boolean
+}
+
+function pickProvenance(args: Record<string, unknown>): ProvenanceFields {
+  const picked: ProvenanceFields = {}
+  if (typeof args.source_session === 'string' && args.source_session !== '') picked.source_session = args.source_session
+  if (typeof args.commit === 'string' && args.commit !== '') picked.commit = args.commit
+  if (typeof args.verified === 'boolean') picked.verified = args.verified
+  return picked
+}
+
 function overwriteFrontmatter(
   existing: { frontmatter: Record<string, unknown>; version: string } | undefined,
   title: string,
   tags: string[],
   now: string,
+  provenance: ProvenanceFields,
 ): Record<string, unknown> {
-  const frontmatter: Record<string, unknown> = { ...existing?.frontmatter, title, tags }
+  const frontmatter: Record<string, unknown> = { ...existing?.frontmatter, title, tags, ...provenance }
   const created = existing?.frontmatter.created
   frontmatter.created = typeof created === 'string' && created !== '' ? created : now
   if (existing !== undefined) frontmatter.updated = now
@@ -346,6 +397,18 @@ export function apply(ctx: Context, config: Config): void {
         type: 'boolean',
         description: 'Update-only capture: the note must exist and needs no conflict approval. Defaults to overwrite with a complete replacement summary; pass mode: append explicitly for additive material. A missing note fails instead of creating one.',
       },
+      source_session: {
+        type: 'string',
+        description: 'Optional session id that produced this capture, stored in frontmatter for provenance.',
+      },
+      commit: {
+        type: 'string',
+        description: 'Optional upstream commit hash or reference this capture relates to, stored in frontmatter for provenance.',
+      },
+      verified: {
+        type: 'boolean',
+        description: 'Optional boolean marking the captured knowledge as verified, stored in frontmatter for provenance.',
+      },
     },
     output: {
       schema: { type: 'json' },
@@ -437,8 +500,9 @@ export function apply(ctx: Context, config: Config): void {
       const exists = requireExisting ? targetNote !== undefined : conflictExists
       const appending = exists && mode === 'append'
       const writeMode: 'append' | 'overwrite' = appending ? 'append' : 'overwrite'
+      const provenance = pickProvenance(args as Record<string, unknown>)
       ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode} requireExisting=${requireExisting}`)
-      const overwrite = appending ? undefined : overwriteFrontmatter(selectedNote, args.title, tags, now)
+      const overwrite = appending ? undefined : overwriteFrontmatter(selectedNote, args.title, tags, now, provenance)
       const content = appending
         ? appendContent
         : `---\n${yaml.dump(overwrite).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
@@ -476,6 +540,9 @@ export function apply(ctx: Context, config: Config): void {
       summary: { type: 'string', required: true, description: 'Complete current conclusion in Markdown, replacing the old body.' },
       details: { type: 'string', description: 'Optional additional context included in the new current body.' },
       tags: { type: 'array', items: { type: 'string' }, description: 'Optional replacement tags; omitted tags retain existing tags.' },
+      source_session: { type: 'string', description: 'Optional session id that produced this correction, stored in frontmatter for provenance.' },
+      commit: { type: 'string', description: 'Optional upstream commit hash or reference this correction relates to, stored in frontmatter for provenance.' },
+      verified: { type: 'boolean', description: 'Optional boolean marking the corrected knowledge as verified, stored in frontmatter for provenance.' },
     },
     output: {
       schema: { type: 'json' },
@@ -489,12 +556,14 @@ export function apply(ctx: Context, config: Config): void {
       const existing = note.frontmatter ?? {}
       const heading = /^#\s+(.+)$/m.exec(note.body)?.[1]
       const title = typeof existing.title === 'string' && existing.title !== '' ? existing.title : heading ?? args.id.replace(/\.md$/, '')
+      const correctionProvenance = pickProvenance(args as Record<string, unknown>)
       const frontmatter: Record<string, unknown> = {
         ...existing,
         title,
         ...(args.tags !== undefined ? { tags: args.tags.map(String) } : {}),
         created: typeof existing.created === 'string' && existing.created !== '' ? existing.created : now,
         updated: now,
+        ...correctionProvenance,
       }
       const details = args.details ? `\n\n## Details\n\n${args.details}` : ''
       const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${title}\n\n${args.summary}${details}\n`
@@ -506,6 +575,56 @@ export function apply(ctx: Context, config: Config): void {
         ...(written.created !== undefined ? { created: written.created } : {}),
         ...(written.updated !== undefined ? { updated: written.updated } : {}),
         ...(written.committed !== undefined ? { committed: written.committed } : {}),
+      } as unknown as JsonValue
+    },
+  })))
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'memory_compact',
+    description: 'Archive old per-turn auto-capture notes, keeping only the most recent sessions. This reduces search noise while preserving every capture in git history. Disabled by default; enable via autoCaptureCompact in the curator config. Returns { compacted, kept, archived, archivedIds } when active, or { compacted: false, reason } when disabled.',
+    parameters: {},
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(_args, exec) {
+      const compact = resolved.autoCaptureCompact
+      if (!compact.enabled) {
+        return { compacted: false, reason: 'auto-capture compaction is disabled in curator config' } as unknown as JsonValue
+      }
+      const keep = typeof compact.keepSessions === 'number' && compact.keepSessions >= 1 ? Math.floor(compact.keepSessions) : 0
+      if (keep < 1) {
+        return { compacted: false, reason: 'autoCaptureCompact.keepSessions must be >= 1' } as unknown as JsonValue
+      }
+
+      const notesPrefix = `${resolved.notesDir}/`
+      const isAutoCapture = (id: string): boolean => {
+        if (!id.startsWith(notesPrefix)) return false
+        const rest = id.slice(notesPrefix.length)
+        if (rest.startsWith('auto-capture/')) return true
+        return /^auto-capture-[A-Za-z0-9_-]+\.md$/.test(rest)
+      }
+
+      const search = await callTool<SearchPage>(ctx, exec, 'wiki_search', { query: 'auto-capture', maxResults: 10000 })
+      const captures = dedupeHits(search.hits.filter(hit => isAutoCapture(hit.id)))
+        .sort((a, b) => b.id.localeCompare(a.id))
+
+      if (captures.length <= keep) {
+        return { compacted: true, kept: captures.length, archived: 0, archivedIds: [] } as unknown as JsonValue
+      }
+
+      const toArchive = captures.slice(keep)
+      const archivedIds: string[] = []
+      for (const hit of toArchive) {
+        const note = await callTool<{ version: string }>(ctx, exec, 'wiki_read', { id: hit.id })
+        const result = await callTool<ForgetResult>(ctx, exec, 'memory_forget', { id: hit.id, baseVersion: note.version })
+        if (result.forgotten) archivedIds.push(result.id)
+      }
+      return {
+        compacted: true,
+        kept: keep,
+        archived: archivedIds.length,
+        archivedIds,
       } as unknown as JsonValue
     },
   })))

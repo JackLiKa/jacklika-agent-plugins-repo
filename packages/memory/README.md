@@ -27,7 +27,7 @@ English | [中文](README.zh.md)
 Install the Bundle through the Harness Plugin Manager; the Profile may already exist or be created by the command:
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.10
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.28
 ```
 
 Keep the Bundle after `dsh-base` and include an application layer such as `dsh-headless` or `dsh-web-app`. Semantic search stays disabled until the profile patch supplies an embeddings endpoint:
@@ -50,8 +50,12 @@ The bundle's substance is `cordis.patch.yml`, declared by the `dsh.bundle.patch`
 1. `memory-scope` rewrites private `wiki_write` ids into `agents/<agent key>/` namespaces so agents cannot collide by construction; `shared/` prefixes pass through.
 2. `memory-queue` serializes surviving same-lane writes with an `mkdir` lock and heartbeat-counter liveness, so separate processes cannot interleave.
 3. `memory-git` commits `shared/` writes inside the lock; `nestedRepo: 'init'` keeps vault history in the vault's own `.git`, never the enclosing project repo.
-4. `tool-memory-filesystem` owns the vault: `wiki_read`, `wiki_search`, `wiki_write` with atomic publication and optional `baseVersion` conflict detection.
+4. `tool-memory-filesystem` owns the vault: `wiki_read`, `wiki_search`, `wiki_write`, atomic publication, optional `baseVersion` conflict detection, `wiki_history`, and `wiki_restore`.
 5. `tool-memory-graph` adds `wiki_graph` link-graph queries.
+6. `memory-curator` registers `memory_recall`, `memory_capture`, `memory_correct`, `memory_forget`, and `memory_compact`; auto-capture notes are hidden from `memory_recall` and can be aged out by `memory_compact`.
+7. Frontmatter `expires` is exposed as an `expired` flag on reads and search hits; expired notes are not deleted automatically.
+8. `wiki_search` reports `fused` and `semantic` so callers can tell when a semantic ranking was fused; failures fall back to the lexical ranking unchanged.
+9. `memory_capture` and `memory_correct` accept optional `source_session`, `commit`, and `verified` provenance fields.
 
 `tool-memory-vector` ships disabled because it requires an external embeddings endpoint. All git commits are local; nothing pushes.
 

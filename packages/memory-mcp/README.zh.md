@@ -16,9 +16,11 @@ npx dsh-memory-mcp --vault /path/to/vault
 
 ## 暴露面
 
-工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph` —— 与 `@jacklika/dsh-tool-memory-filesystem` / `-graph` 的契约相同，写操作带 `baseVersion` 乐观并发控制，读操作返回 `mtime` + `modifiedExternally`，写入归一化 `created`/`updated` 为 `+08:00`。`memory_capture` 与 dsh 策展工具对齐：省略 `id` 时由标题推导笔记 id，覆盖既有笔记时合并 frontmatter，返回 `{written, id, mode, conflict, version, created?, updated?}`。有两处有意差异：MCP 写入不跑 memory-git，因此永不返回 `committed`；MCP 没有 agent 命名空间，因此不提供 `scope`。MCP 无审批通道，冲突捕获按 dsh 工具的无头行为 fail closed——`written: false`、`conflict: true`，reason 指向 `conflictPolicy: 'skip'`——这也使“批准后追加”分支不可达：不带 `requireExisting` 而真正落盘的捕获总是整篇覆盖写。`requireExisting: true` 则表示严格更新标题推导或显式给出的目标 `id`（不会重定向到同标题的其他笔记）：默认以完整当前结论覆盖已存在笔记的正文，无需审批，笔记缺失时失败而非创建。只有新增材料才显式传 `mode: 'append'`，以保留旧正文；`wiki_write` 同样支持 `requireExisting`，但保留自身默认追加模式。笔记 id 拒绝反斜杠，失败信息只含仓库相对 id，不嵌入宿主路径。资源：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
+工具：`wiki_read`、`wiki_search`、`wiki_write`、`wiki_graph` —— 与 `@jacklika/dsh-tool-memory-filesystem` / `-graph` 的契约相同，写操作带 `baseVersion` 乐观并发控制，读操作返回 `mtime` + `modifiedExternally`，写入归一化 `created`/`updated` 为 `+08:00`，读/搜返回 `expired` 标志，搜索返回 `fused`/`semantic` 信号。`memory_capture` 与 dsh 策展工具对齐：省略 `id` 时由标题推导笔记 id，覆盖既有笔记时合并 frontmatter，返回 `{written, id, mode, conflict, version, created?, updated?}`。`memory_capture` 与 `memory_correct` 接受可选的 `source_session`、`commit`、`verified` 来源字段。有两处有意差异：MCP 写入不跑 memory-git，因此永不返回 `committed`；MCP 没有 agent 命名空间，因此不提供 `scope`。MCP 无审批通道，冲突捕获按 dsh 工具的无头行为 fail closed——`written: false`、`conflict: true`，reason 指向 `conflictPolicy: 'skip'`——这也使“批准后追加”分支不可达：不带 `requireExisting` 而真正落盘的捕获总是整篇覆盖写。`requireExisting: true` 则表示严格更新标题推导或显式给出的目标 `id`（不会重定向到同标题的其他笔记）：默认以完整当前结论覆盖已存在笔记的正文，无需审批，笔记缺失时失败而非创建。只有新增材料才显式传 `mode: 'append'`，以保留旧正文；`wiki_write` 同样支持 `requireExisting`，但保留自身默认追加模式。笔记 id 拒绝反斜杠，失败信息只含仓库相对 id，不嵌入宿主路径。资源：通过 `resources/list` / `resources/read` 访问 `note:///<id>`。
 
 `memory_correct(id, baseVersion, summary, details?, tags?)` 在 `wiki_read` 后覆盖精确的既有笔记，保留未指定的元数据，拒绝过期版本，绝不新建或追加。`memory_capture` 会独立于宽泛关键词搜索的截断，检查精确目标以及全 Vault 精确标题命中；未指定明确 id 且多个笔记同标题时仍视为歧义。MCP 纠错结果不含 `committed` 字段。
+
+`memory_forget(id, baseVersion)` 将笔记移入 `archive/<原相对路径>`，使其不再出现在搜索/图谱结果中。MCP 侧的移动是文件系统重命名，不产生 git 提交，因为 MCP 服务器不运行 `memory-git`；如需历史，请在外部提交 vault。
 
 ## 客户端配置
 

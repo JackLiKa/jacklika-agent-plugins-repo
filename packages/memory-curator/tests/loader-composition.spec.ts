@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
@@ -10,8 +12,11 @@ import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as MemoryCurator from '@jacklika/dsh-memory-curator'
+import * as MemoryGit from '@jacklika/dsh-memory-git'
 import * as MemoryScope from '@jacklika/dsh-memory-scope'
 import * as ToolMemoryFilesystem from '@jacklika/dsh-tool-memory-filesystem'
+
+const execFileAsync = promisify(execFile)
 
 let root: string | undefined
 let context: Context | undefined
@@ -36,14 +41,17 @@ async function vaultDir(): Promise<string> {
   return dir
 }
 
-async function boot(vaultRoot: string, approval?: { request: (details: { reason: string; displayReason: { en: string } }) => Promise<string> }, filesystemConfig: string[] = [], withScope = false): Promise<Context> {
+async function boot(vaultRoot: string, approval?: { request: (details: { reason: string; displayReason: { en: string } }) => Promise<string> }, filesystemConfig: string[] = [], withScope = false, withGit = false): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-curator-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-system-prompt'",
     "- name: '@deepseek-ai/dsh-tools'",
     ...(withScope ? ["- name: '@jacklika/dsh-memory-scope'"] : []),
+    ...(withGit ? ["- name: '@jacklika/dsh-memory-git'", '  config:', `    vaultRoot: ${vaultRoot}`, '    nestedRepo: init', '    toolNames: ["wiki_write", "memory_forget"]'] : []),
     "- name: '@jacklika/dsh-memory-curator'",
+    '  config:',
+    ...(withGit ? ['    autoCaptureCompact:', '      enabled: true', '      keepSessions: 2'] : []),
     "- name: '@jacklika/dsh-tool-memory-filesystem'",
     '  config:',
     `    vaultRoot: ${vaultRoot}`,
@@ -62,6 +70,7 @@ async function boot(vaultRoot: string, approval?: { request: (details: { reason:
   const modules = new Map<string, unknown>([
     ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
     ['@deepseek-ai/dsh-tools', ToolRuntime],
+    ['@jacklika/dsh-memory-git', MemoryGit],
     ['@jacklika/dsh-memory-scope', MemoryScope],
     ['@jacklika/dsh-memory-curator', MemoryCurator],
     ['@jacklika/dsh-tool-memory-filesystem', ToolMemoryFilesystem],
@@ -668,5 +677,71 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(result.isError).toBe(true)
     const correction = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('correct-after-unload'), name: 'memory_correct', arguments: { id: 'shared/notes/absent.md', baseVersion: '0'.repeat(40), summary: 'x' }, agent: agent('agent-1', vault) })
     expect(correction.isError).toBe(true)
+  })
+
+  it('returns disabled when auto-capture compaction is not configured', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('compact-disabled'), name: 'memory_compact', arguments: {}, agent: agent('agent-1', vault) })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected memory_compact success')
+    expect(JSON.parse(resultText(result))).toMatchObject({ compacted: false, reason: expect.stringContaining('disabled') })
+  })
+
+  it('archives auto-capture sessions beyond the keep threshold and is idempotent', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault, undefined, [], false, true)
+
+    for (let i = 0; i < 5; i += 1) {
+      const write = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId(`compact-create-${i}`),
+        name: 'wiki_write',
+        arguments: {
+          id: `shared/notes/auto-capture/session-${i}.md`,
+          content: `Session ${i} capture.\n`,
+          mode: 'overwrite',
+        },
+        agent: agent('agent-1', vault),
+      })
+      expect(write.isError).toBe(false)
+    }
+
+    const searchBefore = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('compact-search-before'), name: 'wiki_search', arguments: { query: 'capture' }, agent: agent('agent-1', vault) })
+    expect(searchBefore.isError).toBe(false)
+    if (searchBefore.isError) throw new Error('expected wiki_search success')
+    expect((JSON.parse(resultText(searchBefore)) as { hits: { id: string }[] }).hits.length).toBe(5)
+
+    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('compact-first'), name: 'memory_compact', arguments: {}, agent: agent('agent-1', vault) })
+    if (result.isError) throw new Error(`expected memory_compact success: ${result.error.message}`)
+    expect(result.isError).toBe(false)
+    const first = JSON.parse(resultText(result)) as { compacted: boolean; kept: number; archived: number; archivedIds: string[] }
+    expect(first.compacted).toBe(true)
+    expect(first.kept).toBe(2)
+    expect(first.archived).toBe(3)
+    expect(first.archivedIds).toHaveLength(3)
+    expect(first.archivedIds.every(id => id.startsWith('shared/notes/auto-capture/session-'))).toBe(true)
+
+    const searchAfter = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('compact-search-after'), name: 'wiki_search', arguments: { query: 'capture' }, agent: agent('agent-1', vault) })
+    expect(searchAfter.isError).toBe(false)
+    if (searchAfter.isError) throw new Error('expected wiki_search success')
+    expect((JSON.parse(resultText(searchAfter)) as { hits: { id: string }[] }).hits.map(h => h.id).sort()).toEqual([
+      'shared/notes/auto-capture/session-3.md',
+      'shared/notes/auto-capture/session-4.md',
+    ])
+
+    for (const id of first.archivedIds) {
+      await expect(readFile(join(vault, id), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      const archived = await readFile(join(vault, 'archive', id), 'utf8')
+      expect(archived).toContain('capture')
+    }
+
+    const second = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('compact-idempotent'), name: 'memory_compact', arguments: {}, agent: agent('agent-1', vault) })
+    expect(second.isError).toBe(false)
+    if (second.isError) throw new Error('expected memory_compact success')
+    expect(JSON.parse(resultText(second))).toMatchObject({ compacted: true, kept: 2, archived: 0, archivedIds: [] })
+
+    const log = await execFileAsync('git', ['-C', vault, 'log', '--format=%s'])
+    expect(log.stdout).toContain('memory_forget:')
   })
 })

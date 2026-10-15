@@ -46,10 +46,13 @@ export interface SearchResult {
 
 /**
  * In-memory index entry: the public hit plus the note body kept as keyword
- * haystack. `wiki_search` matches against the body but never emits it, so the
- * tool output stays a bounded metadata list.
+ * haystack and the frontmatter needed for TTL/expired marking. `wiki_search`
+ * matches against the body but never emits it, so the tool output stays a
+ * bounded metadata list.
  */
 export interface IndexedNote extends SearchResult {
   /** Note body text used for keyword matching only. */
   body: string
+  /** Frontmatter map used for `expires` / `archived` checks in search results. */
+  frontmatter: Record<string, unknown>
 }

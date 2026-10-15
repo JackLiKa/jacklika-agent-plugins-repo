@@ -137,15 +137,10 @@ async function git(vault: string, args: string[], resolved: ResolvedConfig, sign
 }
 
 /**
- * Stage and commit one written note when it differs from `HEAD`. `status`
- * keeps no-op writes from producing empty commits; the commit pathspec limits
- * the record to the written note so concurrent unrelated changes are untouched.
- * @param vault - absolute repository working tree.
- * @param id - vault-relative note id as reported by the tool call.
- * @param resolved - applied plugin configuration.
+ * Ensure the selected git repository exists in the vault, initializing it when
+ * the configuration allows.
  */
-async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger']): Promise<void> {
-  containedPath(vault, id)
+async function ensureRepo(vault: string, resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger']): Promise<void> {
   await mkdir(vault, { recursive: true })
   const hasOwnRepo = await stat(join(vault, '.git')).then(() => true, () => false)
   if (resolved.nestedRepo === 'own' && !hasOwnRepo) {
@@ -161,6 +156,19 @@ async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, 
       await git(vault, ['init'], resolved, signal, logger)
     })
   }
+}
+
+/**
+ * Stage and commit one written note when it differs from `HEAD`. `status`
+ * keeps no-op writes from producing empty commits; the commit pathspec limits
+ * the record to the written note so concurrent unrelated changes are untouched.
+ * @param vault - absolute repository working tree.
+ * @param id - vault-relative note id as reported by the tool call.
+ * @param resolved - applied plugin configuration.
+ */
+async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger']): Promise<void> {
+  containedPath(vault, id)
+  await ensureRepo(vault, resolved, signal, logger)
   const status = await git(vault, ['status', '--porcelain', '--', id], resolved, signal, logger)
   if (status.trim() === '') return
   await git(vault, ['add', '--', id], resolved, signal, logger)
@@ -170,6 +178,31 @@ async function commitWrite(vault: string, id: string, resolved: ResolvedConfig, 
     'commit', '-m', `${resolved.commitPrefix}: ${id}`, '--', id,
   ], resolved, signal, logger)
   logger?.debug(`memory-git: committed ${id}`)
+}
+
+/**
+ * Stage and commit a forget/archive operation that removes one id and adds
+ * another under `archive/`. Both pathspecs are committed together so the move
+ * is atomic in git history.
+ * @param vault - absolute repository working tree.
+ * @param id - original vault-relative note id.
+ * @param archivedTo - archived vault-relative note id.
+ * @param resolved - applied plugin configuration.
+ */
+async function commitForget(vault: string, id: string, archivedTo: string, resolved: ResolvedConfig, signal: AbortSignal, logger?: Context['logger']): Promise<void> {
+  containedPath(vault, id)
+  containedPath(vault, archivedTo)
+  await ensureRepo(vault, resolved, signal, logger)
+  const paths = [id, archivedTo]
+  const status = await git(vault, ['status', '--porcelain', '--', ...paths], resolved, signal, logger)
+  if (status.trim() === '') return
+  await git(vault, ['add', '--', ...paths], resolved, signal, logger)
+  await git(vault, [
+    '-c', `user.name=${resolved.authorName}`,
+    '-c', `user.email=${resolved.authorEmail}`,
+    'commit', '-m', `memory_forget: ${id} -> ${archivedTo}`, '--', ...paths,
+  ], resolved, signal, logger)
+  logger?.debug(`memory-git: committed forget ${id} -> ${archivedTo}`)
 }
 
 /**
@@ -219,7 +252,18 @@ export function apply(ctx: Context, config: Config): void {
     exec.signal.throwIfAborted()
     ctx.logger?.debug(`memory-git: dispatch ${exec.name} id=${id}`)
     try {
-      await enqueue(() => commitWrite(vault, id, resolved, exec.signal, ctx.logger))
+      if (exec.name === 'memory_forget') {
+        const value = !Array.isArray(result.value) && typeof result.value === 'object' && result.value !== null
+          ? result.value as Record<string, JsonValue>
+          : {}
+        const archivedTo = value.archivedTo
+        if (typeof archivedTo !== 'string') {
+          throw new Error(`memory-git: memory_forget result missing archivedTo for ${id}`)
+        }
+        await enqueue(() => commitForget(vault, id, archivedTo, resolved, exec.signal, ctx.logger))
+      } else {
+        await enqueue(() => commitWrite(vault, id, resolved, exec.signal, ctx.logger))
+      }
     } catch (error) {
       // `next()` already put the note on disk, so a commit failure leaves the
       // vault and its history diverged. Surface the divergence as a structured

@@ -22,6 +22,8 @@ import * as MemoryFilesystem from '../packages/tool-memory-filesystem/lib/index.
 // re-exports only `buildIndex`, so the search phase imports the built module.
 import { rankNotes } from '../packages/tool-memory-filesystem/lib/search.js'
 import * as MemoryGraph from '../packages/tool-memory-graph/lib/index.js'
+import * as MemoryGit from '../packages/memory-git/lib/index.js'
+import * as MemoryCurator from '../packages/memory-curator/lib/index.js'
 
 const queueWorker = join(resolve(import.meta.dirname, '..'), 'scripts', 'queue-worker.mjs')
 const EXTENSIONS = ['.md']
@@ -118,10 +120,18 @@ async function timed(run) {
  * writing and graphing, so those phases mount the plugins on a real Context and
  * call the registered tools; `wiki_write` has no plain-function export.
  */
-async function mountHarness(vault, notes) {
+async function mountHarness(vault, notes, withGit = false) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  if (withGit) {
+    await ctx.plugin(MemoryGit, { vaultRoot: vault, nestedRepo: 'init', toolNames: ['wiki_write', 'memory_forget'] })
+  }
+  await ctx.plugin(MemoryCurator, {
+    vaultRoot: vault,
+    notesDir: 'shared/notes',
+    autoCaptureCompact: { enabled: true, keepSessions: 10 },
+  })
   await ctx.plugin(MemoryFilesystem, { vaultRoot: vault })
   await ctx.plugin(MemoryGraph, {
     vaultRoot: vault,
@@ -225,7 +235,9 @@ try {
     }
   })
 
-  context = await mountHarness(vault, notes)
+  // Phase 1 tools: no git needed for graph/write/search; compaction disabled by
+  // the curator default is fine because we have not created captures yet.
+  context = await mountHarness(vault, notes, false)
 
   const whole = await timed(() => callToolJson(context, 'wiki_graph', {}, 'bench-graph-whole'))
   assert(whole.value.truncated === false, 'graph: whole-vault graph hit the node cap')
@@ -256,6 +268,49 @@ try {
   const appendedCount = appended.split('bench-write-').length - 1
   assert(appendedCount === writes, `write: expected ${writes} appends, found ${appendedCount}`)
 
+  // Lifecycle phase: rebuild context with git + curator so history, forget, and
+  // compaction are available. First dispose the graph-only context.
+  await context.fiber.dispose()
+  context = await mountHarness(vault, notes, true)
+
+  const captureCount = 25
+  const captures = await timed(async () => {
+    for (let i = 0; i < captureCount; i += 1) {
+      await callToolJson(context, 'memory_capture', {
+        title: `Bench Capture ${i}`,
+        summary: `capture summary ${i}`,
+        scope: 'shared',
+      }, `bench-capture-${i}`)
+    }
+  })
+
+  const historyTarget = 'shared/notes/bench-history.md'
+  await callToolJson(context, 'wiki_write', { id: historyTarget, content: '# History target\n\nv1', mode: 'overwrite' }, 'bench-history-0')
+  const v1 = await callToolJson(context, 'wiki_read', { id: historyTarget }, 'bench-history-read-1')
+  await callToolJson(context, 'wiki_write', { id: historyTarget, content: '# History target\n\nv2', mode: 'overwrite', baseVersion: v1.version }, 'bench-history-1')
+  const v2 = await callToolJson(context, 'wiki_read', { id: historyTarget }, 'bench-history-read-2')
+  await callToolJson(context, 'wiki_write', { id: historyTarget, content: '# History target\n\nv3', mode: 'overwrite', baseVersion: v2.version }, 'bench-history-2')
+  const history = await timed(() => callToolJson(context, 'wiki_history', { id: historyTarget }, 'bench-history-list'))
+  assert(history.value.commits.length >= 3, `history: expected >=3 commits, got ${history.value.commits.length}`)
+
+  const forgetTarget = 'shared/notes/bench-forget.md'
+  const forgetWrite = await callToolJson(context, 'wiki_write', { id: forgetTarget, content: '# Forget target\n\nforgettable', mode: 'overwrite' }, 'bench-forget-write')
+  const forget = await timed(() => callToolJson(context, 'memory_forget', { id: forgetTarget, baseVersion: forgetWrite.version }, 'bench-forget'))
+  assert(forget.value.forgotten === true, 'forget: note archived')
+
+  const autoCaptureDir = join(vault, 'shared', 'notes', 'auto-capture')
+  await mkdir(autoCaptureDir, { recursive: true })
+  for (let i = 0; i < captureCount; i += 1) {
+    const suffix = String(i).padStart(4, '0')
+    await callToolJson(context, 'wiki_write', {
+      id: `shared/notes/auto-capture/session-${suffix}.md`,
+      content: `Auto capture ${suffix}.\n`,
+      mode: 'overwrite',
+    }, `bench-auto-capture-${suffix}`)
+  }
+  const compact = await timed(() => callToolJson(context, 'memory_compact', {}, 'bench-compact'))
+  assert(compact.value.compacted === true && compact.value.archived === Math.max(0, captureCount - 10), `compact: expected ${Math.max(0, captureCount - 10)} archived, got ${compact.value.archived}`)
+
   // queue-worker.mjs hardcodes the note id (`shared/concurrent.md`) and exposes
   // no lane argument, so distinct-lane contention cannot be driven from it; the
   // second batch raises same-note writer count instead.
@@ -276,6 +331,10 @@ try {
     { phase: 'graph whole vault', count: whole.value.nodes.length, elapsed: whole.elapsed, perItem: whole.elapsed / whole.value.nodes.length },
     { phase: 'graph subgraph depth 2', count: sub.value.nodes.length, elapsed: sub.elapsed, perItem: sub.elapsed / sub.value.nodes.length },
     { phase: 'write append', count: writes, elapsed: write.elapsed, perItem: write.elapsed / writes },
+    { phase: 'memory_capture', count: captureCount, elapsed: captures.elapsed, perItem: captures.elapsed / captureCount },
+    { phase: 'wiki_history 3 commits', count: history.value.commits.length, elapsed: history.elapsed, perItem: history.elapsed / history.value.commits.length },
+    { phase: 'memory_forget', count: 1, elapsed: forget.elapsed },
+    { phase: 'memory_compact', count: compact.value.archived, elapsed: compact.elapsed, perItem: compact.value.archived > 0 ? compact.elapsed / compact.value.archived : undefined },
     { phase: 'lock 2 writers same note', count: sameNoteMarkers.length, elapsed: lockTwo },
     { phase: 'lock 4 writers same note', count: fourNoteMarkers.length, elapsed: lockFour },
   ])

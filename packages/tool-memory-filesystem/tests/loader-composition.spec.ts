@@ -288,7 +288,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(searchPage(empty)).toMatchObject({ hits: [], total: 0, truncated: false })
   })
 
-  it('fails wiki_search when the semantic layer returns malformed output', async () => {
+  it('degrades to lexical hits when the semantic layer returns malformed output', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)
     ctx.tools.register(defineTool({
@@ -297,8 +297,8 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       parameters: { query: { type: 'string', required: true } },
       output: {
         schema: { type: 'json' },
-        // Deliberately malformed JSON: only dispatch failures are fail-soft;
-        // a broken semantic payload must propagate instead of degrading.
+        // Deliberately malformed JSON: the lexical index still returns valid
+        // results and the caller is told semantic fusion failed.
         render: () => [{ type: 'text', text: '{not json' }],
       },
       async execute() {
@@ -311,7 +311,12 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       name: 'wiki_search',
       arguments: { query: 'rag' },
     })
-    expect(result.isError).toBe(true)
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected wiki_search success')
+    const page = searchPage<{ id: string }>(result)
+    expect(page.hits.map(h => h.id)).toContain('concepts/RAG.md')
+    expect(page.fused).toBe(false)
+    expect(page.semantic).toBe('error')
   })
 
   it('degrades to lexical hits when the semantic layer errors', async () => {
@@ -988,7 +993,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     })
     expect(missResult.isError).toBe(false)
     if (missResult.isError) throw new Error('expected wiki_search success')
-    expect(JSON.parse(resultText(missResult))).toEqual({ hits: [], total: 0, truncated: false })
+    expect(JSON.parse(resultText(missResult))).toEqual({ hits: [], total: 0, truncated: false, fused: false, semantic: 'unavailable' })
 
     await offCtx.fiber.dispose()
     context = undefined
@@ -1061,7 +1066,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       })
       expect(search.isError).toBe(false)
       if (search.isError) throw new Error('expected wiki_search success')
-      expect(searchPage<{ id: string }>(search)).toEqual({ hits: [], total: 0, truncated: false })
+      expect(searchPage<{ id: string }>(search)).toEqual({ hits: [], total: 0, truncated: false, fused: false, semantic: 'unavailable' })
     } finally {
       await chmod(lockedDir, 0o755)
     }
@@ -1195,5 +1200,151 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(names).not.toContain('wiki_read')
     expect(names).not.toContain('wiki_search')
     expect(names).not.toContain('wiki_write')
+  })
+
+  it('exposes memory_forget alongside the wiki tools', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const names = ctx.tools.schemas().map(s => s.name)
+    expect(names).toContain('memory_forget')
+  })
+
+  it('archives a note to archive/<id> and preserves created/updated timestamps', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-memory-forget-'))
+    vaults.push(vault)
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'to-forget.md'), '---\ncreated: \'2026-10-01T10:00:00+08:00\'\nupdated: \'2026-10-02T10:00:00+08:00\'\n---\n\n# To Forget\n\nOriginal body.\n')
+    const ctx = await boot(vault)
+
+    const readResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('forget-read'),
+      name: 'wiki_read',
+      arguments: { id: 'shared/notes/to-forget.md' },
+    })
+    expect(readResult.isError).toBe(false)
+    if (readResult.isError) throw new Error('expected wiki_read success')
+    const note = JSON.parse(resultText(readResult)) as { version: string }
+
+    const forgetResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('forget-execute'),
+      name: 'memory_forget',
+      arguments: { id: 'shared/notes/to-forget.md', baseVersion: note.version },
+    })
+    expect(forgetResult.isError).toBe(false)
+    if (forgetResult.isError) throw new Error('expected memory_forget success')
+    const archived = JSON.parse(resultText(forgetResult)) as { forgotten: boolean; id: string; archivedTo: string; version: string; created: string; updated: string }
+    expect(archived.forgotten).toBe(true)
+    expect(archived.id).toBe('shared/notes/to-forget.md')
+    expect(archived.archivedTo).toBe('archive/shared/notes/to-forget.md')
+    expect(archived.created).toBe('2026-10-01T10:00:00+08:00')
+    expect(archived.updated).toBe('2026-10-02T10:00:00+08:00')
+
+    await expect(stat(join(vault, 'shared', 'notes', 'to-forget.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const archivedText = await readFile(join(vault, 'archive', 'shared', 'notes', 'to-forget.md'), 'utf8')
+    expect(archivedText).toContain('archivedFrom: shared/notes/to-forget.md')
+    expect(archivedText).toContain('Original body.')
+
+    const archivedRead = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('forget-read-archived'),
+      name: 'wiki_read',
+      arguments: { id: 'archive/shared/notes/to-forget.md' },
+    })
+    expect(archivedRead.isError).toBe(false)
+    if (archivedRead.isError) throw new Error('expected wiki_read success')
+    const archivedNote = JSON.parse(resultText(archivedRead)) as { id: string; frontmatter: Record<string, unknown> }
+    expect(archivedNote.id).toBe('archive/shared/notes/to-forget.md')
+    expect(archivedNote.frontmatter.archivedFrom).toBe('shared/notes/to-forget.md')
+  })
+
+  it('refuses memory_forget with a stale baseVersion', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-memory-forget-stale-'))
+    vaults.push(vault)
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'stale.md'), '# Stale\n\nbody.\n')
+    const ctx = await boot(vault)
+
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('forget-stale'),
+      name: 'memory_forget',
+      arguments: { id: 'shared/notes/stale.md', baseVersion: '0'.repeat(40) },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected memory_forget failure')
+    expect(result.error.message).toContain('changed since it was read')
+    expect(await readFile(join(vault, 'shared', 'notes', 'stale.md'), 'utf8')).toContain('body.')
+    await expect(stat(join(vault, 'archive', 'shared', 'notes', 'stale.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses to forget a missing note', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('forget-missing'),
+      name: 'memory_forget',
+      arguments: { id: 'shared/notes/missing.md', baseVersion: '0'.repeat(40) },
+    })
+    expect(result.isError).toBe(true)
+    if (!result.isError) throw new Error('expected memory_forget failure')
+    expect(result.error.message).toContain('no such note')
+  })
+
+  it('returns empty history and refuses restore when the vault has no git repo', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-memory-history-nogit-'))
+    vaults.push(vault)
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'x.md'), '# X\n\nbody.\n')
+    const ctx = await boot(vault)
+
+    const history = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('history-nogit'), name: 'wiki_history', arguments: { id: 'shared/notes/x.md' } })
+    expect(history.isError).toBe(true)
+    if (!history.isError) throw new Error('expected wiki_history failure')
+    expect(history.error.message).toContain('no git repository')
+
+    const restore = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('restore-nogit'), name: 'wiki_restore', arguments: { id: 'shared/notes/x.md', hash: '0'.repeat(40), baseVersion: '0'.repeat(40) } })
+    expect(restore.isError).toBe(true)
+    if (!restore.isError) throw new Error('expected wiki_restore failure')
+    expect(restore.error.message).toContain('no git repository')
+  })
+
+  it('reports expired notes in wiki_read and wiki_search without changing unexpired notes', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-memory-ttl-'))
+    vaults.push(vault)
+    await mkdir(join(vault, 'shared', 'notes'), { recursive: true })
+    await writeFile(join(vault, 'shared', 'notes', 'fresh.md'), '---\nexpires: 2099-12-31T23:59:59+08:00\n---\n\n# Fresh\n\nStill valid with ttl-marker.\n')
+    await writeFile(join(vault, 'shared', 'notes', 'stale.md'), `---\nexpires: 2000-01-01T00:00:00+08:00\n---\n\n# Stale\n\nOld content with ttl-marker.\n`)
+    await writeFile(join(vault, 'shared', 'notes', 'no-ttl.md'), '# No TTL\n\nNo expires field but has ttl-marker.\n')
+    const ctx = await boot(vault)
+
+    const freshRead = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('ttl-read-fresh'), name: 'wiki_read', arguments: { id: 'shared/notes/fresh.md' } })
+    expect(freshRead.isError).toBe(false)
+    if (freshRead.isError) throw new Error('expected wiki_read success')
+    expect(JSON.parse(resultText(freshRead)).expired).toBe(false)
+
+    const staleRead = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('ttl-read-stale'), name: 'wiki_read', arguments: { id: 'shared/notes/stale.md' } })
+    expect(staleRead.isError).toBe(false)
+    if (staleRead.isError) throw new Error('expected wiki_read success')
+    expect(JSON.parse(resultText(staleRead)).expired).toBe(true)
+
+    const noTtlRead = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('ttl-read-none'), name: 'wiki_read', arguments: { id: 'shared/notes/no-ttl.md' } })
+    expect(noTtlRead.isError).toBe(false)
+    if (noTtlRead.isError) throw new Error('expected wiki_read success')
+    expect(JSON.parse(resultText(noTtlRead)).expired).toBe(false)
+
+    const search = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('ttl-search'), name: 'wiki_search', arguments: { query: 'ttl-marker' } })
+    expect(search.isError).toBe(false)
+    if (search.isError) throw new Error('expected wiki_search success')
+    const hits = searchPage<{ id: string; expired?: boolean }>(search).hits
+    expect(hits).toHaveLength(3)
+    const freshHit = hits.find(h => h.id === 'shared/notes/fresh.md')
+    const staleHit = hits.find(h => h.id === 'shared/notes/stale.md')
+    const noTtlHit = hits.find(h => h.id === 'shared/notes/no-ttl.md')
+    expect(freshHit?.expired).toBe(false)
+    expect(staleHit?.expired).toBe(true)
+    expect(noTtlHit?.expired).toBe(false)
   })
 })

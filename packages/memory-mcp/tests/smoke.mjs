@@ -53,7 +53,18 @@ async function runSmoke() {
   let seq = 0
   const call = (method, params) => new Promise((resolve, reject) => {
     const id = ++seq
-    pending.set(id, msg => msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result))
+    pending.set(id, msg => {
+      try {
+        if (msg.error) {
+          reject(new Error(msg.error.message))
+        } else {
+          resolve(msg.result)
+        }
+      } catch (e) {
+        console.error('[smoke] pending callback error for', method, e)
+        reject(e)
+      }
+    })
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
   })
 
@@ -66,7 +77,7 @@ async function runSmoke() {
     assert(init.serverInfo.name === 'dsh-memory-mcp', 'initialize serverInfo')
 
     const list = await Promise.race([call('tools/list'), earlyExit])
-    assert(list.tools.length === 6 && list.tools.some(tool => tool.name === 'memory_correct'), `tools/list correction tool ${list.tools.length}`)
+    assert(list.tools.length === 7 && list.tools.some(tool => tool.name === 'memory_correct') && list.tools.some(tool => tool.name === 'memory_forget'), `tools/list correction/forget tools ${list.tools.length}`)
 
     const lockedId = 'concepts/coordination.md'
     const lockKey = createHash('sha1').update(lockedId).digest('hex')
@@ -122,7 +133,8 @@ async function runSmoke() {
     assert(conflict !== null, 'baseVersion conflict must error')
 
     const s = await Promise.race([call('tools/call', { name: 'wiki_search', arguments: { query: 'Retrieval' } }), earlyExit])
-    assert(JSON.parse(s.content[0].text).length === 1, 'wiki_search hit')
+    const searchResult = JSON.parse(s.content[0].text)
+    assert(searchResult.hits.length === 1 && searchResult.total === 1 && searchResult.fused === false && searchResult.semantic === 'unavailable', 'wiki_search hit')
 
     // Frontmatter `title` must win over body heading in search results.
     await Promise.race([call('tools/call', {
@@ -135,8 +147,8 @@ async function runSmoke() {
     }), earlyExit])
     const titleSearch = await Promise.race([call('tools/call', { name: 'wiki_search', arguments: { query: 'target' } }), earlyExit])
     const titleHits = JSON.parse(titleSearch.content[0].text)
-    assert(titleHits.length === 1, 'frontmatter title search hit')
-    assert(titleHits[0].title === 'Explicit Smoke Title', `frontmatter title wins: ${titleHits[0].title}`)
+    assert(titleHits.hits.length === 1, 'frontmatter title search hit')
+    assert(titleHits.hits[0].title === 'Explicit Smoke Title', `frontmatter title wins: ${titleHits.hits[0].title}`)
 
     await writeFile(join(outside, 'secret.md'), 'outside\n')
     let linked = false
@@ -247,7 +259,7 @@ async function runSmoke() {
     const broadPrivate = await Promise.race([call('tools/call', {
       name: 'wiki_search', arguments: { query: 'DSH rc25 private unique' },
     }), earlyExit])
-    assert(JSON.parse(broadPrivate.content[0].text).length === 20, 'broad MCP keyword search is capped')
+    assert(JSON.parse(broadPrivate.content[0].text).hits.length === 20, 'broad MCP keyword search is capped')
     const newPrivateTitle = await Promise.race([call('tools/call', {
       name: 'memory_capture', arguments: { title: 'DSH rc25 private unique', summary: 'New curated knowledge.' },
     }), earlyExit])
@@ -334,6 +346,27 @@ async function runSmoke() {
       name: 'memory_capture',
       arguments: { title: 'Update Missing Smoke', summary: 's', requireExisting: true },
     }), earlyExit]).then(() => null, e => e)
+    // memory_forget: archive a note and confirm it drops out of search.
+    const forgetTarget = await Promise.race([call('tools/call', {
+      name: 'wiki_write',
+      arguments: { id: 'shared/notes/mcp-forget-target.md', content: '# MCP Forget Target\n\nforgettable content', mode: 'overwrite' },
+    }), earlyExit])
+    const forgetTargetVersion = JSON.parse(forgetTarget.content[0].text).version
+    const beforeForget = await Promise.race([call('tools/call', { name: 'wiki_search', arguments: { query: 'forgettable' } }), earlyExit])
+    assert(JSON.parse(beforeForget.content[0].text).hits.length === 1, 'search finds forgettable note')
+    const forgotten = await Promise.race([call('tools/call', {
+      name: 'memory_forget', arguments: { id: 'shared/notes/mcp-forget-target.md', baseVersion: forgetTargetVersion },
+    }), earlyExit])
+    const forgetResult = JSON.parse(forgotten.content[0].text)
+    assert(forgetResult.forgotten === true && forgetResult.archivedTo === 'archive/shared/notes/mcp-forget-target.md', 'MCP forget succeeds')
+    assert((await readFile(join(vault, 'archive', 'shared', 'notes', 'mcp-forget-target.md'), 'utf8')).includes('forgettable'), 'note moved to archive')
+    const afterForget = await Promise.race([call('tools/call', { name: 'wiki_search', arguments: { query: 'forgettable' } }), earlyExit])
+    assert(JSON.parse(afterForget.content[0].text).hits.length === 0, 'search no longer returns archived note')
+    const staleForget = await Promise.race([call('tools/call', {
+      name: 'memory_forget', arguments: { id: 'shared/notes/mcp-forget-target.md', baseVersion: forgetTargetVersion },
+    }), earlyExit]).then(() => null, e => e)
+    assert(staleForget !== null && String(staleForget.message).includes('no such note'), 'forget on archived source fails closed')
+
     assert(updateMissing !== null, 'update-only capture of a missing note must error')
     const mismatchedId = await Promise.race([call('tools/call', {
       name: 'memory_capture',

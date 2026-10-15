@@ -9,6 +9,10 @@ Curator tools for the DSH memory vault. This package is a member of the `@jackli
 
 - `memory_correct(id, baseVersion, summary, details?, tags?)` — Read an existing note with `wiki_read`, then submit its exact `id`, returned `version`, and complete replacement summary. It never appends, chooses by title, or creates a missing note. A stale version fails without writing; omitted tags and other frontmatter fields survive. Returns the same write fields as `memory_capture`, with `mode: 'overwrite'` and `conflict: false`. DSH writes still follow the configured queue and git audit path.
 
+- `memory_forget(id, baseVersion)` — Move a curated note into the vault archive area (`archive/<original-relative-path>`). The note is not deleted; it can still be read directly, but `wiki_search` and `wiki_graph` exclude it by default. Requires the current `version` from `wiki_read`; a stale version fails closed. The move is committed by `memory-git` when configured.
+
+- `memory_compact()` — Archive old per-turn auto-capture notes, keeping only the most recent sessions. Disabled by default; enable with `autoCaptureCompact: { enabled: true, keepSessions: N }` in the curator config. The pass is idempotent: repeated runs produce no duplicate archives. It respects the same cross-process lock lane as other mutation tools.
+
 ## Note ids
 
 When `id` is omitted, `memory_capture` derives it from the title: Unicode letters and digits are kept (NFC-normalized, lowercased) and every other run of characters becomes a single `-`, so CJK and other non-Latin titles stay readable and distinct. A title with no letters or digits at all falls back to `note-<12 hex chars of its sha256>`, so symbol-only captures never collapse into one shared file.
@@ -16,5 +20,9 @@ When `id` is omitted, `memory_capture` derives it from the title: Unicode letter
 ## Overwriting a capture
 
 `mode: 'overwrite'` replaces the note body but merges its frontmatter: fields another writer recorded and the original `created` survive, `title` and `tags` come from this call, and `updated` is stamped. An intervening change detected between reading the old note and writing it fails instead of replacing that change. A first capture writes `created` only.
+
+## Provenance fields
+
+`memory_capture` and `memory_correct` accept optional `source_session`, `commit`, and `verified` arguments. When supplied, they are written into the note frontmatter as first-class fields for later retrieval weighting and audit. They do not change search ranking in this release.
 
 See the Bundle documentation in `docs/usage.md` for configuration and workflow.

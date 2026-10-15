@@ -271,4 +271,101 @@ describe('memory-git real Loader composition through cordis.yml', () => {
     expect(text.match(/## Turn 1/g)).toHaveLength(2)
     expect(await gitLog(dir)).toContain('wiki_write: shared/log.md')
   })
+
+  it('commits a memory_forget as a single move from the original id to archive/', async () => {
+    const dir = await vault()
+    const ctx = await boot(dir, ['    toolNames: ["wiki_write", "memory_forget"]'])
+
+    const writeResult = await write(ctx, 'wf-create', 'shared/notes/to-forget.md', '---\ntitle: To Forget\n---\n\n# To Forget\n\nbody.\n')
+    expect(writeResult.isError).toBe(false)
+
+    const readResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('wf-read'),
+      name: 'wiki_read',
+      arguments: { id: 'shared/notes/to-forget.md' },
+    })
+    expect(readResult.isError).toBe(false)
+    if (readResult.isError) throw new Error('expected wiki_read success')
+    const version = (JSON.parse(resultText(readResult)) as { version: string }).version
+
+    const forgetResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('wf-forget'),
+      name: 'memory_forget',
+      arguments: { id: 'shared/notes/to-forget.md', baseVersion: version },
+    })
+    expect(forgetResult.isError).toBe(false)
+    if (forgetResult.isError) throw new Error('expected memory_forget success')
+    const archivedTo = (JSON.parse(resultText(forgetResult)) as { archivedTo: string }).archivedTo
+    expect(archivedTo).toBe('archive/shared/notes/to-forget.md')
+
+    const log = await gitLog(dir)
+    expect(log).toContain('memory_forget: shared/notes/to-forget.md -> archive/shared/notes/to-forget.md')
+    expect(log).toContain('shared/notes/to-forget.md')
+    expect(log).toContain('archive/shared/notes/to-forget.md')
+    expect((JSON.parse(resultText(forgetResult)) as { committed?: boolean }).committed).toBe(true)
+  })
+
+  it('records wiki_history and commits wiki_restore as a forward commit', async () => {
+    const dir = await vault()
+    const ctx = await boot(dir, ['    toolNames: ["wiki_write", "wiki_restore"]'])
+
+    expect((await write(ctx, 'wr-v1', 'shared/notes/versioned.md', '# Versioned\n\nfirst\n')).isError).toBe(false)
+    expect((await write(ctx, 'wr-v2', 'shared/notes/versioned.md', '# Versioned\n\nsecond\n', { mode: 'overwrite', requireExisting: true })).isError).toBe(false)
+    expect((await write(ctx, 'wr-v3', 'shared/notes/versioned.md', '# Versioned\n\nthird\n', { mode: 'overwrite', requireExisting: true })).isError).toBe(false)
+
+    const historyResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('wr-history'),
+      name: 'wiki_history',
+      arguments: { id: 'shared/notes/versioned.md' },
+    })
+    expect(historyResult.isError).toBe(false)
+    if (historyResult.isError) throw new Error('expected wiki_history success')
+    const history = JSON.parse(resultText(historyResult)) as { commits: { hash: string; message: string }[] }
+    expect(history.commits).toHaveLength(3)
+    const targetHash = history.commits[history.commits.length - 1]?.hash ?? ''
+    expect(history.commits[0]?.message).toContain('wiki_write: shared/notes/versioned.md')
+
+    const readResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('wr-read-current'),
+      name: 'wiki_read',
+      arguments: { id: 'shared/notes/versioned.md' },
+    })
+    expect(readResult.isError).toBe(false)
+    if (readResult.isError) throw new Error('expected wiki_read success')
+    const currentVersion = (JSON.parse(resultText(readResult)) as { version: string }).version
+
+    const restoreResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('wr-restore'),
+      name: 'wiki_restore',
+      arguments: { id: 'shared/notes/versioned.md', hash: targetHash, baseVersion: currentVersion },
+    })
+    if (restoreResult.isError) {
+      throw new Error(`expected wiki_restore success: ${resultText(restoreResult)}`)
+    }
+    expect(restoreResult.isError).toBe(false)
+    const restored = JSON.parse(resultText(restoreResult)) as { id: string; restoredFrom: string; version: string }
+    expect(restored.id).toBe('shared/notes/versioned.md')
+    expect(restored.restoredFrom).toBe(targetHash)
+
+    const finalRead = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('wr-read-restored'),
+      name: 'wiki_read',
+      arguments: { id: 'shared/notes/versioned.md' },
+    })
+    expect(finalRead.isError).toBe(false)
+    if (finalRead.isError) throw new Error('expected wiki_read success')
+    const finalNote = JSON.parse(resultText(finalRead)) as { body: string; version: string }
+    expect(finalNote.body).toContain('first')
+    expect(finalNote.version).toBe(restored.version)
+
+    const log = await gitLog(dir)
+    expect(log).toContain('wiki_write: shared/notes/versioned.md')
+    expect(log.match(/wiki_write: shared\/notes\/versioned\.md/g)).toHaveLength(4)
+  })
 })

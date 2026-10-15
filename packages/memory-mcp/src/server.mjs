@@ -33,7 +33,7 @@ const MAX_LINK_DEPTH = Number(argValue('--max-link-depth', '1'))
 const NOTES_DIR = (argValue('--notes-dir', 'shared/notes') || 'shared/notes').replace(/\/+$/, '')
 const EXTENSIONS = ['.md']
 const MAX_SEARCH_RESULTS = 20
-const EXCLUDE_DIRS = new Set(['.git', 'node_modules', '.obsidian'])
+const EXCLUDE_DIRS = new Set(['.git', 'node_modules', '.obsidian', 'archive'])
 
 /** Return a POSIX-style vault-relative id from an absolute path. */
 function vaultRelativeId(absolutePath) {
@@ -121,6 +121,13 @@ function splitFrontmatter(text) {
 
 function noteVersion(text) {
   return createHash('sha1').update(text).digest('hex')
+}
+
+function isExpired(frontmatter) {
+  const value = frontmatter?.expires
+  if (typeof value !== 'string' || value === '') return false
+  const parsed = new Date(value).getTime()
+  return !Number.isNaN(parsed) && parsed < Date.now()
 }
 
 // Mirrors the mtime tracking and timestamp normalization in
@@ -330,7 +337,7 @@ async function readNote(absolutePath, depth, visited = new Set(), resolve) {
       if (target !== undefined) linkedNotes.push(await readNote(target, depth - 1, next, resolve))
     }
   }
-  return { id, frontmatter, body, links, version: noteVersion(text), linkedNotes }
+  return { id, frontmatter, body, links, version: noteVersion(text), linkedNotes, expired: isExpired(frontmatter) }
 }
 
 async function searchNotes(query, maxResults = MAX_SEARCH_RESULTS, exactTitle) {
@@ -354,7 +361,15 @@ async function searchNotes(query, maxResults = MAX_SEARCH_RESULTS, exactTitle) {
     return terms.every(t => haystack.includes(t))
   })
   hits.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  return hits.slice(0, maxResults).map(({ id, title }) => ({ id, title }))
+  const total = hits.length
+  const truncated = total > maxResults
+  return {
+    hits: hits.slice(0, maxResults).map(n => ({ id: n.id, title: n.title, score: 0, backlinks: [], expired: isExpired(n.frontmatter) })),
+    total,
+    truncated,
+    fused: false,
+    semantic: 'unavailable',
+  }
 }
 
 async function acquireWriteLock(id) {
@@ -547,7 +562,15 @@ function findCaptureConflicts(targetId, title, hits) {
   })
 }
 
-async function captureFrontmatter(id, title, tags, now) {
+function pickProvenance(a) {
+  const picked = {}
+  if (typeof a.source_session === 'string' && a.source_session !== '') picked.source_session = a.source_session
+  if (typeof a.commit === 'string' && a.commit !== '') picked.commit = a.commit
+  if (typeof a.verified === 'boolean') picked.verified = a.verified
+  return picked
+}
+
+async function captureFrontmatter(id, title, tags, now, provenance) {
   let existing
   let version
   try {
@@ -559,7 +582,7 @@ async function captureFrontmatter(id, title, tags, now) {
     // mistaken for one.
     if (error?.code !== 'ENOENT') throw noteIoError('read', id, error)
   }
-  const frontmatter = { ...existing, title, tags }
+  const frontmatter = { ...existing, title, tags, ...provenance }
   const created = existing?.created
   frontmatter.created = typeof created === 'string' && created !== '' ? created : now
   if (version !== undefined) frontmatter.updated = now
@@ -583,9 +606,11 @@ async function captureNote(a = {}) {
   const tags = Array.isArray(a.tags) ? a.tags.map(String) : []
 
   const now = formatBeijingTime(new Date())
-  const [titleHits, target] = await Promise.all([
-    searchNotes(a.title, MAX_SEARCH_RESULTS, a.title), captureFrontmatter(targetId, a.title, tags, now),
+  const provenance = pickProvenance(a)
+  const [titleSearch, target] = await Promise.all([
+    searchNotes(a.title, MAX_SEARCH_RESULTS, a.title), captureFrontmatter(targetId, a.title, tags, now, provenance),
   ])
+  const titleHits = titleSearch.hits
   const hits = [...new Map([...(target.existed ? [{ id: targetId, title: a.title }] : []), ...titleHits].map(hit => [hit.id, hit])).values()]
   const conflicts = findCaptureConflicts(targetId, a.title, hits)
   const conflictExists = conflicts.length > 0
@@ -616,7 +641,7 @@ async function captureNote(a = {}) {
   // Overwrites pass the captured version to reject intervening changes.
   const { existed, frontmatter, version } = finalId === targetId
     ? target
-    : await captureFrontmatter(finalId, a.title, tags, now)
+    : await captureFrontmatter(finalId, a.title, tags, now, provenance)
   const appending = requireExisting && existed && a.mode === 'append'
   const content = appending
     ? appendContent
@@ -635,6 +660,28 @@ async function captureNote(a = {}) {
   return response
 }
 
+async function forgetNote(a = {}) {
+  if (typeof a.id !== 'string' || !a.id.endsWith('.md')) throw new Error('memory-mcp: memory_forget requires a vault-relative .md note id')
+  if (typeof a.baseVersion !== 'string') throw new Error('memory-mcp: memory_forget requires baseVersion')
+  const absolutePath = await containedPathReal(a.id)
+  const text = await readFile(absolutePath, 'utf8').catch(error => {
+    if (error?.code === 'ENOENT') throw new Error(`memory-mcp: no such note ${JSON.stringify(a.id)}`)
+    throw noteIoError('read', a.id, error)
+  })
+  if (noteVersion(text) !== a.baseVersion) throw new Error(`note ${a.id} changed since it was read; re-read it before forgetting`)
+  const archivedTo = `archive/${a.id}`
+  const archivePath = join(VAULT, archivedTo)
+  await mkdir(dirname(archivePath), { recursive: true })
+  // Resolve containment for the archive target before moving. The destination
+  // is inside the vault by construction, but the realpath check still rejects
+  // a symlink escape.
+  const safeArchivePath = await containedPathReal(archivedTo).catch(() => archivePath)
+  if (!safeArchivePath.startsWith(VAULT)) throw new Error('memory-mcp: archive destination outside the vault')
+  // Move the note; the source has already passed realpath containment.
+  await rename(absolutePath, safeArchivePath)
+  return { forgotten: true, id: a.id, archivedTo }
+}
+
 async function correctNote(a = {}) {
   if (typeof a.id !== 'string' || !a.id.endsWith('.md')) throw new Error('memory-mcp: correction requires a vault-relative .md note id')
   if (typeof a.baseVersion !== 'string' || typeof a.summary !== 'string') throw new Error('memory-mcp: correction requires baseVersion and complete summary')
@@ -650,12 +697,14 @@ async function correctNote(a = {}) {
   const now = formatBeijingTime(new Date())
   const heading = /^#\s+(.+)$/m.exec(body)?.[1]
   const title = typeof existing.title === 'string' && existing.title !== '' ? existing.title : heading ?? a.id.replace(/\.md$/, '')
+  const provenance = pickProvenance(a)
   const frontmatter = {
     ...existing,
     title,
     ...(a.tags !== undefined ? { tags: a.tags.map(String) } : {}),
     created: typeof existing.created === 'string' && existing.created !== '' ? existing.created : now,
     updated: now,
+    ...provenance,
   }
   const details = a.details ? `\n\n## Details\n\n${a.details}` : ''
   const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${title}\n\n${a.summary}${details}\n`
@@ -769,6 +818,9 @@ const TOOLS = [
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for the note frontmatter.' },
         conflictPolicy: { type: 'string', enum: ['ask', 'skip'], description: 'ask (default) refuses a conflicting capture; skip skips it silently.' },
         requireExisting: { type: 'boolean', description: 'Update-only capture: the note must exist and needs no approval. Defaults to overwrite with a complete replacement summary; pass mode: append for additive material. A missing note fails.' },
+        source_session: { type: 'string', description: 'Optional session id that produced this capture, stored in frontmatter for provenance.' },
+        commit: { type: 'string', description: 'Optional upstream commit hash or reference this capture relates to, stored in frontmatter for provenance.' },
+        verified: { type: 'boolean', description: 'Optional boolean marking the captured knowledge as verified, stored in frontmatter for provenance.' },
       },
       required: ['title', 'summary'],
     },
@@ -784,8 +836,23 @@ const TOOLS = [
         summary: { type: 'string', description: 'Complete current conclusion in Markdown.' },
         details: { type: 'string', description: 'Optional context included in the new body.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional replacement tags; omitted tags are preserved.' },
+        source_session: { type: 'string', description: 'Optional session id that produced this correction, stored in frontmatter for provenance.' },
+        commit: { type: 'string', description: 'Optional upstream commit hash or reference this correction relates to, stored in frontmatter for provenance.' },
+        verified: { type: 'boolean', description: 'Optional boolean marking the corrected knowledge as verified, stored in frontmatter for provenance.' },
       },
       required: ['id', 'baseVersion', 'summary'],
+    },
+  },
+  {
+    name: 'memory_forget',
+    description: 'Move a note into the vault archive area (`archive/<original-relative-path>`). The note is not deleted and can still be read directly, but it is excluded from wiki_search and wiki_graph results. Requires the current version from wiki_read as baseVersion.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Exact vault-relative id from wiki_read.' },
+        baseVersion: { type: 'string', description: 'Version from wiki_read; concurrent changes fail.' },
+      },
+      required: ['id', 'baseVersion'],
     },
   },
 ]
@@ -819,6 +886,8 @@ async function callTool(name, a = {}) {
       return captureNote(a)
     case 'memory_correct':
       return correctNote(a)
+    case 'memory_forget':
+      return forgetNote(a)
     default:
       throw new Error(`unknown tool ${name}`)
   }

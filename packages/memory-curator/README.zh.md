@@ -9,6 +9,10 @@ DSH 记忆库的策展工具。本包是 `@jacklika/dsh-memory` Bundle 的成员
 
 - `memory_correct(id, baseVersion, summary, details?, tags?)` — 先 `wiki_read` 目标笔记，再传入其精确 `id`、返回的 `version` 与完整替换正文。它不追加、不按标题猜选目标、不创建缺失笔记；版本过期时拒绝写入。省略 tags 时保留原值，其他 frontmatter 字段也保留。返回字段与 `memory_capture` 写入结果一致，`mode: 'overwrite'`、`conflict: false`；DSH 写入仍经过既有 queue 与 git 审计路径。
 
+- `memory_forget(id, baseVersion)` — 将策展笔记移入归档区（`archive/<原相对路径>`）。笔记未被物理删除，仍可显式 `wiki_read` 读取，但 `wiki_search` 与 `wiki_graph` 默认不再返回它。必须传入 `wiki_read` 得到的当前 `version`；过期版本会失败关闭。若配置了 `memory-git`，此次移动会被提交。
+
+- `memory_compact()` — 归档旧的逐回合自动捕获笔记，只保留最近 N 个会话。默认关闭；在 curator 配置中通过 `autoCaptureCompact: { enabled: true, keepSessions: N }` 开启。该 pass 是幂等的：重复执行不会产生重复归档文件。它与其他变更工具使用同一跨进程锁车道。
+
 ## 笔记 id
 
 省略 `id` 时，`memory_capture` 由标题推导笔记 id：保留 Unicode 字母与数字（先做 NFC 归一化并转小写），其余连续字符统一折叠为单个 `-`，因此中日韩等非拉丁标题依然可读且互不相同。完全不含字母与数字的标题退化为 `note-<标题 sha256 的前 12 位十六进制>`，纯符号标题的写入不会坍缩到同一个文件。
@@ -16,5 +20,9 @@ DSH 记忆库的策展工具。本包是 `@jacklika/dsh-memory` Bundle 的成员
 ## 覆盖式入库
 
 `mode: 'overwrite'` 替换笔记正文，但会合并既有 frontmatter：其他写入方记录的字段与原始 `created` 都保留，`title` 与 `tags` 以本次调用为准，并写入 `updated`。如果从读取旧笔记到写入之间检测到其他修改，则拒绝覆盖该修改。首次入库只写 `created`。
+
+## 来源字段
+
+`memory_capture` 与 `memory_correct` 接受可选的 `source_session`、`commit`、`verified` 参数。传入后会被写入笔记 frontmatter，作为后续检索加权与审计的一等公民字段。当前版本暂不改变搜索排序。
 
 配置与工作流请参阅 Bundle 文档 `docs/usage.zh.md`。

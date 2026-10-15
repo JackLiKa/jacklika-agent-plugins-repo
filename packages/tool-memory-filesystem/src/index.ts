@@ -8,9 +8,11 @@
  * @module @jacklika/dsh-tool-memory-filesystem
  */
 
+import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -21,6 +23,11 @@ import { codeUnitCompare, fuseRankings, rankNotes } from './search.ts'
 import type { IndexedNote, Note } from './types.ts'
 
 export type * from './types.ts'
+
+const execFileAsync = promisify(execFile)
+
+/** Top-level archive directory for forgotten/archived notes. */
+const ARCHIVE_DIR = 'archive'
 
 /**
  * Locale-independent note-id ordering, re-exported so sibling packages that
@@ -63,6 +70,12 @@ export interface Config {
    * a directory whose notes live under a hidden path such as `.dsh/memory/`.
    */
   indexHiddenDirs?: boolean
+  /**
+   * Top-level directory names to exclude from indexing. The archive directory
+   * (`archive`) is excluded by default so forgotten notes do not pollute
+   * search/graph results; explicit `wiki_read` calls can still retrieve them.
+   */
+  excludeDirs?: string[]
 }
 
 /** Schemastery configuration for the filesystem memory tool consumer. */
@@ -72,6 +85,7 @@ export const Config: z<Config> = z.object({
   maxLinkDepth: z.number().default(1),
   maxSearchResults: z.number().default(20),
   indexHiddenDirs: z.boolean().default(false),
+  excludeDirs: z.array(z.string()).default(['archive']),
 })
 
 /** The shape after schemastery applied the defaults; `vaultRoot` is `''` when unset. */
@@ -229,6 +243,19 @@ function detectExternalChange(path: string, mtimeMs: number): boolean {
   const seen = observedMtimes.get(path)
   recordMtime(path, mtimeMs)
   return seen !== undefined && seen !== mtimeMs
+}
+
+/**
+ * Test whether a note's optional `expires` frontmatter has passed. Unparseable
+ * or absent values are treated as "not expired" so a typo never disappears a
+ * note. Dates are compared in UTC to avoid local-clock surprises.
+ */
+export function isExpired(frontmatter: Record<string, unknown>): boolean {
+  const value = frontmatter.expires
+  if (typeof value !== 'string' || value === '') return false
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return false
+  return parsed.getTime() < Date.now()
 }
 
 /**
@@ -464,9 +491,10 @@ export async function listNotePaths(
   extensions: string[],
   indexHiddenDirs = false,
   onSkip?: (path: string, error: unknown) => void,
+  excludeDirs?: string[],
 ): Promise<string[]> {
   const results: string[] = []
-  const exclude = new Set(['.git', 'node_modules', '.obsidian'])
+  const exclude = new Set(['.git', 'node_modules', '.obsidian', ...(excludeDirs ?? [])])
 
   try {
     if (!(await stat(root)).isDirectory()) return results
@@ -494,6 +522,12 @@ export async function listNotePaths(
         results.push(full)
       }
     }
+  }
+  // Only exclude top-level directories; nested directories named `archive` are
+  // still indexed so a legitimate note directory deeper in the vault is not
+  // silently hidden.
+  for (const name of excludeDirs ?? []) {
+    exclude.add(name)
   }
 
   await walk(root)
@@ -583,8 +617,9 @@ export async function buildIndex(
   extensions: string[],
   indexHiddenDirs = false,
   onSkip?: (path: string, error: unknown) => void,
+  excludeDirs?: string[],
 ): Promise<Map<string, IndexedNote>> {
-  const paths = await listNotePaths(root, extensions, indexHiddenDirs, onSkip)
+  const paths = await listNotePaths(root, extensions, indexHiddenDirs, onSkip, excludeDirs)
   const notes: Note[] = []
   for (const path of paths) {
     let text: string
@@ -613,7 +648,7 @@ export async function buildIndex(
       : (headingMatch !== null && headingMatch[1] !== undefined
         ? headingMatch[1].trim()
         : note.id.replace(/\.[^.]+$/, ''))
-    index.set(note.id, { id: note.id, title, backlinks: [], body: note.body })
+    index.set(note.id, { id: note.id, title, backlinks: [], body: note.body, frontmatter: note.frontmatter })
   }
   const linkResolver = createLinkResolver([...index.keys()])
   for (const note of notes) {
@@ -773,7 +808,7 @@ export function apply(ctx: Context, config: Config): void {
           throw error
         })
       const linkResolver = createLinkResolver(
-        (await listNotePaths(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot)))
+        (await listNotePaths(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot), resolved.excludeDirs))
           .map(path => vaultRelativeId(vaultRoot, path)),
       )
       const note = await readNote(vaultRoot, resolved.extensions, resolved.maxLinkDepth, absolutePath, new Set(), linkResolver)
@@ -781,6 +816,7 @@ export function apply(ctx: Context, config: Config): void {
       const info = await stat(absolutePath).catch(error => { throw noteIoError('read', args.id, error) })
       return {
         ...note,
+        expired: isExpired(note.frontmatter),
         mtime: formatBeijingTime(info.mtime),
         modifiedExternally: detectExternalChange(absolutePath, info.mtimeMs),
       } as unknown as JsonValue
@@ -800,6 +836,10 @@ export function apply(ctx: Context, config: Config): void {
         type: 'string',
         description: 'Optional exact title lookup across the full vault, using NFC case folding and collapsed separators instead of ranked keyword matching. Results retain the usual cap and total count.',
       },
+      maxResults: {
+        type: 'integer',
+        description: 'Optional per-call result cap; overrides the configured maxSearchResults. Use sparingly for bulk scans that would otherwise be truncated.',
+      },
     },
     output: {
       schema: {
@@ -816,26 +856,32 @@ export function apply(ctx: Context, config: Config): void {
                 title: { type: 'string' },
                 score: { type: 'number' },
                 backlinks: { type: 'array', items: { type: 'string' } },
+                expired: { type: 'boolean' },
               },
             },
           },
           total: { type: 'integer' },
           truncated: { type: 'boolean' },
+          fused: { type: 'boolean' },
+          semantic: { type: 'string' },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
-      const index = await buildIndex(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot))
+      const index = await buildIndex(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot), resolved.excludeDirs)
+      const resultCap = typeof args.maxResults === 'number' && Number.isInteger(args.maxResults) && args.maxResults >= 1
+        ? args.maxResults
+        : resolved.maxSearchResults
       if (args.exactTitle !== undefined) {
         const folded = foldSearchTitle(args.exactTitle)
         const exact = folded === '' ? [] : [...index.values()]
           .filter(note => foldSearchTitle(note.title) === folded)
           .sort((a, b) => codeUnitCompare(a.id, b.id))
-        const hits = exact.slice(0, resolved.maxSearchResults)
-          .map(note => ({ id: note.id, title: note.title, score: 1, backlinks: note.backlinks }))
-        return { hits, total: exact.length, truncated: hits.length < exact.length }
+        const hits = exact.slice(0, resultCap)
+          .map(note => ({ id: note.id, title: note.title, score: 1, backlinks: note.backlinks, expired: isExpired(note.frontmatter) }))
+        return { hits, total: exact.length, truncated: hits.length < exact.length, fused: false, semantic: 'unavailable' }
       }
       let hits = rankNotes(index, args.query)
       // Optional semantic layer: when `wiki_semantic_search` is mounted, fuse
@@ -843,10 +889,12 @@ export function apply(ctx: Context, config: Config): void {
       // fail-soft — an unavailable or erroring semantic layer degrades to the
       // lexical ranking; parse/fusion errors propagate so real bugs surface
       // instead of silently weakening results.
+      let semantic: 'ok' | 'unavailable' | 'error' = 'unavailable'
+      let fused = false
       if (ctx.tools.get('wiki_semantic_search') !== undefined) {
-        let semantic
+        let semanticResult
         try {
-          semantic = await ctx.tools.execute({
+          semanticResult = await ctx.tools.execute({
             callId: `${exec.callId}:wiki_semantic_search:${randomUUID()}` as typeof exec.callId,
             rootCallId: exec.rootCallId,
             name: 'wiki_semantic_search',
@@ -857,23 +905,212 @@ export function apply(ctx: Context, config: Config): void {
           })
         } catch (error) {
           ctx.logger?.warn('tool-memory-filesystem: semantic fusion skipped: ' + String(error))
+          semantic = 'error'
         }
-        if (semantic !== undefined && !semantic.isError) {
-          const semanticHits = JSON.parse(
-            semantic.content
-              .map(block => {
-                const maybe = block as { type?: unknown; text?: unknown }
-                return maybe.type === 'text' && typeof maybe.text === 'string' ? maybe.text : ''
-              })
-              .join('') || '[]',
-          ) as { id: string }[]
-          hits = fuseRankings(hits, semanticHits.map(hit => hit.id), index)
-        } else if (semantic !== undefined) {
+        if (semanticResult !== undefined && !semanticResult.isError) {
+          try {
+            const semanticHits = JSON.parse(
+              semanticResult.content
+                .map(block => {
+                  const maybe = block as { type?: unknown; text?: unknown }
+                  return maybe.type === 'text' && typeof maybe.text === 'string' ? maybe.text : ''
+                })
+                .join('') || '[]',
+            ) as { id: string }[]
+            hits = fuseRankings(hits, semanticHits.map(hit => hit.id), index)
+            semantic = 'ok'
+            fused = true
+          } catch (error) {
+            ctx.logger?.warn('tool-memory-filesystem: semantic fusion skipped: ' + String(error))
+            semantic = 'error'
+          }
+        } else if (semanticResult !== undefined) {
           ctx.logger?.warn('tool-memory-filesystem: semantic fusion skipped: wiki_semantic_search returned an error')
+          semantic = 'error'
         }
       }
-      const capped = hits.slice(0, resolved.maxSearchResults)
-      return { hits: capped, total: hits.length, truncated: capped.length < hits.length }
+      const capped = hits.slice(0, resultCap)
+        .map(note => ({ id: note.id, title: note.title, score: note.score, backlinks: note.backlinks, expired: isExpired(index.get(note.id)?.frontmatter ?? {}) }))
+      return { hits: capped, total: hits.length, truncated: capped.length < hits.length, fused, semantic }
+    },
+  })))
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'wiki_history',
+    description: 'Return the git commit history of one note as a list of commits, newest first. Each entry carries the commit hash, author timestamp, message, and author name. The commit hashes can be passed to wiki_restore to roll the note forward to an earlier version without rewriting git history. Requires a git repository inside the vault.',
+    parameters: {
+      id: {
+        type: 'string',
+        required: true,
+        description: 'Vault-relative path of the note whose history to read.',
+      },
+      limit: {
+        type: 'integer',
+        description: 'Maximum number of commits to return; defaults to 50.',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          commits: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                hash: { type: 'string' },
+                date: { type: 'string' },
+                message: { type: 'string' },
+                author: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const vaultRoot = vaultRootFor(exec)
+      await containedPathReal(vaultRoot, args.id).catch(error => { throw noteIoError('read', args.id, error) })
+      const hasGit = await stat(join(vaultRoot, '.git')).then(() => true, () => false)
+      if (!hasGit) throw new Error(`tool-memory-filesystem: no git repository in vault; cannot read history for ${JSON.stringify(args.id)}`)
+      const limit = typeof args.limit === 'number' && Number.isInteger(args.limit) && args.limit > 0 ? args.limit : 50
+      const { stdout } = await execFileAsync('git', ['-C', vaultRoot, 'log', `--max-count=${limit}`, '--format=%H%x00%ai%x00%an%x00%s', '--', args.id])
+        .catch(error => { throw new Error(`tool-memory-filesystem: cannot read history for ${JSON.stringify(args.id)}: ${error instanceof Error ? error.message : String(error)}`) })
+      const commits = stdout.trim().split('\n').filter(line => line.trim() !== '').map(line => {
+        const [hash, date, author, ...messageParts] = line.split('\0')
+        return {
+          hash: hash ?? '',
+          date: date ?? '',
+          author: author ?? '',
+          message: messageParts.join('\0'),
+        }
+      })
+      return { commits }
+    },
+  })))
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'wiki_restore',
+    description: 'Restore one note to the content it had at a specific git commit hash. The current note must still exist and its version must match baseVersion. The restored content is written as a new forward commit, so git history is not rewritten. Returns { id, restoredFrom, version }.',
+    parameters: {
+      id: {
+        type: 'string',
+        required: true,
+        description: 'Vault-relative path of the note to restore.',
+      },
+      hash: {
+        type: 'string',
+        required: true,
+        description: 'Git commit hash returned by wiki_history for this note.',
+      },
+      baseVersion: {
+        type: 'string',
+        required: true,
+        description: 'Current version from wiki_read; the restore fails if the note changed since it was read.',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          restoredFrom: { type: 'string' },
+          version: { type: 'string' },
+          committed: { type: 'boolean' },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const vaultRoot = vaultRootFor(exec)
+      const hasGit = await stat(join(vaultRoot, '.git')).then(() => true, () => false)
+      if (!hasGit) throw new Error(`tool-memory-filesystem: no git repository in vault; cannot restore ${JSON.stringify(args.id)}`)
+      const absolutePath = await containedPathReal(vaultRoot, args.id).catch(error => { throw noteIoError('read', args.id, error) })
+      const current = await readFile(absolutePath, 'utf8').catch(error => { throw noteIoError('read', args.id, error) })
+      if (noteVersion(current) !== args.baseVersion) {
+        throw new Error(`tool-memory-filesystem: note ${JSON.stringify(args.id)} changed since it was read; re-read it before restoring`)
+      }
+      const { stdout } = await execFileAsync('git', ['-C', vaultRoot, 'show', `${args.hash}:${args.id}`])
+        .catch(error => { throw new Error(`tool-memory-filesystem: cannot restore ${JSON.stringify(args.id)} from ${args.hash}: ${error instanceof Error ? error.message : String(error)}`) })
+      await writeAtomic(absolutePath, stdout).catch(error => { throw noteIoError('write', args.id, error) })
+      return {
+        id: args.id,
+        restoredFrom: args.hash,
+        version: noteVersion(stdout),
+      }
+    },
+  })))
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'memory_forget',
+    description: 'Archive one note by moving it from its current id to archive/<id>. The note remains readable via wiki_read by its archived id and remains in git history; it is excluded from default wiki_search and wiki_graph results. Requires the note id and the version returned by wiki_read; a changed note is refused. Returns { forgotten, id, archivedTo, version, created, updated, committed }.',
+    parameters: {
+      id: {
+        type: 'string',
+        required: true,
+        description: 'Vault-relative path of the note to archive (e.g. "shared/notes/decision.md").',
+      },
+      baseVersion: {
+        type: 'string',
+        required: true,
+        description: 'Version from wiki_read; the archive fails if the note changed since it was read.',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          forgotten: { type: 'boolean' },
+          id: { type: 'string' },
+          archivedTo: { type: 'string' },
+          version: { type: 'string' },
+          created: { type: 'string' },
+          updated: { type: 'string' },
+          committed: { type: 'boolean' },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const vaultRoot = vaultRootFor(exec)
+      const absolutePath = await containedPathReal(vaultRoot, args.id)
+        .catch(error => { throw noteIoError('read', args.id, error) })
+      const text = await readFile(absolutePath, 'utf8').catch(error => { throw noteIoError('read', args.id, error) })
+      if (noteVersion(text) !== args.baseVersion) {
+        throw new Error(`tool-memory-filesystem: note ${JSON.stringify(args.id)} changed since it was read; re-read it before forgetting`)
+      }
+      const archivedTo = `${ARCHIVE_DIR}/${args.id}`
+      const archiveAbsolute = await containedPathReal(vaultRoot, archivedTo).catch(error => { throw noteIoError('read', archivedTo, error) })
+      try {
+        await stat(archiveAbsolute)
+        throw new Error(`tool-memory-filesystem: archived note ${JSON.stringify(archivedTo)} already exists; refusing to overwrite`)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw noteIoError('write', archivedTo, error)
+      }
+      const { frontmatter, body } = splitFrontmatter(text)
+      const archivedFrontmatter: Record<string, unknown> = { ...frontmatter, archived: formatBeijingTime(new Date()), archivedFrom: args.id }
+      normalizeNoteTimestamps(archivedFrontmatter)
+      const archivedText = Object.keys(archivedFrontmatter).length > 0
+        ? `---\n${yaml.dump(archivedFrontmatter).trim()}\n---\n${body}`
+        : text
+      const archiveDir = dirname(archiveAbsolute)
+      await mkdir(archiveDir, { recursive: true }).catch(error => { throw noteIoError('write', archivedTo, error) })
+      await writeAtomic(archiveAbsolute, archivedText).catch(error => { throw noteIoError('write', archivedTo, error) })
+      await rm(absolutePath).catch(error => { throw noteIoError('write', args.id, error) })
+      const result: Record<string, unknown> = {
+        forgotten: true,
+        id: args.id,
+        archivedTo,
+        version: noteVersion(archivedText),
+      }
+      if (typeof archivedFrontmatter.created === 'string' && archivedFrontmatter.created !== '') result.created = archivedFrontmatter.created
+      if (typeof archivedFrontmatter.updated === 'string' && archivedFrontmatter.updated !== '') result.updated = archivedFrontmatter.updated
+      return result
     },
   })))
 
