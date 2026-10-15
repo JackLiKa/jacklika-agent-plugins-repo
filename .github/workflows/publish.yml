@@ -99,13 +99,14 @@ jobs:
                 continue
               fi
               attempt_publish() {
-                if npm publish --access public --tag "$tag" "$tgz" >npm_publish.log 2>&1; then
+                npm publish --access public --tag "$tag" "$tgz" >npm_publish.log 2>&1
+                publish_status=$?
+                if [ "$publish_status" -eq 0 ]; then
                   echo "OIDC publish of $name@$version succeeded"
                   echo "--- npm_publish.log (OIDC success) ---"
                   cat npm_publish.log
                   return 0
                 fi
-                publish_status=$?
                 echo "--- npm_publish.log (OIDC failure, status=$publish_status) ---"
                 cat npm_publish.log
                 # npm may return E403/E409 if the version was published but
@@ -146,17 +147,18 @@ jobs:
                   # retry loop cannot be tricked by a ghost npm view result.
                   echo "OIDC publish of $name@$version failed; retrying with NPM_TOKEN"
                   npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-                  if npm publish --access public --tag "$tag" "$tgz" >npm_publish_token.log 2>&1; then
+                  npm publish --access public --tag "$tag" "$tgz" >npm_publish_token.log 2>&1
+                  token_status=$?
+                  echo "--- npm_publish_token.log for $name@$version (status=$token_status) ---"
+                  cat npm_publish_token.log
+                  if [ "$token_status" -eq 0 ]; then
                     echo "Token publish of $name@$version succeeded"
                   elif grep -qiE 'previously published|already exists|Cannot publish over' npm_publish_token.log; then
                     echo "$name@$version already published (per npm error message)"
                   else
-                    echo "Token publish of $name@$version failed with exit code $?"
-                    cat npm_publish_token.log
+                    echo "Token publish of $name@$version failed with exit code $token_status"
                     exit 1
                   fi
-                  echo "--- npm_publish_token.log for $name@$version ---"
-                  cat npm_publish_token.log
                 fi
               fi
               echo "Published $name@$version with tag $tag"
