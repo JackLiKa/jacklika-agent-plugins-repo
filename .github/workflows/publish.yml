@@ -106,11 +106,17 @@ jobs:
                 # npm may return E403/E409 if the version was published but
                 # not yet visible to npm view due to registry propagation.
                 # If the error message explicitly says the version already
-                # exists, trust it and move on; otherwise retry npm view for up
-                # to two minutes before failing the job.
+                # exists, trust it and move on. Authentication failures must not
+                # be masked by a retry loop that only checks npm view, because
+                # a transient registry node can report the version exists while
+                # the publish never actually landed.
                 if grep -qiE 'previously published|already exists|Cannot publish over' npm_publish.log; then
                   echo "$name@$version already published (per npm error message)"
                   return 0
+                fi
+                if grep -qiE 'ENEEDAUTH|need auth' npm_publish.log; then
+                  echo "OIDC/auth failed for $name@$version; will retry with fallback token"
+                  return "$publish_status"
                 fi
                 cat npm_publish.log
                 for _ in $(seq 1 12); do
