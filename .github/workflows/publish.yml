@@ -138,9 +138,18 @@ jobs:
                 else
                   # The OIDC attempt failed; retry once with the repository
                   # token, which stays valid for publishing until January 2027.
+                  # Use a direct publish here instead of attempt_publish so the
+                  # retry loop cannot be tricked by a ghost npm view result.
                   echo "OIDC publish of $name@$version failed; retrying with NPM_TOKEN"
                   npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-                  attempt_publish || exit "$?"
+                  if npm publish --access public --tag "$tag" "$tgz" >npm_publish_token.log 2>&1; then
+                    : # published successfully
+                  elif grep -qiE 'previously published|already exists|Cannot publish over' npm_publish_token.log; then
+                    echo "$name@$version already published (per npm error message)"
+                  else
+                    cat npm_publish_token.log
+                    exit 1
+                  fi
                 fi
               fi
               echo "Published $name@$version with tag $tag"
