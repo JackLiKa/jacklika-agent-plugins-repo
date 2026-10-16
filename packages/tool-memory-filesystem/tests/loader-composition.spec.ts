@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
@@ -14,6 +14,7 @@ import * as ToolMemory from '@jacklika/dsh-tool-memory-filesystem'
 let root: string | undefined
 let context: Context | undefined
 const vaults: string[] = []
+const packageRoot = fileURLToPath(new URL('..', import.meta.url))
 
 afterEach(async () => {
   await context?.fiber.dispose()
@@ -144,14 +145,24 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     const ctx = await boot(undefined, false, undefined, [
       "    vaultRoot: '.plugins/memory'",
       "    bundleName: '@jacklika/dsh-memory'",
-      "    bundleVersion: '0.1.7-rc.32'",
+      "    bundleVersion: '0.1.7-rc.33'",
     ])
+    const savedProfile = process.env.DSH_PROFILE
+    delete process.env.DSH_PROFILE
     const result = await ctx.tools.execute({
       signal: new AbortController().signal,
       callId: ToolCallId('runtime-info'),
       name: 'memory_runtime_info',
-      arguments: { expectedCwd: workspace, expectedVaultRoot: vault },
+      arguments: {
+        expectedCwd: workspace,
+        expectedVaultRoot: vault,
+        expectedModuleRoot: packageRoot,
+        expectedProfile: 'desktop',
+      },
       agent: { id: 'agent-1', session: { header: { cwd: workspace } } } as never,
+    }).finally(() => {
+      if (savedProfile === undefined) delete process.env.DSH_PROFILE
+      else process.env.DSH_PROFILE = savedProfile
     })
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected memory_runtime_info success')
@@ -161,16 +172,23 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       bundle: { name: string; version: string } | null
       session: { cwd: string; cwdSource: string }
       vault: { resolvedRoot: string; exists: boolean }
-      preflight: { safeToWrite: boolean; mismatches: string[] }
+      profile: { name: string | null; source: string }
+      preflight: { safeToWrite: boolean; mismatches: string[]; warnings: string[]; moduleWithinExpectedRoot: boolean }
       fingerprint: string
     }
     expect(info).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       component: { name: '@jacklika/dsh-tool-memory-filesystem' },
-      bundle: { name: '@jacklika/dsh-memory', version: '0.1.7-rc.32' },
+      bundle: { name: '@jacklika/dsh-memory', version: '0.1.7-rc.33' },
+      profile: { name: null, source: 'unavailable' },
       session: { cwd: workspace, cwdSource: 'session' },
       vault: { resolvedRoot: vault, exists: true },
-      preflight: { safeToWrite: true, mismatches: [] },
+      preflight: {
+        safeToWrite: true,
+        mismatches: [],
+        warnings: ['host profile hint is unavailable'],
+        moduleWithinExpectedRoot: true,
+      },
     })
     expect(info.component.version).toMatch(/^0\.1\.3-alpha\./)
     expect(info.component.modulePath).toMatch(/tool-memory-filesystem[\\/]lib[\\/]index\.js$/)
@@ -197,12 +215,12 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
         mismatches: ['expectedCwd is required', 'expectedVaultRoot is required'],
       },
     })
-    const relative = await execute({ expectedCwd: '.', expectedVaultRoot: '.plugins/memory' })
+    const relative = await execute({ expectedCwd: '.', expectedVaultRoot: '.plugins/memory', expectedModuleRoot: 'node_modules/package' })
     if (relative.isError) throw new Error('expected memory_runtime_info success')
     expect(JSON.parse(resultText(relative))).toMatchObject({
       preflight: {
         safeToWrite: false,
-        mismatches: ['expectedCwd must be absolute', 'expectedVaultRoot must be absolute'],
+        mismatches: ['expectedCwd must be absolute', 'expectedVaultRoot must be absolute', 'expectedModuleRoot must be absolute'],
       },
     })
     const mismatched = await execute({
@@ -214,6 +232,47 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       preflight: {
         safeToWrite: false,
         mismatches: ['session cwd does not match expectedCwd', 'resolved vault root does not match expectedVaultRoot'],
+      },
+    })
+  })
+
+  it('fails module provenance and contradictory profile hints without treating an unavailable hint as a mismatch', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-memory-runtime-profile-'))
+    vaults.push(workspace)
+    const vault = join(workspace, '.plugins', 'memory')
+    const ctx = await boot(undefined, false, undefined, ["    vaultRoot: '.plugins/memory'"])
+    const execute = (arguments_: Record<string, unknown>) => ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId(`runtime-profile-${JSON.stringify(arguments_).length}`),
+      name: 'memory_runtime_info',
+      arguments: { expectedCwd: workspace, expectedVaultRoot: vault, ...arguments_ },
+      agent: { id: 'agent-1', session: { header: { cwd: workspace } } } as never,
+    })
+
+    const outside = await execute({ expectedModuleRoot: join(workspace, 'other-package') })
+    if (outside.isError) throw new Error('expected memory_runtime_info success')
+    expect(JSON.parse(resultText(outside))).toMatchObject({
+      preflight: {
+        safeToWrite: false,
+        moduleWithinExpectedRoot: false,
+        mismatches: ['loaded module is outside expectedModuleRoot'],
+      },
+    })
+
+    const savedProfile = process.env.DSH_PROFILE
+    process.env.DSH_PROFILE = 'other'
+    const contradictory = await execute({ expectedModuleRoot: packageRoot, expectedProfile: 'desktop' }).finally(() => {
+      if (savedProfile === undefined) delete process.env.DSH_PROFILE
+      else process.env.DSH_PROFILE = savedProfile
+    })
+    if (contradictory.isError) throw new Error('expected memory_runtime_info success')
+    expect(JSON.parse(resultText(contradictory))).toMatchObject({
+      profile: { name: 'other', source: 'environment' },
+      preflight: {
+        safeToWrite: false,
+        moduleWithinExpectedRoot: true,
+        warnings: [],
+        mismatches: ['host profile contradicts expectedProfile'],
       },
     })
   })

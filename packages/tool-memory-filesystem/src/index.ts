@@ -140,6 +140,21 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function pathWithinRoot(root: string, candidate: string): Promise<boolean> {
+  const absoluteRoot = resolve(root)
+  const absoluteCandidate = resolve(candidate)
+  const lexicalRemainder = relative(absoluteRoot, absoluteCandidate)
+  if (lexicalRemainder === '..' || lexicalRemainder.startsWith(`..${sep}`) || isAbsolute(lexicalRemainder)) return false
+  try {
+    const canonicalRoot = await realpath(absoluteRoot)
+    const canonicalCandidate = await realpath(absoluteCandidate)
+    const canonicalRemainder = relative(canonicalRoot, canonicalCandidate)
+    return canonicalRemainder !== '..' && !canonicalRemainder.startsWith(`..${sep}`) && !isAbsolute(canonicalRemainder)
+  } catch {
+    return false
+  }
+}
+
 /**
  * Reject paths that escape the vault root. The check resolves the candidate,
  * normalizes `..`, and requires the result to start with the root path followed
@@ -814,7 +829,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_runtime_info',
-    description: 'Return a read-only runtime identity and write preflight for the current DSH session, resolved workspace, memory vault, loaded filesystem component, configured bundle, and profile hint. Supply expectedCwd and expectedVaultRoot before any acceptance-test write; safeToWrite is false when either expectation is absent or mismatched.',
+    description: 'Return a read-only runtime identity and write preflight for the current DSH session, resolved workspace, memory vault, loaded filesystem component, configured bundle, and optional profile hint. Supply expectedCwd and expectedVaultRoot before any acceptance-test write. For package provenance, supply expectedModuleRoot; the loaded module must remain inside it after lexical and realpath checks. An unavailable profile environment hint is a warning, while a contradictory available hint is a mismatch.',
     parameters: {
       expectedCwd: {
         type: 'string',
@@ -824,9 +839,13 @@ export function apply(ctx: Context, config: Config): void {
         type: 'string',
         description: 'Absolute resolved vault path the caller intends to write.',
       },
+      expectedModuleRoot: {
+        type: 'string',
+        description: 'Optional absolute package root that must contain the loaded module after lexical and realpath containment checks.',
+      },
       expectedProfile: {
         type: 'string',
-        description: 'Optional DSH profile name expected from the host environment.',
+        description: 'Optional DSH profile hint. An unavailable host hint produces a warning; an available contradictory hint fails preflight.',
       },
     },
     output: {
@@ -839,26 +858,39 @@ export function apply(ctx: Context, config: Config): void {
       const vaultRoot = resolve(vaultRootFor(exec))
       const expectedCwdInput = typeof args.expectedCwd === 'string' ? args.expectedCwd : undefined
       const expectedVaultRootInput = typeof args.expectedVaultRoot === 'string' ? args.expectedVaultRoot : undefined
+      const expectedModuleRootInput = typeof args.expectedModuleRoot === 'string' ? args.expectedModuleRoot : undefined
       const expectedCwd = expectedCwdInput !== undefined && isAbsolute(expectedCwdInput) ? resolve(expectedCwdInput) : undefined
       const expectedVaultRoot = expectedVaultRootInput !== undefined && isAbsolute(expectedVaultRootInput) ? resolve(expectedVaultRootInput) : undefined
+      const expectedModuleRoot = expectedModuleRootInput !== undefined && isAbsolute(expectedModuleRootInput) ? resolve(expectedModuleRootInput) : undefined
       const expectedProfile = typeof args.expectedProfile === 'string' ? args.expectedProfile : undefined
       const profileName = process.env.DSH_PROFILE ?? null
+      const component = await runtimePackageIdentity()
+      const moduleWithinExpectedRoot = expectedModuleRoot === undefined
+        ? null
+        : await pathWithinRoot(expectedModuleRoot, component.modulePath)
       const mismatches: string[] = []
+      const warnings: string[] = []
       if (expectedCwdInput === undefined) mismatches.push('expectedCwd is required')
       else if (expectedCwd === undefined) mismatches.push('expectedCwd must be absolute')
       else if (expectedCwd !== sessionCwd) mismatches.push('session cwd does not match expectedCwd')
       if (expectedVaultRootInput === undefined) mismatches.push('expectedVaultRoot is required')
       else if (expectedVaultRoot === undefined) mismatches.push('expectedVaultRoot must be absolute')
       else if (expectedVaultRoot !== vaultRoot) mismatches.push('resolved vault root does not match expectedVaultRoot')
-      if (expectedProfile !== undefined && expectedProfile !== profileName) {
-        mismatches.push('host profile does not match expectedProfile')
+      if (expectedModuleRootInput !== undefined && expectedModuleRoot === undefined) {
+        mismatches.push('expectedModuleRoot must be absolute')
+      } else if (moduleWithinExpectedRoot === false) {
+        mismatches.push('loaded module is outside expectedModuleRoot')
       }
-      const component = await runtimePackageIdentity()
+      if (expectedProfile !== undefined && profileName === null) {
+        warnings.push('host profile hint is unavailable')
+      } else if (expectedProfile !== undefined && expectedProfile !== profileName) {
+        mismatches.push('host profile contradicts expectedProfile')
+      }
       const bundle = resolved.bundleName === '' || resolved.bundleVersion === ''
         ? null
         : { name: resolved.bundleName, version: resolved.bundleVersion }
       const identity = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         component,
         bundle,
         profile: { name: profileName, source: profileName === null ? 'unavailable' : 'environment' },
@@ -877,8 +909,11 @@ export function apply(ctx: Context, config: Config): void {
           safeToWrite: mismatches.length === 0,
           expectedCwd: expectedCwd ?? null,
           expectedVaultRoot: expectedVaultRoot ?? null,
+          expectedModuleRoot: expectedModuleRoot ?? null,
           expectedProfile: expectedProfile ?? null,
+          moduleWithinExpectedRoot,
           mismatches,
+          warnings,
         },
         fingerprint,
       } as unknown as JsonValue

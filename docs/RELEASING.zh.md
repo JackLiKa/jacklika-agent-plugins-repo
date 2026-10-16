@@ -109,7 +109,7 @@ unset NODE_AUTH_TOKEN
 2. 必须设置 `DSH_DESKTOP_NODE_EXECUTABLE` 再调用 app 运行时 pnpm，否则包装 node 输出 `exec: : not found` 并以 127 退出。
 3. 用 app 运行时的 `pnpm install --frozen-lockfile` 和 `scripts/profile-resolution.mjs` 验证，后者断言每个包在 profile 的 `node_modules` 中只有单副本。
 4. 重启 Electron 宿主以加载新插件代码；pin 生效期间调用 `plugin_manager` 的安装或更新是不安全的。
-5. 在目标 desktop 会话创建任何验收夹具之前，用绝对路径 `expectedCwd` 与 `expectedVaultRoot` 调用 `memory_runtime_info`。只有 `preflight.safeToWrite` 为 true 才继续，并把返回指纹保存在报告中。
+5. 在目标 desktop 会话创建任何验收夹具之前，用绝对路径 `expectedCwd`、`expectedVaultRoot` 以及已安装 filesystem 包目录 `expectedModuleRoot` 调用 `memory_runtime_info`。只有 `preflight.safeToWrite` 与 `moduleWithinExpectedRoot` 都为 true 才继续，并把指纹、mismatches 与 warnings 保存在报告中。Profile 环境提示不可用是 warning，不是部署身份失败。
 
 npm 发布可见性、冻结安装、运行态身份、功能行为以及数据安全/非破坏性检查是相互独立的门禁。每项分别记录 PASS、FAIL 或待验；不得仅凭 npm 可见或一次功能运行推断 desktop 部署 PASS。`memory_runtime_info` 返回的 Profile 提示不能替代锁文件或供应链校验。
 

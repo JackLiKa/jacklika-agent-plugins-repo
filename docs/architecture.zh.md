@@ -23,9 +23,9 @@ Vault          <workspace>/.plugins/memory/     — Obsidian 兼容的 Markdown 
 
 ## 运行态身份与验收边界
 
-`memory_runtime_info` 是验收夹具的写入门禁。它把实际加载的 filesystem 包证据绑定到调用会话 cwd 及该次调用解析出的 Vault 根目录；随附 Bundle 还会通过插件配置提供自身名称和版本。调用方传入绝对路径 `expectedCwd` 与 `expectedVaultRoot`，只有两者都存在且匹配时 `preflight.safeToWrite` 才为 true。返回指纹覆盖运行态身份、Profile 提示、工作区和 Vault 状态，使报告可以标识自己实际测试的实例。
+`memory_runtime_info` 是验收夹具的写入门禁。它把实际加载的 filesystem 包证据绑定到调用会话 cwd 及该次调用解析出的 Vault 根目录；随附 Bundle 还会通过插件配置提供自身名称和版本。调用方传入绝对路径 `expectedCwd` 与 `expectedVaultRoot`；正式部署验收还要把安装包目录作为 `expectedModuleRoot` 传入。模块必须同时通过词法与 realpath 包含检查，保持在该根目录内。只有所有已提供的权威期望都匹配时 `preflight.safeToWrite` 才为 true。返回指纹覆盖运行态身份、Profile 提示、工作区和 Vault 状态，使报告可以标识自己实际测试的实例。
 
-该证明刻意采用分层语义，而不是笼统的部署 PASS。Profile 名称只是环境提示且可能不可用；包发布、锁文件/冻结安装策略、宿主进程来源、运行态行为与数据安全检查仍是相互独立的门禁。功能验收报告必须分别保留这些状态，不能用其中一项推断另一项。
+该证明刻意采用分层语义，而不是笼统的部署 PASS。Profile 名称是非权威环境提示且可能不可用；期望提示不可用时进入 `warnings`，存在但相互矛盾时才成为 mismatch。包发布、锁文件/冻结安装策略、宿主进程来源、运行态行为与数据安全检查仍是相互独立的门禁。功能验收报告必须分别保留这些状态，不能用其中一项推断另一项。
 
 ## 图谱可观测性与归档
 
