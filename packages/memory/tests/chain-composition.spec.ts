@@ -247,6 +247,7 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     const ctx = await boot()
 
     const names = ctx.tools.schemas().map(schema => schema.name)
+    expect(names).toContain('memory_runtime_info')
     expect(names).toContain('wiki_read')
     expect(names).toContain('wiki_search')
     expect(names).toContain('wiki_write')
@@ -255,6 +256,23 @@ describe('dsh-memory whole-chain composition through the shipped cordis.patch.ym
     expect(names).toContain('memory_recall')
     // The shipped patch disables the vector row, so its tool never registers.
     expect(names).not.toContain('wiki_semantic_search')
+
+    const runtime = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('runtime-info'),
+      name: 'memory_runtime_info',
+      arguments: { expectedCwd: workspace, expectedVaultRoot: vaultOf(workspace) },
+      agent: agent('agent-1', workspace),
+    })
+    expect(runtime.isError).toBe(false)
+    if (runtime.isError) throw new Error('expected memory_runtime_info success')
+    const bundleManifest = JSON.parse(await readFile(join(bundleRoot, 'package.json'), 'utf8')) as { name: string; version: string }
+    expect(JSON.parse(resultText(runtime))).toMatchObject({
+      bundle: { name: bundleManifest.name, version: bundleManifest.version },
+      session: { cwd: workspace, cwdSource: 'session' },
+      vault: { resolvedRoot: vaultOf(workspace), exists: false },
+      preflight: { safeToWrite: true, mismatches: [] },
+    })
 
     const result = await write(ctx, 'shared-write', 'shared/summary.md', workspace)
     expect(result.isError).toBe(false)

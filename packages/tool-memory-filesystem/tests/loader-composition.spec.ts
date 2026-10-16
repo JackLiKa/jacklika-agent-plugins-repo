@@ -130,9 +130,92 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     const vault = await makeVault()
     const ctx = await boot(vault)
     const names = ctx.tools.schemas().map(s => s.name).sort()
+    expect(names).toContain('memory_runtime_info')
     expect(names).toContain('wiki_read')
     expect(names).toContain('wiki_search')
     expect(names).toContain('wiki_write')
+  })
+
+  it('attests the calling session workspace and resolved vault before writes', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-memory-runtime-'))
+    vaults.push(workspace)
+    const vault = join(workspace, '.plugins', 'memory')
+    await mkdir(vault, { recursive: true })
+    const ctx = await boot(undefined, false, undefined, [
+      "    vaultRoot: '.plugins/memory'",
+      "    bundleName: '@jacklika/dsh-memory'",
+      "    bundleVersion: '0.1.7-rc.32'",
+    ])
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('runtime-info'),
+      name: 'memory_runtime_info',
+      arguments: { expectedCwd: workspace, expectedVaultRoot: vault },
+      agent: { id: 'agent-1', session: { header: { cwd: workspace } } } as never,
+    })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected memory_runtime_info success')
+    const info = JSON.parse(resultText(result)) as {
+      schemaVersion: number
+      component: { name: string; version: string; modulePath: string; moduleFingerprint: string }
+      bundle: { name: string; version: string } | null
+      session: { cwd: string; cwdSource: string }
+      vault: { resolvedRoot: string; exists: boolean }
+      preflight: { safeToWrite: boolean; mismatches: string[] }
+      fingerprint: string
+    }
+    expect(info).toMatchObject({
+      schemaVersion: 1,
+      component: { name: '@jacklika/dsh-tool-memory-filesystem' },
+      bundle: { name: '@jacklika/dsh-memory', version: '0.1.7-rc.32' },
+      session: { cwd: workspace, cwdSource: 'session' },
+      vault: { resolvedRoot: vault, exists: true },
+      preflight: { safeToWrite: true, mismatches: [] },
+    })
+    expect(info.component.version).toMatch(/^0\.1\.3-alpha\./)
+    expect(info.component.modulePath).toMatch(/tool-memory-filesystem\/lib\/index\.js$/)
+    expect(info.component.moduleFingerprint).toMatch(/^[a-f0-9]{64}$/)
+    expect(info.fingerprint).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('fails write preflight when expectations are absent or target another workspace', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-memory-runtime-mismatch-'))
+    vaults.push(workspace)
+    const ctx = await boot(undefined, false, undefined, ["    vaultRoot: '.plugins/memory'"])
+    const execute = (arguments_: Record<string, unknown>) => ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId(`runtime-info-${Object.keys(arguments_).length}`),
+      name: 'memory_runtime_info',
+      arguments: arguments_,
+      agent: { id: 'agent-1', session: { header: { cwd: workspace } } } as never,
+    })
+    const absent = await execute({})
+    if (absent.isError) throw new Error('expected memory_runtime_info success')
+    expect(JSON.parse(resultText(absent))).toMatchObject({
+      preflight: {
+        safeToWrite: false,
+        mismatches: ['expectedCwd is required', 'expectedVaultRoot is required'],
+      },
+    })
+    const relative = await execute({ expectedCwd: '.', expectedVaultRoot: '.plugins/memory' })
+    if (relative.isError) throw new Error('expected memory_runtime_info success')
+    expect(JSON.parse(resultText(relative))).toMatchObject({
+      preflight: {
+        safeToWrite: false,
+        mismatches: ['expectedCwd must be absolute', 'expectedVaultRoot must be absolute'],
+      },
+    })
+    const mismatched = await execute({
+      expectedCwd: join(workspace, 'other'),
+      expectedVaultRoot: join(workspace, 'other', '.plugins', 'memory'),
+    })
+    if (mismatched.isError) throw new Error('expected memory_runtime_info success')
+    expect(JSON.parse(resultText(mismatched))).toMatchObject({
+      preflight: {
+        safeToWrite: false,
+        mismatches: ['session cwd does not match expectedCwd', 'resolved vault root does not match expectedVaultRoot'],
+      },
+    })
   })
 
   it('withdraws registered tools when the Loader entry unloads', async () => {

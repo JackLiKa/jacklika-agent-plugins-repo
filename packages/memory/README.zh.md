@@ -27,7 +27,7 @@ kind: "package-bundle"
 通过 Harness Plugin Manager 安装 Bundle；该命令可使用已有 Profile，也可自动创建：
 
 ```sh
-dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.31
+dsh plugin --profile memory add @jacklika/dsh-memory@0.1.7-rc.32
 ```
 
 保持 Bundle 位于 `dsh-base` 之后，并加入 `dsh-headless` 或 `dsh-web-app` 等应用层。语义搜索默认关闭，需在 profile patch 中提供 embeddings 端点后启用：
@@ -50,7 +50,7 @@ bundle 的实质是 `cordis.patch.yml`，由 `dsh.bundle.patch` 清单字段声�
 1. `memory-scope` 把私有 `wiki_write` 的 id 重写到 `agents/<agent key>/` 命名空间，使不同 agent 在结构上不可能撞车；`shared/` 前缀直接放行。
 2. `memory-queue` 用 `mkdir` 锁与心跳计数器判活串行化同 lane 的写，使不同进程无法交错。
 3. `memory-git` 在锁内提交 `shared/` 和 `agents/` 写入、历史恢复与归档移动；`nestedRepo: 'init'` 把 vault 历史保存在 vault 自己的 `.git` 中，绝不进入外层项目仓库。
-4. `tool-memory-filesystem` 拥有 vault 本体：`wiki_read`、`wiki_search`、`wiki_write`、原子发布、可选 `baseVersion` 冲突检测、`wiki_history` 与 `wiki_restore`。
+4. `tool-memory-filesystem` 拥有 vault 本体：只读的 `memory_runtime_info` 身份/写入预检、`wiki_read`、`wiki_search`、`wiki_write`、原子发布、可选 `baseVersion` 冲突检测、`wiki_history` 与 `wiki_restore`。
 5. `tool-memory-graph` 提供 `wiki_graph` 查询、只读的归档隔离检查 `wiki_graph_audit`，以及通过快照校验的限量分页 `wiki_graph_page`。
 6. `memory-curator` 注册 `memory_recall`、`memory_capture`、`memory_correct`、`memory_forget` 与 `memory_compact`；逐回合自动捕获笔记不会出现在 `memory_recall` 中，并可通过 `memory_compact`  aged out。
 7. frontmatter 中的 `expires` 会在读取与搜索结果中暴露为 `expired` 标志；过期笔记不会自动删除。

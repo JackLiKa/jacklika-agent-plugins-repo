@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -76,6 +77,8 @@ export interface Config {
    * search/graph results; explicit `wiki_read` calls can still retrieve them.
    */
   excludeDirs?: string[]
+  bundleName?: string
+  bundleVersion?: string
 }
 
 /** Schemastery configuration for the filesystem memory tool consumer. */
@@ -86,6 +89,8 @@ export const Config: z<Config> = z.object({
   maxSearchResults: z.number().default(20),
   indexHiddenDirs: z.boolean().default(false),
   excludeDirs: z.array(z.string()).default(['archive']),
+  bundleName: z.string().default(''),
+  bundleVersion: z.string().default(''),
 })
 
 /** The shape after schemastery applied the defaults; `vaultRoot` is `''` when unset. */
@@ -108,6 +113,31 @@ export function resolveMemoryVaultRoot(
     return join(sessionCwd, '.dsh', 'memory')
   }
   return isAbsolute(vaultRoot) ? vaultRoot : resolve(sessionCwd, vaultRoot)
+}
+
+async function runtimePackageIdentity(): Promise<{ name: string; version: string; modulePath: string; moduleFingerprint: string }> {
+  const text = await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  const value = JSON.parse(text) as { name?: unknown; version?: unknown }
+  if (typeof value.name !== 'string' || typeof value.version !== 'string') {
+    throw new Error('tool-memory-filesystem: package identity is invalid')
+  }
+  const modulePath = fileURLToPath(import.meta.url)
+  const moduleBytes = await readFile(modulePath)
+  return {
+    name: value.name,
+    version: value.version,
+    modulePath,
+    moduleFingerprint: createHash('sha256').update(moduleBytes).digest('hex'),
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
 }
 
 /**
@@ -781,6 +811,79 @@ export function apply(ctx: Context, config: Config): void {
   assertExtensions(resolved.extensions)
 
   const vaultRootFor = (exec: ToolRunContext): string => resolveMemoryVaultRoot(resolved.vaultRoot, exec)
+
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'memory_runtime_info',
+    description: 'Return a read-only runtime identity and write preflight for the current DSH session, resolved workspace, memory vault, loaded filesystem component, configured bundle, and profile hint. Supply expectedCwd and expectedVaultRoot before any acceptance-test write; safeToWrite is false when either expectation is absent or mismatched.',
+    parameters: {
+      expectedCwd: {
+        type: 'string',
+        description: 'Absolute workspace path the caller intends to test.',
+      },
+      expectedVaultRoot: {
+        type: 'string',
+        description: 'Absolute resolved vault path the caller intends to write.',
+      },
+      expectedProfile: {
+        type: 'string',
+        description: 'Optional DSH profile name expected from the host environment.',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const sessionCwd = resolve(exec.agent?.session.header.cwd ?? process.cwd())
+      const cwdSource = exec.agent?.session.header.cwd === undefined ? 'process' : 'session'
+      const vaultRoot = resolve(vaultRootFor(exec))
+      const expectedCwdInput = typeof args.expectedCwd === 'string' ? args.expectedCwd : undefined
+      const expectedVaultRootInput = typeof args.expectedVaultRoot === 'string' ? args.expectedVaultRoot : undefined
+      const expectedCwd = expectedCwdInput !== undefined && isAbsolute(expectedCwdInput) ? resolve(expectedCwdInput) : undefined
+      const expectedVaultRoot = expectedVaultRootInput !== undefined && isAbsolute(expectedVaultRootInput) ? resolve(expectedVaultRootInput) : undefined
+      const expectedProfile = typeof args.expectedProfile === 'string' ? args.expectedProfile : undefined
+      const profileName = process.env.DSH_PROFILE ?? null
+      const mismatches: string[] = []
+      if (expectedCwdInput === undefined) mismatches.push('expectedCwd is required')
+      else if (expectedCwd === undefined) mismatches.push('expectedCwd must be absolute')
+      else if (expectedCwd !== sessionCwd) mismatches.push('session cwd does not match expectedCwd')
+      if (expectedVaultRootInput === undefined) mismatches.push('expectedVaultRoot is required')
+      else if (expectedVaultRoot === undefined) mismatches.push('expectedVaultRoot must be absolute')
+      else if (expectedVaultRoot !== vaultRoot) mismatches.push('resolved vault root does not match expectedVaultRoot')
+      if (expectedProfile !== undefined && expectedProfile !== profileName) {
+        mismatches.push('host profile does not match expectedProfile')
+      }
+      const component = await runtimePackageIdentity()
+      const bundle = resolved.bundleName === '' || resolved.bundleVersion === ''
+        ? null
+        : { name: resolved.bundleName, version: resolved.bundleVersion }
+      const identity = {
+        schemaVersion: 1,
+        component,
+        bundle,
+        profile: { name: profileName, source: profileName === null ? 'unavailable' : 'environment' },
+        session: { cwd: sessionCwd, cwdSource, agentId: exec.agent?.id ?? null },
+        vault: {
+          configuredRoot: resolved.vaultRoot === '' ? null : resolved.vaultRoot,
+          resolvedRoot: vaultRoot,
+          exists: await pathExists(vaultRoot),
+          gitRepository: await pathExists(join(vaultRoot, '.git')),
+        },
+      }
+      const fingerprint = createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+      return {
+        ...identity,
+        preflight: {
+          safeToWrite: mismatches.length === 0,
+          expectedCwd: expectedCwd ?? null,
+          expectedVaultRoot: expectedVaultRoot ?? null,
+          expectedProfile: expectedProfile ?? null,
+          mismatches,
+        },
+        fingerprint,
+      } as unknown as JsonValue
+    },
+  })))
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_read',

@@ -21,6 +21,12 @@ Vault          <workspace>/.plugins/memory/     — Obsidian-compatible Markdown
 
 All human-facing timestamps stored in the vault use **Asia/Shanghai (`+08:00`)** time, including note `created` frontmatter and append-section headings. This keeps the local audit log readable for the project maintainer and avoids mixing UTC `Z` with local wall-clock dates.
 
+## Runtime identity and acceptance boundary
+
+`memory_runtime_info` is the write gate for acceptance fixtures. It binds evidence from the actually loaded filesystem package to the calling session cwd and the vault root resolved for that call. The shipped Bundle also supplies its name and version through the plugin configuration. Callers provide absolute `expectedCwd` and `expectedVaultRoot`; `preflight.safeToWrite` is true only when both are present and match. The returned fingerprint covers the runtime identity, profile hint, workspace, and vault state, so reports can identify which instance they tested.
+
+This attestation is deliberately layered rather than a universal deployment PASS. The profile name is an environment hint and can be unavailable; package publication, lockfile/frozen-install policy, host-process provenance, runtime behavior, and data-safety checks remain separate gates. A functional acceptance report must retain those statuses independently instead of inferring one from another.
+
 ## Graph observability and archives
 
 `wiki_graph` removes `excludeDirs` (default `['archive']`) **before** constructing nodes, resolving `[[link]]` targets, or deriving keyword edges. A link to an archived-only target remains unresolved; it is not redirected to `archive/`. Direct `wiki_read` still works for an archived id, while centering `wiki_graph` on an existing excluded note returns a distinct exclusion error. The result's `excludedDirs` reports the configured policy, not the number of notes excluded.

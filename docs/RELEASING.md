@@ -109,6 +109,9 @@ Pinning unpublished or locally built versions into a dsh profile uses `file:` de
 2. The app runtime pnpm must be invoked with `DSH_DESKTOP_NODE_EXECUTABLE` set, or the wrapper node prints `exec: : not found` and exits 127.
 3. Verify with `pnpm install --frozen-lockfile` under the app runtime and with `scripts/profile-resolution.mjs`, which asserts a single copy per package inside the profile's `node_modules`.
 4. Restart the Electron host to load new plugin code; `plugin_manager` install or update calls are unsafe while the pins are active.
+5. In the target desktop session, call `memory_runtime_info` with absolute `expectedCwd` and `expectedVaultRoot` before any acceptance fixture. Continue only when `preflight.safeToWrite` is true, and retain the returned fingerprint in the report.
+
+Publication visibility, frozen installation, runtime identity, functional behavior, and data-safety/non-destructive checks are independent gates. Record each as PASS, FAIL, or pending; never infer a desktop deployment PASS from npm visibility or a functional run alone. The profile hint returned by `memory_runtime_info` is not a substitute for lockfile or supply-chain verification.
 
 ## Related
 
