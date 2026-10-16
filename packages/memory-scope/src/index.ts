@@ -9,6 +9,8 @@
  * @module @jacklika/dsh-memory-scope
  */
 
+import { realpathSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -25,6 +27,12 @@ export type ScopeRole = 'scoped' | 'curator'
 
 /** Plugin configuration. */
 export interface Config {
+  /** Optional process-wide acceptance boundary. Never inferred from an agent-supplied role. */
+  acceptanceMode?: 'off' | 'read-only' | 'bounded-write'
+  /** Real workspace path required for bounded writes. */
+  acceptanceCwd?: string
+  /** Vault-relative directory prefixes allowed to receive bounded writes. */
+  acceptanceWritePrefixes?: string[]
   /** Tool names whose id argument is namespaced per calling agent. */
   toolNames?: string[]
   /** Argument carrying the vault-relative note id. */
@@ -55,6 +63,9 @@ export interface Config {
 
 /** Schemastery configuration for the memory scope consumer. */
 export const Config: z<Config> = z.object({
+  acceptanceMode: z.union(['off', 'read-only', 'bounded-write']).default('off'),
+  acceptanceCwd: z.string().default(''),
+  acceptanceWritePrefixes: z.array(z.string()).default([]),
   toolNames: z.array(z.string()).default(['wiki_write']),
   idArgument: z.string().default('id'),
   scopePrefix: z.string().default('agents'),
@@ -65,6 +76,17 @@ export const Config: z<Config> = z.object({
 
 /** The shape after schemastery applied the defaults. */
 type ResolvedConfig = Required<Config>
+
+const writeTools = new Set(['wiki_write', 'wiki_restore', 'memory_forget', 'memory_capture', 'memory_correct', 'memory_compact'])
+
+function policyDenied(reason: string): ToolExecutionResult {
+  const message = `memory-scope: acceptance policy denied: ${reason}`
+  return {
+    isError: true,
+    content: [{ type: 'text', text: `Error: ${message}` }],
+    error: { message, info: { name: 'ToolPermissionError', code: 'POLICY_DENIED' } },
+  }
+}
 
 /**
  * Derive a path-safe namespace segment: the configured `agentKey` wins, else
@@ -91,8 +113,8 @@ function agentKey(exec: ToolDispatchExecution, configured: string): string {
  */
 function isSafeNoteId(id: string): boolean {
   if (id === '' || id.startsWith('/') || id.startsWith('\\') || /^[A-Za-z]:/.test(id)) return false
-  if (id.includes('\\')) return false
-  return !id.split('/').some(segment => segment === '..' || segment === '.')
+  if (id.includes('\\') || id.includes('\0')) return false
+  return !id.split('/').some(segment => segment === '..' || segment === '.' || segment === '')
 }
 
 /**
@@ -123,13 +145,27 @@ function invalidIdResult(message: string): ToolExecutionResult {
  * @param config - deployment's explicit scope configuration.
  */
 export function apply(ctx: Context, config: Config): void {
+  const resolved = config as ResolvedConfig
   const tools = ctx.get('tools') as { execute?: unknown } | undefined
   if (typeof tools?.execute !== 'function') {
+    if (resolved.acceptanceMode !== undefined && resolved.acceptanceMode !== 'off') {
+      throw new Error('memory-scope: tools.execute unavailable; acceptance policy cannot start')
+    }
     ctx.logger?.warn('memory-scope: ctx.tools.execute unavailable; id namespacing disabled.')
     return
   }
 
-  const resolved = config as ResolvedConfig
+  const mode = resolved.acceptanceMode ?? 'off'
+  const prefixes = resolved.acceptanceWritePrefixes ?? []
+  if (mode === 'bounded-write') {
+    if (!isAbsolute(resolved.acceptanceCwd) || prefixes.length === 0) {
+      throw new Error('memory-scope: bounded-write requires an absolute acceptanceCwd and nonempty acceptanceWritePrefixes')
+    }
+    if (prefixes.some(prefix => !prefix.endsWith('/') || !isSafeNoteId(`${prefix}note.md`) || prefix.startsWith('archive/'))) {
+      throw new Error('memory-scope: acceptanceWritePrefixes must be safe vault-relative directories outside archive/')
+    }
+  }
+  const expectedCwd = mode === 'bounded-write' ? realpathSync(resolved.acceptanceCwd) : ''
   if (resolved.toolNames.length === 0) {
     throw new Error('memory-scope: toolNames must not be empty')
   }
@@ -144,8 +180,37 @@ export function apply(ctx: Context, config: Config): void {
   }
   const names = new Set(resolved.toolNames)
   const shared = resolved.sharedPrefixes
+  const deny = (exec: ToolDispatchExecution, reason: string): ToolExecutionResult => {
+    ctx.logger?.warn(JSON.stringify({
+      event: 'memory_acceptance_policy_denied',
+      tool: exec.name,
+      agentId: exec.agent?.id ?? null,
+      callId: exec.callId,
+      rootCallId: exec.rootCallId ?? null,
+      reason,
+    }))
+    return policyDenied(reason)
+  }
 
   ctx.on('tools/execute', async (exec, next): Promise<ToolExecutionResult> => {
+    if (mode !== 'off' && writeTools.has(exec.name)) {
+      if (mode === 'read-only') return deny(exec, `${exec.name} is not available in a read-only worker`)
+      const cwd = exec.agent?.session?.header?.cwd
+      if (typeof cwd !== 'string' || !isAbsolute(cwd)) return deny(exec, 'session cwd is unavailable')
+      let actualCwd: string
+      try {
+        actualCwd = realpathSync(cwd)
+      } catch {
+        return deny(exec, 'session cwd cannot be resolved')
+      }
+      if (resolve(actualCwd) !== resolve(expectedCwd)) return deny(exec, 'session cwd does not match acceptanceCwd')
+      if (exec.name === 'memory_compact') return deny(exec, 'memory_compact has no bounded target')
+      const args = exec.arguments
+      const id = args !== null && typeof args === 'object' ? (args as Record<string, unknown>).id : undefined
+      if (typeof id !== 'string' || !isSafeNoteId(id) || !prefixes.some(prefix => id.startsWith(prefix))) {
+        return deny(exec, 'explicit id is required inside acceptanceWritePrefixes')
+      }
+    }
     if (!names.has(exec.name) || resolved.role === 'curator') return next()
     const args = exec.arguments
     if (args === null || typeof args !== 'object') return next()

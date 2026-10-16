@@ -16,6 +16,28 @@
 
 ## 信任边界
 
+### 验收执行边界（未发布源码）
+
+可选的 `memory-scope` `acceptanceMode` 门禁默认关闭，**已发布的 rc.33 desktop Profile 尚不包含此功能**。后续部署应让分页 worker 在独立 Loader/进程中使用 `read-only`；让验收写入者在另一 `bounded-write` 实例中使用 realpath 绑定的 `acceptanceCwd` 和本轮专属 `acceptanceWritePrefixes`。不要相信 agent 自报角色，也不要将提示词等同于工具权限。门禁只覆盖经自身 waterfall 的记忆工具，不能隔离 shell、其他插件或进程；如 worker 具备这些能力，应使用操作系统只读挂载/沙箱。
+
+另用 `scripts/audit-memory-acceptance.mjs` 对 Vault Git 历史进行独立只读对账。manifest 放在 **Vault 外**，`--baseline` 固定到验收首次写入前的提交，最终报告及异步 auto-capture 完成后再次运行。manifest 示例：
+
+```json
+{
+  "schemaVersion": 1,
+  "createPrefixes": ["shared/notes/dsh-run-123/"],
+  "updateIds": [],
+  "archiveMoves": [
+    {
+      "from": "shared/notes/dsh-run-123/target.md",
+      "to": "archive/shared/notes/dsh-run-123/target.md"
+    }
+  ]
+}
+```
+
+在源码仓库执行 `node scripts/audit-memory-acceptance.mjs --vault <绝对Vault路径> --baseline <提交> --manifest <绝对JSON路径>`。它比较 baseline 之后的全部已提交变更（归档需成对路径），发现意外路径或非 clean 工作树时输出 JSON 并以非零状态退出。计划内 auto-capture 的 id/前缀应明确列出，不能默认放行整个 `auto-capture/`。审计器不证明调用者身份、不验证 baseline 之前的历史，也不能单独阻止写入。新 Vault 需要先建立可信的初始提交才能固定 baseline。
+
 - 插件与 skill 是受信代码/配置：它们在 dsh 进程内以完整宿主权限运行，只安装你自己掌控的版本。
 - `nestedRepo` 默认值（`init`）防止记忆提交静默进入外层项目仓库——这是开发中发现的真实边界，现已默认关闭。
 - 路径包含校验拒绝 `..`、绝对路径、跨根路径及已有 symlink/junction 逃逸。读会校验真实目标；写会在建目录前后校验最近的已有祖先，还会把仓库内 symlink 解析到目标（并重新做包含校验），因此通过链接追加会更新链接指向的笔记而不是替换链接；损坏的链接被拒绝；rename 原子发布时保留原权限位。

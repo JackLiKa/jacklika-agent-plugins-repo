@@ -85,6 +85,81 @@ async function write(ctx: Context, callId: string, id: string, agentId: string, 
 }
 
 describe('memory-scope real Loader composition through cordis.yml', () => {
+  it('refuses to start acceptance mode without the tools service', () => {
+    const ctx = new Context()
+    expect(() => MemoryScope.apply(ctx, { acceptanceMode: 'read-only' })).toThrow('tools.execute unavailable')
+  })
+
+  it('enforces a read-only tool boundary even when an agent requests a valid shared id', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
+    const ctx = await boot(vault, ['    acceptanceMode: read-only'])
+    const rejected = await write(ctx, 'worker-write', 'shared/notes/unapproved.md', 'worker', vault)
+    expect(rejected.isError).toBe(true)
+    if (rejected.isError) expect(rejected.error.info?.code).toBe('POLICY_DENIED')
+    const read = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('worker-search'),
+      name: 'wiki_search',
+      arguments: { query: 'anything' },
+      agent: agent('worker', vault),
+    })
+    expect(read.isError).toBe(false)
+  })
+
+  it('allows only explicitly addressed run files in a bound workspace', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
+    const ctx = await boot(vault, [
+      '    acceptanceMode: bounded-write',
+      `    acceptanceCwd: ${vault}`,
+      '    acceptanceWritePrefixes:',
+      '      - shared/notes/dsh-run-123/',
+    ])
+    const allowed = await write(ctx, 'allowed', 'shared/notes/dsh-run-123/ok.md', 'driver', vault)
+    expect(allowed.isError).toBe(false)
+    for (const id of [
+      'shared/notes/elsewhere.md',
+      'shared/notes/dsh-run-123-evil/x.md',
+      'shared/notes/dsh-run-123/../elsewhere.md',
+      'shared/notes/dsh-run-123/x\u0000.md',
+    ]) {
+      const result = await write(ctx, `denied-${id}`, id, 'driver', vault)
+      expect(result.isError, id).toBe(true)
+    }
+    const wrongCwd = await write(ctx, 'wrong-workspace', 'shared/notes/dsh-run-123/ok.md', 'driver', '/tmp/another-workspace')
+    expect(wrongCwd.isError).toBe(true)
+    const noAgent = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('no-agent'),
+      name: 'wiki_write',
+      arguments: { id: 'shared/notes/dsh-run-123/ok.md', content: 'bad' },
+    })
+    expect(noAgent.isError).toBe(true)
+  })
+
+  it('rejects lifecycle mutations outside the allowed run prefix', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
+    const ctx = await boot(vault, [
+      '    acceptanceMode: bounded-write',
+      `    acceptanceCwd: ${vault}`,
+      '    acceptanceWritePrefixes:',
+      '      - shared/notes/dsh-run-123/',
+    ])
+    for (const [name, args] of [
+      ['memory_forget', { id: 'shared/notes/elsewhere.md', baseVersion: 'x' }],
+      ['wiki_restore', { id: 'shared/notes/elsewhere.md', baseVersion: 'x', hash: 'deadbeef' }],
+    ] as const) {
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId(`guard-${name}`),
+        name,
+        arguments: args,
+        agent: agent('driver', vault),
+      })
+      expect(result.isError).toBe(true)
+      if (result.isError) expect(result.error.info?.code).toBe('POLICY_DENIED')
+    }
+  })
+
   it('namespaces writes per calling agent and reports the real on-disk id', async () => {
     const vault = await mkdtemp(join(tmpdir(), 'dsh-scope-vault-'))
     const ctx = await boot(vault)

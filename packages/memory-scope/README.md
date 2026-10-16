@@ -47,6 +47,9 @@ A curator deployment that consolidates `agents/*` notes into `shared/` mounts th
 | `sharedPrefixes` | `string[]` | `['shared/']` | Id prefixes forming the shared zone; matching ids are not rewritten. Each entry must end with `/`. |
 | `role` | `'scoped' \| 'curator'` | `'scoped'` | `curator` disables rewriting so the deployment writes the shared zone directly. |
 | `agentKey` | `string` | `''` | Stable namespace key shared by every session; empty derives the key from the calling session id. Single path segment of letters, digits, `.`, `_`, `-`. |
+| `acceptanceMode` | `'off' \| 'read-only' \| 'bounded-write'` | `'off'` | Process-wide tool-call guard; install in a dedicated acceptance deployment, not as a model-supplied role. |
+| `acceptanceCwd` | `string` | `''` | Existing absolute workspace required in bounded-write mode; compared by realpath to the session cwd on each write. |
+| `acceptanceWritePrefixes` | `string[]` | `[]` | Explicit vault-relative directory prefixes allowed in bounded-write mode; no implicit target or compact calls. |
 
 -----
 
@@ -54,6 +57,8 @@ A curator deployment that consolidates `agents/*` notes into `shared/` mounts th
 ## Understand the implementation
 
 The plugin installs one `ctx.on('tools/execute', …)` waterfall listener. For a matching call it reads the `idArgument` value, skips ids already under a shared prefix or the caller's own namespace, derives a path-safe key from `agentKey` when configured or `exec.agent.id` otherwise, and re-dispatches the call through `ctx.tools.execute` with the id rewritten to `<scopePrefix>/<key>/<id>`. Re-dispatch is required because parsed arguments are deep-frozen before wrappers run; the nested execution inherits `rootCallId`, marks `parent`, and mints a `<callId>:scoped` call id, so the durable log records the real on-disk id. Calls without an agent, without a string id, or under the `curator` role pass straight to `next()`.
+
+For acceptance, configure a separate Loader/profile instance with `acceptanceMode: read-only` for a graph paging worker. It rejects memory write tools before scope rewriting, including nested curator calls. A separate driver can use `bounded-write`, `acceptanceCwd` and a narrow `acceptanceWritePrefixes` list (for example `shared/notes/dsh-run-123/`). An absent agent session, mismatched cwd, unsafe or implicit id, `memory_compact`, and writes outside the prefix fail closed with `POLICY_DENIED`. Denials emit a structured warning with tool, agent/call ids and reason (but not note contents). This is process-wide configuration, **not** per-agent RBAC inside one desktop process. Do not run a read-only worker in the unrestricted driver process; a prompt cannot grant or revoke capabilities. The same plugin may be loaded by two isolated processes with different config.
 
 -----
 
@@ -73,6 +78,7 @@ The wrapper does not change the request header, system prompt, or tool list.
 - **Scoping is advisory** — a tool not listed in `toolNames`, or a writer outside the waterfall (shell command, unmounted process), can still write any path; the shared zone needs `@jacklika/dsh-memory-queue` for real arbitration.
 - **Writes are scoped, reads are not** — every agent can read and search the whole vault including other agents' namespaces; per-agent read isolation is deferred.
 - **Namespace key follows the session id by default** — each new session is a fresh namespace, so appends to the same id do not continue across sessions; configure `agentKey` for a stable cross-session namespace. Resumed or forked sessions keep their own key only when the runtime preserves `exec.agent.id`; non-agent calls pass through unscoped.
+- **Acceptance guard covers only known memory tool calls through this Loader** — it does not sandbox shell/file APIs, unmounted plugins, other processes, or arbitrary third-party tools. Use a dedicated OS-sandboxed read-only worker or a read-only Vault mount for a host-wide guarantee. `memory_compact` is deliberately denied in bounded-write mode because its target set is not bounded by one id. This optional feature is not part of the published rc.33 binary.
 
 <a id="dev-note"></a>
 ### Dev Note

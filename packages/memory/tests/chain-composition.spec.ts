@@ -90,8 +90,15 @@ afterEach(async () => {
  *   exactly as shipped; only the timing knobs change.
  * @returns the booted context.
  */
-async function boot(queueTiming = false): Promise<Context> {
-  const rows = shippedRows().map(row => queueTiming && row.id === 'memory-queue'
+async function boot(queueTiming = false, acceptance?: { mode: string; cwd: string; prefixes?: string[] }): Promise<Context> {
+  const rows = shippedRows().map(row => acceptance && row.id === 'memory-scope'
+    ? { ...row, config: {
+      ...row.config,
+      acceptanceMode: acceptance.mode,
+      acceptanceCwd: acceptance.cwd,
+      acceptanceWritePrefixes: acceptance.prefixes ?? [],
+    } }
+    : queueTiming && row.id === 'memory-queue'
     ? {
       ...row,
       config: {
@@ -214,6 +221,41 @@ function capture(
     agent: agent(agentId, workspace),
   })
 }
+
+describe('acceptance capability boundary in the full bundle', () => {
+  it('denies a pagination worker write and an indirect capture in read-only mode', async () => {
+    const workspace = await temp('dsh-chain-acceptance-')
+    const ctx = await boot(false, { mode: 'read-only', cwd: workspace })
+    const direct = await write(ctx, 'worker-write', 'shared/notes/unauthorized.md', workspace)
+    expect(direct.isError).toBe(true)
+    if (direct.isError) expect(direct.error.info?.code).toBe('POLICY_DENIED')
+    const indirect = await capture(ctx, 'worker-capture', workspace, 'unauthorized', 'must not write')
+    expect(indirect.isError).toBe(true)
+    if (indirect.isError) expect(indirect.error.info?.code).toBe('POLICY_DENIED')
+    expect(existsSync(join(vaultOf(workspace), 'shared', 'notes', 'unauthorized.md'))).toBe(false)
+  })
+
+  it('denies implicit capture targets and compact even when bounded writes are enabled', async () => {
+    const workspace = await temp('dsh-chain-acceptance-')
+    const ctx = await boot(false, {
+      mode: 'bounded-write', cwd: workspace, prefixes: ['shared/notes/dsh-run-123/'],
+    })
+    const ok = await write(ctx, 'run-ok', 'shared/notes/dsh-run-123/ok.md', workspace)
+    expect(ok.isError).toBe(false)
+    const unexpected = await capture(ctx, 'capture-implicit', workspace, 'unbounded', 'should fail')
+    expect(unexpected.isError).toBe(true)
+    if (unexpected.isError) expect(unexpected.error.info?.code).toBe('POLICY_DENIED')
+    const compact = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('compact-implicit'),
+      name: 'memory_compact',
+      arguments: {},
+      agent: agent('agent-1', workspace),
+    })
+    expect(compact.isError).toBe(true)
+    if (compact.isError) expect(compact.error.info?.code).toBe('POLICY_DENIED')
+  })
+})
 
 function recall(ctx: Context, callId: string, workspace: string, query: string, agentId = 'agent-1') {
   return ctx.tools.execute({
