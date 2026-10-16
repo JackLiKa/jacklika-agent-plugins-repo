@@ -173,7 +173,7 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
       preflight: { safeToWrite: true, mismatches: [] },
     })
     expect(info.component.version).toMatch(/^0\.1\.3-alpha\./)
-    expect(info.component.modulePath).toMatch(/tool-memory-filesystem\/lib\/index\.js$/)
+    expect(info.component.modulePath).toMatch(/tool-memory-filesystem[\\/]lib[\\/]index\.js$/)
     expect(info.component.moduleFingerprint).toMatch(/^[a-f0-9]{64}$/)
     expect(info.fingerprint).toMatch(/^[a-f0-9]{64}$/)
   })
