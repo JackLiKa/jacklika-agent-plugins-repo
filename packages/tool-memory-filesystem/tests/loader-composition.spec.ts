@@ -724,6 +724,72 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(raw).not.toContain('updated:')
   })
 
+  it('keeps existing frontmatter fields on overwrite and stamps updated', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    const seed = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('overwrite-seed'),
+      name: 'wiki_write',
+      arguments: {
+        id: 'concepts/merged.md',
+        mode: 'overwrite',
+        content: '---\ntitle: Merged\ncreated: 2026-01-02T03:04:05+08:00\ntags:\n  - alpha\n---\n\n# Merged\n\nSeed body.\n',
+      },
+    })
+    if (seed.isError) throw new Error('expected seed wiki_write success')
+
+    const overwrite = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('overwrite-merge'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/merged.md', mode: 'overwrite', content: '# Merged\n\nReplacement body.\n' },
+    })
+    if (overwrite.isError) throw new Error('expected overwrite wiki_write success')
+
+    const raw = await readFile(join(vault, 'concepts', 'merged.md'), 'utf8')
+    expect(raw).toContain('title: Merged')
+    expect(raw).toContain("created: '2026-01-02T03:04:05+08:00'")
+    expect(raw).toContain('- alpha')
+    expect(raw).toMatch(/updated: '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00'/)
+    expect(raw).toContain('Replacement body.')
+  })
+
+  it('lets overwrite-supplied frontmatter keys win over existing ones', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    const seed = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('overwrite-seed-override'),
+      name: 'wiki_write',
+      arguments: {
+        id: 'concepts/override.md',
+        mode: 'overwrite',
+        content: '---\ntitle: Old\ntags:\n  - alpha\n---\n\n# Old\n\nSeed body.\n',
+      },
+    })
+    if (seed.isError) throw new Error('expected seed wiki_write success')
+
+    const overwrite = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('overwrite-override'),
+      name: 'wiki_write',
+      arguments: {
+        id: 'concepts/override.md',
+        mode: 'overwrite',
+        content: '---\ntitle: New\n---\n\n# New\n\nBody.\n',
+      },
+    })
+    if (overwrite.isError) throw new Error('expected overwrite wiki_write success')
+
+    const raw = await readFile(join(vault, 'concepts', 'override.md'), 'utf8')
+    expect(raw).toContain('title: New')
+    expect(raw).not.toContain('title: Old')
+    expect(raw).toContain('- alpha')
+  })
+
   it('refuses an update-only write to a missing note without creating it or its directory', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)

@@ -1421,8 +1421,19 @@ export function apply(ctx: Context, config: Config): void {
       let finalBody: string
       let frontmatter: Record<string, unknown> = {}
       if (mode === 'overwrite') {
-        finalBody = normalizeTextTimestamps(args.content)
-        frontmatter = splitFrontmatter(finalBody).frontmatter
+        const normalized = normalizeTextTimestamps(args.content)
+        const split = splitFrontmatter(normalized)
+        // Fields the caller did not supply are inherited from the existing
+        // note so an overwrite cannot silently erase `created`, `tags`, or
+        // other metadata — this is the path `memory_correct` takes.
+        frontmatter = { ...splitFrontmatter(existing ?? '').frontmatter, ...split.frontmatter }
+        if (existing !== undefined) {
+          frontmatter.updated = formatBeijingTime(new Date())
+        }
+        normalizeNoteTimestamps(frontmatter)
+        finalBody = Object.keys(frontmatter).length > 0
+          ? `---\n${yaml.dump(frontmatter).trim()}\n---\n${split.body}`
+          : normalized
       } else {
         const split = splitFrontmatter(existing ?? '')
         frontmatter = split.frontmatter
