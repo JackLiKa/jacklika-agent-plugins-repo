@@ -50,6 +50,7 @@ Mount the plugin in a profile or patch file with an endpoint and model:
 | `maxCharsPerNote` | `number` | `8000` | Maximum UTF-8 characters of one note sent for embedding. |
 | `batchSize` | `number` | `16` | Maximum inputs per embeddings request. |
 | `indexHiddenDirs` | `boolean` | `false` | Index directories whose names start with `.` (`.git` and `node_modules` stay excluded). |
+| `maxEmbeddingSpaces` | `number` | `4` | Maximum number of embedding-space cache slots kept in `.vector-index.json`. Each `{ schema, endpoint, model }` combination gets its own slot; switching back to a previous combination reuses its vectors. When the limit is exceeded the least recently updated slots are evicted. Must be ≥ 1. |
 
 ### Tools
 
@@ -60,7 +61,7 @@ Mount the plugin in a profile or patch file with an endpoint and model:
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The package is a single Cordis function plugin that registers `wiki_semantic_search` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper and lists notes through `listNotePaths`. `refreshIndex` drops index entries for deleted files, embeds notes whose mtime differs from the cached record (in `batchSize` batches of at most `maxCharsPerNote` characters each), and persists `.vector-index.json` only when something changed. The persisted file is an envelope — `{ schemaVersion, fingerprint, notes }`, with `fingerprint` the sha1 of `{ schemaVersion, endpoint, model }` — and a cache that is missing, corrupt, or written under another schema, endpoint, or model is discarded before reuse, so the next search re-embeds the vault under the current embedding space. Query embedding is requested per call; note vectors come from the cache. Scores are cosine similarities; zero-norm vectors score 0. Endpoint errors, malformed responses, and empty vectors fail the tool call loudly.
+The package is a single Cordis function plugin that registers `wiki_semantic_search` on `ctx.tools`. Per call it resolves the vault root through the shared `resolveMemoryVaultRoot` helper and lists notes through `listNotePaths`. `refreshIndex` drops index entries for deleted files, embeds notes whose mtime differs from the cached record (in `batchSize` batches of at most `maxCharsPerNote` characters each), and persists `.vector-index.json` only when something changed. The persisted file is an envelope — `{ schemaVersion, spaces }`, where `spaces` maps each fingerprint (the sha1 of `{ schemaVersion, endpoint, model }`) to a slot `{ updatedAt, notes }`. A cache that is missing, corrupt, or written under another schema version is discarded before reuse. Up to `maxEmbeddingSpaces` slots are kept; least recently updated slots beyond the limit are evicted on write, so switching embedding spaces does not destroy other deployments' vectors until the bound is exceeded. A legacy single-slot envelope `{ schemaVersion, fingerprint, notes }` is migrated into `spaces` on load. Query embedding is requested per call; note vectors come from the cache. Scores are cosine similarities; zero-norm vectors score 0. Endpoint errors, malformed responses, and empty vectors fail the tool call loudly.
 
 -----
 
@@ -92,8 +93,8 @@ Independent. The plugin only supplies tool results; it does not change the reque
 <a id="known-limitations-and-deferred-work"></a>
 
 - **External endpoint required** — there is no local embedding fallback; the tool fails when the endpoint is unreachable.
-- **One cache slot per vault** — `.vector-index.json` lives inside the vault and holds a single fingerprint, so two deployments that share a vault but configure different models or endpoints invalidate each other on every switch and re-embed the vault each time. The cache is correct in that situation, just wasteful.
-- **Re-embed cost on switch** — changing `endpoint`, `model`, or the cache schema version throws away every cached vector by design; the first search afterwards pays for a full re-embed.
+- **Bounded cache slots per vault** — `.vector-index.json` keeps up to `maxEmbeddingSpaces` (default 4) embedding-space slots. Two deployments sharing a vault with different models or endpoints coexist until the bound is exceeded; past it, the least recently updated slot is evicted and the next search under that space re-embeds the vault.
+- **Re-embed cost beyond the bound** — changing `endpoint` or `model` selects a different slot rather than destroying cached vectors; a full re-embed is only paid when the slot itself was evicted or the file was rebuilt under a new cache schema version.
 - **Note bodies are not returned** — consumers must call `wiki_read` for content; a combined retrieval tool is deferred.
 
 <a id="dev-note"></a>

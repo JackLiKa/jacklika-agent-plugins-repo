@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { listNotePaths, resolveMemoryVaultRoot, vaultRelativeId } from '@jacklika/dsh-tool-memory-filesystem'
+import { codeUnitCompare, listNotePaths, resolveMemoryVaultRoot, vaultRelativeId } from '@jacklika/dsh-tool-memory-filesystem'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-memory-vector'
@@ -58,6 +58,8 @@ export interface Config {
   batchSize?: number
   /** Descend into dot-directories besides the fixed exclusions while indexing. */
   indexHiddenDirs?: boolean
+  /** Maximum embedding spaces retained in the on-disk index. */
+  maxEmbeddingSpaces?: number
 }
 
 /** Schemastery configuration for the semantic memory tool consumer. */
@@ -73,6 +75,7 @@ export const Config: z<Config> = z.object({
   maxCharsPerNote: z.number().default(8000),
   batchSize: z.number().default(16),
   indexHiddenDirs: z.boolean().default(false),
+  maxEmbeddingSpaces: z.number().default(4),
 })
 
 /** The shape after schemastery applied the defaults. */
@@ -87,12 +90,21 @@ interface IndexEntry {
 /** The on-disk index: vault-relative note id to its embedding record. */
 type VectorIndex = Record<string, IndexEntry>
 
-/** What `.vector-index.json` holds: the fingerprint plus the cached notes. */
-interface IndexEnvelope {
-  schemaVersion: number
-  fingerprint: string
+/** One retained embedding space inside the index envelope. */
+interface IndexSlot {
+  /** Last write time; the least recently written slot is evicted first. */
+  updatedAt: number
   notes: VectorIndex
 }
+
+/** What `.vector-index.json` holds: one slot per embedding-space fingerprint. */
+interface IndexEnvelope {
+  schemaVersion: number
+  spaces: Record<string, IndexSlot>
+}
+
+/** Envelope layout version; `1` was the legacy single-fingerprint shape. */
+const ENVELOPE_SCHEMA_VERSION = 2
 
 /**
  * Identify the embedding space a cache was built in. Two caches with different
@@ -177,15 +189,32 @@ function cosine(a: number[], b: number[]): number {
  * @returns the cached notes, or `undefined` when the cache is missing, corrupt,
  *   or was written under another schema, endpoint, or model.
  */
-async function loadIndex(root: string, fingerprint: string): Promise<VectorIndex | undefined> {
+/**
+ * Read every retained embedding slot, normalizing the legacy single-slot
+ * envelope (schemaVersion 1 with a top-level fingerprint and notes map) into
+ * the multi-slot shape. A corrupt or unrecognized file yields `undefined`.
+ */
+async function loadSlots(root: string): Promise<Record<string, IndexSlot> | undefined> {
   try {
     const text = await readFile(join(root, INDEX_FILE), 'utf8')
-    const parsed = JSON.parse(text) as Partial<IndexEnvelope> | null
+    const parsed = JSON.parse(text) as {
+      schemaVersion?: number
+      spaces?: Record<string, IndexSlot>
+      fingerprint?: string
+      notes?: VectorIndex
+    } | null
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
-    if (parsed.schemaVersion !== INDEX_SCHEMA_VERSION || parsed.fingerprint !== fingerprint) return undefined
-    const notes = parsed.notes
-    if (typeof notes !== 'object' || notes === null || Array.isArray(notes)) return undefined
-    return notes
+    if (parsed.schemaVersion === ENVELOPE_SCHEMA_VERSION) {
+      const spaces = parsed.spaces
+      if (typeof spaces !== 'object' || spaces === null || Array.isArray(spaces)) return undefined
+      return spaces
+    }
+    if (parsed.schemaVersion === INDEX_SCHEMA_VERSION) {
+      const { fingerprint, notes } = parsed
+      if (typeof fingerprint !== 'string' || typeof notes !== 'object' || notes === null || Array.isArray(notes)) return undefined
+      return { [fingerprint]: { updatedAt: 0, notes } }
+    }
+    return undefined
   } catch {
     return undefined
   }
@@ -194,9 +223,10 @@ async function loadIndex(root: string, fingerprint: string): Promise<VectorIndex
 /**
  * Refresh the embedding index for the current vault contents: embed every
  * note whose file is new or whose mtime changed since the cached record, drop
- * deleted notes, and persist the result. A cache whose fingerprint no longer
- * matches the configured model and endpoint is discarded first, so every note
- * is re-embedded under the current embedding space.
+ * deleted notes, and persist the result. Each embedding-space fingerprint
+ * keeps its own slot — switching model or endpoint no longer discards the
+ * previous space, and switching back reuses it; only the least recently
+ * written slots beyond `maxEmbeddingSpaces` are evicted.
  * @param root - vault root.
  * @param resolved - applied plugin configuration.
  * @returns the up-to-date index.
@@ -204,7 +234,8 @@ async function loadIndex(root: string, fingerprint: string): Promise<VectorIndex
 async function refreshIndex(root: string, resolved: ResolvedConfig, signal: AbortSignal): Promise<VectorIndex> {
   const paths = await listNotePaths(root, resolved.extensions, resolved.indexHiddenDirs)
   const fingerprint = indexFingerprint(resolved)
-  const cached = await loadIndex(root, fingerprint)
+  const slots = await loadSlots(root)
+  const cached = slots?.[fingerprint]?.notes
   const loaded = cached ?? {}
   const rebuilt = cached === undefined
   const alive = new Set(paths.map(path => vaultRelativeId(root, path)))
@@ -248,7 +279,14 @@ async function refreshIndex(root: string, resolved: ResolvedConfig, signal: Abor
     const indexPath = join(root, INDEX_FILE)
     const temporary = `${indexPath}.tmp-${process.pid}-${randomUUID()}`
     try {
-      const envelope: IndexEnvelope = { schemaVersion: INDEX_SCHEMA_VERSION, fingerprint, notes: index }
+      const spaces: Record<string, IndexSlot> = { ...slots, [fingerprint]: { updatedAt: Date.now(), notes: index } }
+      // Keep the freshest slots; the current space was just stamped now.
+      const kept = Object.fromEntries(
+        Object.entries(spaces)
+          .sort((a, b) => b[1].updatedAt - a[1].updatedAt || codeUnitCompare(a[0], b[0]))
+          .slice(0, resolved.maxEmbeddingSpaces),
+      )
+      const envelope: IndexEnvelope = { schemaVersion: ENVELOPE_SCHEMA_VERSION, spaces: kept }
       await writeFile(temporary, JSON.stringify(envelope), 'utf8')
       await rename(temporary, indexPath)
     } catch (error) {
@@ -291,6 +329,7 @@ export function apply(ctx: Context, config: Config): void {
   assertPositiveInteger('maxResults', resolved.maxResults)
   assertPositiveInteger('maxCharsPerNote', resolved.maxCharsPerNote)
   assertPositiveInteger('batchSize', resolved.batchSize)
+  assertPositiveInteger('maxEmbeddingSpaces', resolved.maxEmbeddingSpaces)
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'wiki_semantic_search',

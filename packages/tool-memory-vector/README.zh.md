@@ -50,6 +50,7 @@ kind: "package-reference"
 | `maxCharsPerNote` | `number` | `8000` | 单条笔记送去 embedding 的最大 UTF-8 字符数。 |
 | `batchSize` | `number` | `16` | 单次 embeddings 请求的最大输入数。 |
 | `indexHiddenDirs` | `boolean` | `false` | 是否索引以 `.` 开头的目录（`.git` 与 `node_modules` 始终排除）。 |
+| `maxEmbeddingSpaces` | `number` | `4` | `.vector-index.json` 中保留的最大 embedding 空间缓存槽数。每个 `{ schema, endpoint, model }` 组合独占一槽；切回旧组合可复用其向量。超限时按最久未更新驱逐。必须 ≥ 1。 |
 
 ### 工具
 
@@ -60,7 +61,7 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 实现说明
 
-本包是单个 Cordis 函数插件，在 `ctx.tools` 上注册 `wiki_semantic_search`。每次调用通过共享的 `resolveMemoryVaultRoot` 解析仓库根，用 `listNotePaths` 遍历笔记。`refreshIndex` 先删除已消失文件的索引项，再对 mtime 变化的笔记按 `batchSize` 分批请求 embedding（每条最多 `maxCharsPerNote` 字符），仅在有变化时写回 `.vector-index.json`。写回的文件是信封结构——`{ schemaVersion, fingerprint, notes }`，其中 `fingerprint` 是 `{ schemaVersion, endpoint, model }` 的 sha1——缓存缺失、损坏，或是在其他 schema/endpoint/model 下写入的，都会在复用前被整体丢弃，因此下一次搜索会在当前 embedding 空间下重新嵌入整个仓库。query 向量每次现取；笔记向量走缓存。相似度为余弦值，零范数向量记 0 分。端点报错、响应结构异常、空向量都会让工具调用直接失败。
+本包是单个 Cordis 函数插件，在 `ctx.tools` 上注册 `wiki_semantic_search`。每次调用通过共享的 `resolveMemoryVaultRoot` 解析仓库根，用 `listNotePaths` 遍历笔记。`refreshIndex` 先删除已消失文件的索引项，再对 mtime 变化的笔记按 `batchSize` 分批请求 embedding（每条最多 `maxCharsPerNote` 字符），仅在有变化时写回 `.vector-index.json`。写回的文件是信封结构——`{ schemaVersion, spaces }`，其中 `spaces` 以指纹（`{ schemaVersion, endpoint, model }` 的 sha1）为键、值是 `{ updatedAt, notes }` 槽位——缓存缺失、损坏或在其他 schema 版本下写入的，都会在复用前被整体丢弃。最多保留 `maxEmbeddingSpaces` 个槽位，超限时按最久未更新驱逐，因此切换 embedding 空间不会销毁其他部署的向量，除非已超出上限。旧版单槽信封 `{ schemaVersion, fingerprint, notes }` 会在加载时迁移进 `spaces`。query 向量每次现取；笔记向量走缓存。相似度为余弦值，零范数向量记 0 分。端点报错、响应结构异常、空向量都会让工具调用直接失败。
 
 -----
 
@@ -92,8 +93,8 @@ Semantic search over the wiki vault using embeddings: ranks notes by meaning rat
 <a id="known-limitations-and-deferred-work"></a>
 
 - **依赖外部端点** —— 无本地 embedding 兜底；端点不可达时工具直接失败。
-- **每个仓库只有一份缓存槽** —— `.vector-index.json` 存放在仓库内且只保存一个指纹，因此共享同一仓库但配置不同模型或端点的两套部署会在每次切换时互相作废，各自重新嵌入整个仓库。这种情况下结果是正确的，只是有浪费。
-- **切换即重建的代价** —— 修改 `endpoint`、`model` 或缓存 schema 版本会按设计丢弃全部已缓存向量；切换后的第一次搜索要承担一次完整重嵌入。
+- **每仓库缓存槽有上限** —— `.vector-index.json` 最多保留 `maxEmbeddingSpaces`（默认 4）个 embedding 空间槽。共享同一仓库但配置不同模型或端点的部署在有界范围内共存；超限后最久未更新的槽被驱逐，下次以该空间搜索需重嵌入整个仓库。
+- **超限后的重嵌入代价** —— 修改 `endpoint` 或 `model` 只是选择另一槽而非销毁已缓存向量；仅当该槽已被驱逐或缓存文件在新 schema 版本下重建时才需完整重嵌入。
 - **不返回笔记正文** —— 消费方需再调 `wiki_read` 取内容；合并检索工具留待后续。
 
 <a id="dev-note"></a>

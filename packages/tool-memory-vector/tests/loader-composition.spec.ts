@@ -64,8 +64,7 @@ function resultText(result: { content: { type: string; text?: string }[] }): str
 /** The persisted cache envelope, as `.vector-index.json` holds it. */
 interface IndexEnvelope {
   schemaVersion: number
-  fingerprint: string
-  notes: Record<string, { mtimeMs: number; embedding: number[] }>
+  spaces: Record<string, { updatedAt: number; notes: Record<string, { mtimeMs: number; embedding: number[] }> }>
 }
 
 async function readIndex(vaultRoot: string): Promise<IndexEnvelope> {
@@ -205,9 +204,10 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
     expect(hits[0]!.score).toBeGreaterThan(hits[1]?.score ?? 0)
 
     const envelope = await readIndex(vault)
-    expect(envelope.schemaVersion).toBe(1)
-    expect(envelope.fingerprint).toMatch(/^[0-9a-f]{40}$/)
-    expect(Object.keys(envelope.notes)).toContain('concepts/RAG.md')
+    expect(envelope.schemaVersion).toBe(2)
+    const [fingerprint, slot] = Object.entries(envelope.spaces)[0]!
+    expect(fingerprint).toMatch(/^[0-9a-f]{40}$/)
+    expect(Object.keys(slot.notes)).toContain('concepts/RAG.md')
 
     const callsBefore = requestCount
     const second = await ctx.tools.execute({
@@ -221,26 +221,70 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
     expect(requestCount).toBe(callsBefore + 1)
   })
 
-  it('discards the cached index when the embedding model changes, even though mtimes match', async () => {
+  it('rebuilds into a separate slot when the embedding model changes, keeping the old space', async () => {
     const endpoint = await fakeEmbeddingsEndpoint()
     const vault = await makeVault()
     const first = await boot(vault, endpoint)
 
     await search(first, 'semantic-model-a', 'rag retrieval')
     const before = await readIndex(vault)
+    const beforeFp = Object.keys(before.spaces)[0]!
     const callsBefore = requestCount
 
     // Same vault, same files, same endpoint — only the model name differs.
-    // Cached vectors are meaningless once the model that produced them is gone,
-    // so reusing them by mtime alone would rank against incompatible spaces.
+    // Cached vectors are meaningless across models, so the new space embeds
+    // afresh — but the old slot is retained, not discarded.
     await first.fiber.dispose()
     const second = await boot(vault, endpoint, ['    batchSize: 1'], 'fake-embed-v2')
     await search(second, 'semantic-model-b', 'rag retrieval')
 
     const after = await readIndex(vault)
-    expect(after.fingerprint).not.toBe(before.fingerprint)
+    expect(Object.keys(after.spaces)).toHaveLength(2)
+    expect(Object.keys(after.spaces)).toContain(beforeFp)
     // batchSize 1 makes each note its own call: 2 notes + 1 query is a full
     // re-embed, not an mtime-satisfied cache read.
+    expect(requestCount).toBe(callsBefore + 3)
+  })
+
+  it('reuses the retained slot when the model switches back', async () => {
+    const endpoint = await fakeEmbeddingsEndpoint()
+    const vault = await makeVault()
+    const first = await boot(vault, endpoint)
+    await search(first, 'semantic-ab-a', 'rag retrieval')
+
+    await first.fiber.dispose()
+    const second = await boot(vault, endpoint, [], 'fake-embed-v2')
+    await search(second, 'semantic-ab-b', 'rag retrieval')
+
+    await second.fiber.dispose()
+    const callsBefore = requestCount
+    const third = await boot(vault, endpoint)
+    await search(third, 'semantic-ab-a2', 'rag retrieval')
+
+    // Switching back to the original model hits its retained slot: only the
+    // query is embedded, no note is re-embedded.
+    expect(requestCount).toBe(callsBefore + 1)
+    expect(Object.keys(await readIndex(vault).then(e => e.spaces))).toHaveLength(2)
+  })
+
+  it('evicts the least recently written slot beyond maxEmbeddingSpaces', async () => {
+    const endpoint = await fakeEmbeddingsEndpoint()
+    const vault = await makeVault()
+    let ctx = await boot(vault, endpoint, ['    maxEmbeddingSpaces: 2'], 'model-a')
+    await search(ctx, 'space-a', 'rag retrieval')
+    for (const model of ['model-b', 'model-c']) {
+      await ctx.fiber.dispose()
+      ctx = await boot(vault, endpoint, ['    maxEmbeddingSpaces: 2'], model)
+      await search(ctx, `space-${model}`, 'rag retrieval')
+    }
+    const envelope = await readIndex(vault)
+    expect(Object.keys(envelope.spaces)).toHaveLength(2)
+    // model-a's slot is the least recently written: booting it again must
+    // re-embed both notes, proving it was evicted rather than retained.
+    await ctx.fiber.dispose()
+    const callsBefore = requestCount
+    const again = await boot(vault, endpoint, ['    batchSize: 1'], 'model-a')
+    await search(again, 'space-a-again', 'rag retrieval')
     expect(requestCount).toBe(callsBefore + 3)
   })
 
@@ -257,7 +301,7 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
     await search(second, 'semantic-reuse-2', 'rag retrieval')
 
     const after = await readIndex(vault)
-    expect(after.fingerprint).toBe(before.fingerprint)
+    expect(Object.keys(after.spaces)).toEqual(Object.keys(before.spaces))
     expect(requestCount).toBe(callsBefore + 1)
   })
 
@@ -276,7 +320,7 @@ describe('tool-memory-vector real Loader composition through cordis.yml', () => 
     expect(hits[0]?.id).toBe('concepts/RAG.md')
 
     const after = await readIndex(vault)
-    expect(after.schemaVersion).toBe(1)
+    expect(after.schemaVersion).toBe(2)
     // batchSize 1: 2 notes re-embedded + 1 query, so the legacy entries were
     // not reused.
     expect(requestCount).toBe(3)
