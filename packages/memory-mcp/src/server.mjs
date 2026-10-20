@@ -630,7 +630,11 @@ async function captureNote(a = {}) {
   }
 
   if (conflictExists && !requireExisting) {
-    if (a.conflictPolicy === 'skip') {
+    // `DSH_MEMORY_CONFLICT_POLICY` mirrors the dsh-side escape hatch for
+    // headless runs: it relaxes the default 'ask' to 'skip'; a per-call
+    // conflictPolicy still wins.
+    const envPolicy = process.env.DSH_MEMORY_CONFLICT_POLICY
+    if (a.conflictPolicy === 'skip' || (a.conflictPolicy === undefined && envPolicy === 'skip')) {
       return { written: false, id: finalId, conflict: true, suggested: correctionHint(), reason: 'skipped by conflictPolicy=skip' }
     }
     return {

@@ -297,6 +297,15 @@ export function apply(ctx: Context, config: Config): void {
 
   const resolved = config as ResolvedConfig
   const approval = ctx.get('approval') as ApprovalService | undefined
+  // `DSH_MEMORY_CONFLICT_POLICY` is a headless escape hatch: it can only
+  // relax the policy, never tighten it — an explicit config or per-call
+  // `conflictPolicy: 'skip'`/`'ask'` still wins.
+  const envPolicyRaw = process.env.DSH_MEMORY_CONFLICT_POLICY
+  if (envPolicyRaw !== undefined && envPolicyRaw !== 'ask' && envPolicyRaw !== 'skip') {
+    throw new Error(`memory-curator: DSH_MEMORY_CONFLICT_POLICY must be "ask" or "skip", received ${JSON.stringify(envPolicyRaw)}`)
+  }
+  const envPolicy = envPolicyRaw === 'ask' || envPolicyRaw === 'skip' ? envPolicyRaw : undefined
+  const defaultConflictPolicy: 'ask' | 'skip' = resolved.conflictPolicy === 'skip' ? 'skip' : (envPolicy ?? 'ask')
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_recall',
@@ -458,7 +467,7 @@ export function apply(ctx: Context, config: Config): void {
       // clobbering one while creating is not required; `wiki_write` enforces
       // the existence requirement itself, atomically with the write.
       if (conflictExists && !requireExisting) {
-        const policy = args.conflictPolicy ?? resolved.conflictPolicy
+        const policy = args.conflictPolicy ?? defaultConflictPolicy
         if (policy === 'skip') {
           return {
             written: false,

@@ -898,4 +898,28 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(out2.suggested?.id).toBe(out1.id)
     expect(out2.suggested?.baseVersion).toBe(out1.version)
   })
+
+  it('relaxes the conflict policy via DSH_MEMORY_CONFLICT_POLICY for headless runs', async () => {
+    const previous = process.env.DSH_MEMORY_CONFLICT_POLICY
+    process.env.DSH_MEMORY_CONFLICT_POLICY = 'skip'
+    try {
+      const vault = await vaultDir()
+      const ctx = await boot(vault)
+
+      const r1 = await capture(ctx, 'env-first', 'Env target', 'First conclusion.', 'agent-1', vault)
+      expect(r1.isError).toBe(false)
+
+      // No per-call conflictPolicy and no approval service: the environment
+      // fallback skips the conflicting capture instead of refusing it.
+      const r2 = await capture(ctx, 'env-second', 'Env target', 'Second conclusion.', 'agent-1', vault)
+      expect(r2.isError).toBe(false)
+      const out2 = JSON.parse(resultText(r2)) as { written: boolean; conflict: boolean; reason?: string }
+      expect(out2.written).toBe(false)
+      expect(out2.conflict).toBe(true)
+      expect(out2.reason).toBe('skipped by conflictPolicy=skip')
+    } finally {
+      if (previous === undefined) delete process.env.DSH_MEMORY_CONFLICT_POLICY
+      else process.env.DSH_MEMORY_CONFLICT_POLICY = previous
+    }
+  })
 })
