@@ -14,7 +14,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { readdirSync, statSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve, relative, basename } from 'node:path'
 
 const flags = process.argv.slice(2)

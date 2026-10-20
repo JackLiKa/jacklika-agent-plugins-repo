@@ -299,8 +299,11 @@ function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>, maxPairs
     const incident = new Map<string, { key: string; weight: number }[]>()
     for (const [key, { weight }] of pairData) {
       const [a, b] = key.split('\x00') as [string, string]
-      incident.get(a)?.push({ key, weight }) ?? incident.set(a, [{ key, weight }])
-      incident.get(b)?.push({ key, weight }) ?? incident.set(b, [{ key, weight }])
+      for (const id of [a, b]) {
+        const list = incident.get(id)
+        if (list === undefined) incident.set(id, [{ key, weight }])
+        else list.push({ key, weight })
+      }
     }
     for (const pairs of incident.values()) {
       pairs.sort((x, y) => y.weight - x.weight || codeUnitCompare(x.key, y.key))
