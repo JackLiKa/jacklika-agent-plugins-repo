@@ -180,6 +180,9 @@ importers:
       '@jacklika/dsh-tool-memory-filesystem':
         specifier: workspace:^
         version: link:../tool-memory-filesystem
+      '@jacklika/dsh-tool-memory-graph':
+        specifier: workspace:^
+        version: link:../tool-memory-graph
 
   packages/memory-git:
     dependencies:
