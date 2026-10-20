@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -15,6 +15,7 @@ import * as MemoryCurator from '@jacklika/dsh-memory-curator'
 import * as MemoryGit from '@jacklika/dsh-memory-git'
 import * as MemoryScope from '@jacklika/dsh-memory-scope'
 import * as ToolMemoryFilesystem from '@jacklika/dsh-tool-memory-filesystem'
+import * as ToolMemoryGraph from '@jacklika/dsh-tool-memory-graph'
 
 const execFileAsync = promisify(execFile)
 
@@ -41,7 +42,7 @@ async function vaultDir(): Promise<string> {
   return dir
 }
 
-async function boot(vaultRoot: string, approval?: { request: (details: { reason: string; displayReason: { en: string } }) => Promise<string> }, filesystemConfig: string[] = [], withScope = false, withGit = false): Promise<Context> {
+async function boot(vaultRoot: string, approval?: { request: (details: { reason: string; displayReason: { en: string } }) => Promise<string> }, filesystemConfig: string[] = [], withScope = false, withGit = false, withGraph = false): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-curator-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
@@ -56,6 +57,7 @@ async function boot(vaultRoot: string, approval?: { request: (details: { reason:
     '  config:',
     `    vaultRoot: ${vaultRoot}`,
     ...filesystemConfig,
+    ...(withGraph ? ["- name: '@jacklika/dsh-tool-memory-graph'", '  config:', `    vaultRoot: ${vaultRoot}`] : []),
     '',
   ].join('\n'))
 
@@ -74,6 +76,7 @@ async function boot(vaultRoot: string, approval?: { request: (details: { reason:
     ['@jacklika/dsh-memory-scope', MemoryScope],
     ['@jacklika/dsh-memory-curator', MemoryCurator],
     ['@jacklika/dsh-tool-memory-filesystem', ToolMemoryFilesystem],
+    ['@jacklika/dsh-tool-memory-graph', ToolMemoryGraph],
   ])
   ctx.loader.internal = {
     version: 'v2',
@@ -776,6 +779,68 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     for (const id of preview.wouldArchive) {
       await expect(readFile(join(vault, id), 'utf8')).resolves.toContain('capture')
     }
+  })
+
+  it('previews and archives stale unlinked notes with scope stale', async () => {
+    const vault = await vaultDir()
+    const notes = join(vault, 'shared', 'notes')
+    await mkdir(notes, { recursive: true })
+    const old = new Date(Date.now() - 120 * 86_400_000)
+    // old-stale is unreferenced and ancient; old-linked is equally old but
+    // another note links to it; fresh is unlinked but recent.
+    await writeFile(join(notes, 'old-stale.md'), '# Stale\n\nAncient unlinked.\n')
+    await writeFile(join(notes, 'old-linked.md'), '# Linked\n\nAncient but referenced.\n')
+    await writeFile(join(notes, 'fresh.md'), '# Fresh\n\nRecent unlinked.\n')
+    await writeFile(join(notes, 'linker.md'), '# Linker\n\nSee [[old-linked]].\n')
+    await utimes(join(notes, 'old-stale.md'), old, old)
+    await utimes(join(notes, 'old-linked.md'), old, old)
+    const ctx = await boot(vault, undefined, [], false, false, true)
+
+    const dry = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('stale-dry'),
+      name: 'memory_compact',
+      arguments: { scope: 'stale', maxAgeDays: 30, dryRun: true },
+      agent: agent('agent-1', vault),
+    })
+    expect(dry.isError).toBe(false)
+    if (dry.isError) throw new Error('expected memory_compact success')
+    const preview = JSON.parse(resultText(dry)) as { dryRun: boolean; scope: string; wouldArchive: string[] }
+    expect(preview.dryRun).toBe(true)
+    expect(preview.scope).toBe('stale')
+    expect(preview.wouldArchive).toEqual(['shared/notes/old-stale.md'])
+    await expect(readFile(join(notes, 'old-stale.md'), 'utf8')).resolves.toContain('Ancient')
+
+    const real = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('stale-real'),
+      name: 'memory_compact',
+      arguments: { scope: 'stale', maxAgeDays: 30 },
+      agent: agent('agent-1', vault),
+    })
+    expect(real.isError).toBe(false)
+    if (real.isError) throw new Error('expected memory_compact success')
+    const done = JSON.parse(resultText(real)) as { archived: number; archivedIds: string[] }
+    expect(done.archivedIds).toEqual(['shared/notes/old-stale.md'])
+    await expect(readFile(join(notes, 'old-stale.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(join(vault, 'archive', 'shared/notes/old-stale.md'), 'utf8')).resolves.toContain('Ancient')
+    await expect(readFile(join(notes, 'old-linked.md'), 'utf8')).resolves.toContain('referenced')
+    await expect(readFile(join(notes, 'fresh.md'), 'utf8')).resolves.toContain('Recent')
+  })
+
+  it('refuses stale compaction without maxAgeDays', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('stale-no-days'),
+      name: 'memory_compact',
+      arguments: { scope: 'stale' },
+      agent: agent('agent-1', vault),
+    })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected memory_compact success')
+    expect(JSON.parse(resultText(result))).toMatchObject({ compacted: false, reason: expect.stringContaining('maxAgeDays') })
   })
 
   it('keeps a single H1 when the capture summary carries its own heading', async () => {

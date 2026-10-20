@@ -596,15 +596,78 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_compact',
-    description: 'Archive old per-turn auto-capture notes, keeping only the most recent sessions. This reduces search noise while preserving every capture in git history. Disabled by default; enable via autoCaptureCompact in the curator config. Returns { compacted, kept, archived, archivedIds } when active, or { compacted: false, reason } when disabled. Pass dryRun: true to preview the same selection without archiving anything.',
+    description: 'Archive old per-turn auto-capture notes, keeping only the most recent sessions. This reduces search noise while preserving every capture in git history. Disabled by default; enable via autoCaptureCompact in the curator config. Returns { compacted, kept, archived, archivedIds } when active, or { compacted: false, reason } when disabled. Pass dryRun: true to preview the same selection without archiving anything. With scope: \'stale\', archives indexed notes whose last modification is older than maxAgeDays and that have no inbound explicit links; dryRun previews that selection too.',
     parameters: {
       dryRun: { type: 'boolean', description: 'Preview which notes would be archived without writing. Defaults to false.' },
+      scope: { type: 'string', enum: ['auto-capture', 'stale'], description: "What to compact: 'auto-capture' (default) prunes old capture sessions; 'stale' archives notes older than maxAgeDays with no inbound explicit links." },
+      maxAgeDays: { type: 'number', description: "Required when scope is 'stale': notes whose recorded mtime is older than this many days are candidates." },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
+      const notesPrefix = `${resolved.notesDir}/`
+      const isAutoCapture = (id: string): boolean => {
+        if (!id.startsWith(notesPrefix)) return false
+        const rest = id.slice(notesPrefix.length)
+        if (rest.startsWith('auto-capture/')) return true
+        return /^auto-capture-[A-Za-z0-9_-]+\.md$/.test(rest)
+      }
+
+      if (args.scope === 'stale') {
+        const days = typeof args.maxAgeDays === 'number' && args.maxAgeDays > 0 ? args.maxAgeDays : undefined
+        if (days === undefined) {
+          return { compacted: false, reason: "scope 'stale' requires maxAgeDays > 0" } as unknown as JsonValue
+        }
+        const graph = await callTool<{
+          nodes: { id: string }[]
+          edges: { from: string; to: string; type?: string }[]
+          truncated: boolean
+        }>(ctx, exec, 'wiki_graph', { maxNodes: 2000, maxEdges: 20000 })
+        // A capped view cannot prove "no inbound links" — archiving on a
+        // partial graph would hide notes that are actually referenced.
+        if (graph.truncated) {
+          return { compacted: false, reason: 'vault graph exceeds the node cap; stale compaction refuses a partial view' } as unknown as JsonValue
+        }
+        const inbound = new Set<string>()
+        for (const edge of graph.edges) {
+          if (edge.type !== 'keyword') inbound.add(edge.to)
+        }
+        const cutoff = Date.now() - days * 86_400_000
+        const candidates: { id: string; version: string }[] = []
+        for (const node of graph.nodes) {
+          if (inbound.has(node.id) || isAutoCapture(node.id)) continue
+          const note = await callTool<{ version: string; mtime?: string }>(ctx, exec, 'wiki_read', { id: node.id })
+          const mtime = typeof note.mtime === 'string' ? Date.parse(note.mtime) : NaN
+          if (Number.isFinite(mtime) && mtime < cutoff) candidates.push({ id: node.id, version: note.version })
+        }
+        candidates.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+        if (args.dryRun === true) {
+          return {
+            compacted: true,
+            dryRun: true,
+            scope: 'stale',
+            maxAgeDays: days,
+            archived: 0,
+            archivedIds: [],
+            wouldArchive: candidates.map(c => c.id),
+          } as unknown as JsonValue
+        }
+        const archivedIds: string[] = []
+        for (const candidate of candidates) {
+          const result = await callTool<ForgetResult>(ctx, exec, 'memory_forget', { id: candidate.id, baseVersion: candidate.version })
+          if (result.forgotten) archivedIds.push(result.id)
+        }
+        return {
+          compacted: true,
+          scope: 'stale',
+          maxAgeDays: days,
+          archived: archivedIds.length,
+          archivedIds,
+        } as unknown as JsonValue
+      }
+
       const compact = resolved.autoCaptureCompact
       if (!compact.enabled) {
         return { compacted: false, reason: 'auto-capture compaction is disabled in curator config' } as unknown as JsonValue
@@ -612,14 +675,6 @@ export function apply(ctx: Context, config: Config): void {
       const keep = typeof compact.keepSessions === 'number' && compact.keepSessions >= 1 ? Math.floor(compact.keepSessions) : 0
       if (keep < 1) {
         return { compacted: false, reason: 'autoCaptureCompact.keepSessions must be >= 1' } as unknown as JsonValue
-      }
-
-      const notesPrefix = `${resolved.notesDir}/`
-      const isAutoCapture = (id: string): boolean => {
-        if (!id.startsWith(notesPrefix)) return false
-        const rest = id.slice(notesPrefix.length)
-        if (rest.startsWith('auto-capture/')) return true
-        return /^auto-capture-[A-Za-z0-9_-]+\.md$/.test(rest)
       }
 
       const search = await callTool<SearchPage>(ctx, exec, 'wiki_search', { query: 'auto-capture', maxResults: 10000 })
