@@ -504,7 +504,7 @@ export function apply(ctx: Context, config: Config): void {
             conflict: true,
             suggested: correctionHint(approvedVersion),
             approval: outcome,
-            reason: 'user did not approve the conflict',
+            reason: `conflict write not approved (outcome: ${outcome}); set conflictPolicy=skip to allow silent skip in headless mode`,
           } as unknown as JsonValue
         }
       }

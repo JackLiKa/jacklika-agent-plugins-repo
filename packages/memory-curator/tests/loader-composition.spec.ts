@@ -277,6 +277,24 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(text).toContain('Additional material.')
   })
 
+  it('names the approval outcome when a conflicting capture is refused', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault, { request: async () => 'never' })
+    await capture(ctx, 'policy-first', 'Policy target', 'First conclusion.', 'agent-1', vault)
+
+    const result = await capture(ctx, 'policy-second', 'Policy target', 'Conflicting conclusion.', 'agent-1', vault)
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected memory_capture success')
+    const out = JSON.parse(resultText(result)) as { written: boolean; conflict: boolean; approval?: string; reason?: string }
+    expect(out.written).toBe(false)
+    expect(out.conflict).toBe(true)
+    expect(out.approval).toBe('never')
+    // The outcome must surface in the reason so a policy denial is not
+    // mistaken for a user clicking "reject".
+    expect(out.reason).toContain('outcome: never')
+    expect(out.reason).toContain('conflictPolicy=skip')
+  })
+
   it('fails an update-only capture for a note that does not exist', async () => {
     const vault = await vaultDir()
     const ctx = await boot(vault)
