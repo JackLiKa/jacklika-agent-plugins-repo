@@ -78,6 +78,39 @@ describe('independent acceptance Git audit', () => {
     expect((JSON.parse(dirty.stdout) as { cleanWorkingTree: boolean }).cleanWorkingTree).toBe(false)
   })
 
+  it('warns on baseline-era tracked dirt but still fails on new dirt', async () => {
+    parent = await mkdtemp(join(tmpdir(), 'dsh-scope-audit-'))
+    root = join(parent, 'vault')
+    await mkdir(root)
+    git('init')
+    await add('shared/notes/legacy-orphan.md')
+    const baseline = git('rev-parse', 'HEAD')
+    // Dirt that predates the run: a tracked file deleted from the worktree
+    // without a commit. The audit cannot attribute it to the run, so it is a
+    // warning rather than a failure.
+    await rm(join(root, 'shared/notes/legacy-orphan.md'))
+    const manifest = JSON.stringify({
+      schemaVersion: 1, createPrefixes: ['shared/notes/run-123/'], updateIds: [], archiveMoves: [],
+    })
+    const warned = await audit(baseline, manifest)
+    expect(warned.status, warned.stderr).toBe(0)
+    const warnReport = JSON.parse(warned.stdout) as {
+      pass: boolean
+      cleanWorkingTree: boolean
+      preexistingDirty: { status: string; id: string }[]
+      unexpectedDirty: { status: string; id: string }[]
+    }
+    expect(warnReport.pass).toBe(true)
+    expect(warnReport.cleanWorkingTree).toBe(false)
+    expect(warnReport.preexistingDirty.map(entry => entry.id)).toContain('shared/notes/legacy-orphan.md')
+    expect(warnReport.unexpectedDirty).toHaveLength(0)
+    await writeFile(join(root, 'shared/notes/new-scratch.md'), 'untracked')
+    const failed = await audit(baseline, manifest)
+    expect(failed.status).toBe(1)
+    const failReport = JSON.parse(failed.stdout) as { unexpectedDirty: { id: string }[] }
+    expect(failReport.unexpectedDirty.map(entry => entry.id)).toContain('shared/notes/new-scratch.md')
+  })
+
   it('retains evidence of a committed violation even after that file is removed', async () => {
     parent = await mkdtemp(join(tmpdir(), 'dsh-scope-audit-'))
     root = join(parent, 'vault')

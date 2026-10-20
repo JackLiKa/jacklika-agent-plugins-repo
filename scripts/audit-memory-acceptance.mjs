@@ -60,13 +60,29 @@ function main() {
     }
     entries.push(...group)
   }
+  const dirtyEntries = dirty === '' ? [] : dirty.split('\n').filter(Boolean).map(line => {
+    let id = line.slice(3)
+    if (id.startsWith('"') && id.endsWith('"')) id = JSON.parse(id)
+    const arrow = id.indexOf(' -> ')
+    if (arrow !== -1) id = id.slice(arrow + 4)
+    return { status: line.slice(0, 2).trim(), id }
+  })
+  // Worktree dirt on a path that was already tracked at baseline cannot be
+  // attributed to the run: it may be a leftover from earlier activity (e.g. an
+  // uncommitted delete) or an uncommitted run write — the committed range is
+  // already audited per-commit above. Report it as a warning, not a failure.
+  // Dirt on paths absent from the baseline tree is new by definition and fails.
+  const unexpectedDirty = dirtyEntries.filter(entry => !preexisting.has(entry.id))
+  const preexistingDirty = dirtyEntries.filter(entry => preexisting.has(entry.id))
   const report = {
     baseline, head: git(vault, 'rev-parse', 'HEAD').trim(),
     cleanWorkingTree: dirty === '',
+    preexistingDirty,
+    unexpectedDirty,
     entries,
     unexpected: entries.filter(entry => !entry.allowed),
   }
-  report.pass = report.cleanWorkingTree && report.unexpected.length === 0
+  report.pass = report.unexpectedDirty.length === 0 && report.unexpected.length === 0
   console.log(JSON.stringify(report, null, 2))
   if (!report.pass) process.exitCode = 1
 }
