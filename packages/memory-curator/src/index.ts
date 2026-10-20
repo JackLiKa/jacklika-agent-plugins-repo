@@ -525,7 +525,7 @@ export function apply(ctx: Context, config: Config): void {
       const provenance = pickProvenance(args as Record<string, unknown>)
       ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode} requireExisting=${requireExisting}`)
       const overwrite = appending ? undefined : overwriteFrontmatter(selectedNote, args.title, tags, now, provenance)
-      const headingPrefix = args.summary.trimStart().startsWith('#') ? '' : `# ${args.title}\n\n`
+      const headingPrefix = /^#\s/.test(args.summary.trimStart()) ? '' : `# ${args.title}\n\n`
       const content = appending
         ? appendContent
         : `---\n${yaml.dump(overwrite).trim()}\n---\n\n${headingPrefix}${appendContent}`
@@ -589,7 +589,7 @@ export function apply(ctx: Context, config: Config): void {
         ...correctionProvenance,
       }
       const details = args.details ? `\n\n## Details\n\n${args.details}` : ''
-      const headingPrefix = args.summary.trimStart().startsWith('#') ? '' : `# ${title}\n\n`
+      const headingPrefix = /^#\s/.test(args.summary.trimStart()) ? '' : `# ${title}\n\n`
       const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n${headingPrefix}${args.summary}${details}\n`
       const written = await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: args.id, content, mode: 'overwrite', requireExisting: true, baseVersion: args.baseVersion,
@@ -605,11 +605,12 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_compact',
-    description: 'Archive old per-turn auto-capture notes, keeping only the most recent sessions. This reduces search noise while preserving every capture in git history. Disabled by default; enable via autoCaptureCompact in the curator config. Returns { compacted, kept, archived, archivedIds } when active, or { compacted: false, reason } when disabled. Pass dryRun: true to preview the same selection without archiving anything. With scope: \'stale\', archives indexed notes whose last modification is older than maxAgeDays and that have no inbound explicit links; dryRun previews that selection too.',
+    description: 'Archive old per-turn auto-capture notes, keeping only the most recent sessions. This reduces search noise while preserving every capture in git history. Disabled by default; enable via autoCaptureCompact in the curator config. Returns { compacted, kept, archived, archivedIds } when active, or { compacted: false, reason } when disabled. Pass dryRun: true to preview the same selection without archiving anything — dryRun is not gated by autoCaptureCompact.enabled, and keepSessions may be passed per call to preview a hypothetical retention before enabling the feature. With scope: \'stale\', archives indexed notes whose last modification is older than maxAgeDays and that have no inbound explicit links; dryRun previews that selection too.',
     parameters: {
       dryRun: { type: 'boolean', description: 'Preview which notes would be archived without writing. Defaults to false.' },
       scope: { type: 'string', enum: ['auto-capture', 'stale'], description: "What to compact: 'auto-capture' (default) prunes old capture sessions; 'stale' archives notes older than maxAgeDays with no inbound explicit links." },
       maxAgeDays: { type: 'number', description: "Required when scope is 'stale': notes whose recorded mtime is older than this many days are candidates." },
+      keepSessions: { type: 'number', description: "For scope 'auto-capture': preview-time override of the configured keepSessions, so dryRun can preview a hypothetical setting before autoCaptureCompact is enabled." },
     },
     output: {
       schema: { type: 'json' },
@@ -678,10 +679,13 @@ export function apply(ctx: Context, config: Config): void {
       }
 
       const compact = resolved.autoCaptureCompact
-      if (!compact.enabled) {
+      // A dry-run previews the selection, so it must work before (or without)
+      // enabling compaction; only a real archive pass is gated by `enabled`.
+      if (!compact.enabled && args.dryRun !== true) {
         return { compacted: false, reason: 'auto-capture compaction is disabled in curator config' } as unknown as JsonValue
       }
-      const keep = typeof compact.keepSessions === 'number' && compact.keepSessions >= 1 ? Math.floor(compact.keepSessions) : 0
+      const keepOverride = typeof args.keepSessions === 'number' ? Math.floor(args.keepSessions) : undefined
+      const keep = keepOverride ?? (typeof compact.keepSessions === 'number' && compact.keepSessions >= 1 ? Math.floor(compact.keepSessions) : 0)
       if (keep < 1) {
         return { compacted: false, reason: 'autoCaptureCompact.keepSessions must be >= 1' } as unknown as JsonValue
       }
@@ -691,7 +695,13 @@ export function apply(ctx: Context, config: Config): void {
         .sort((a, b) => b.id.localeCompare(a.id))
 
       if (captures.length <= keep) {
-        return { compacted: true, kept: captures.length, archived: 0, archivedIds: [] } as unknown as JsonValue
+        return {
+          compacted: true,
+          ...(args.dryRun === true ? { dryRun: true, enabled: compact.enabled, wouldArchive: [] } : {}),
+          kept: captures.length,
+          archived: 0,
+          archivedIds: [],
+        } as unknown as JsonValue
       }
 
       const toArchive = captures.slice(keep)
@@ -699,6 +709,7 @@ export function apply(ctx: Context, config: Config): void {
         return {
           compacted: true,
           dryRun: true,
+          enabled: compact.enabled,
           kept: keep,
           archived: 0,
           archivedIds: [],

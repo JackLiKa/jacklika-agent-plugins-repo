@@ -11,7 +11,7 @@ DSH 记忆库的策展工具。本包是 `@jacklika/dsh-memory` Bundle 的成员
 
 - `memory_forget(id, baseVersion)` — 将策展笔记移入归档区（`archive/<原相对路径>`）。笔记未被物理删除，仍可显式 `wiki_read` 读取，但 `wiki_search` 与 `wiki_graph` 默认不再返回它。必须传入 `wiki_read` 得到的当前 `version`；过期版本会失败关闭。若配置了 `memory-git`，此次移动会被提交。
 
-- `memory_compact(scope?, maxAgeDays?, dryRun?)` — 归档笔记。默认 `scope: 'auto-capture'` 归档旧的逐回合自动捕获笔记，只保留最近 N 个会话（默认关闭；在 curator 配置中通过 `autoCaptureCompact: { enabled: true, keepSessions: N }` 开启）。`scope: 'stale'` 归档同时满足「mtime 早于 `maxAgeDays`（必填，≥ 1）」且「无入链 `[[links]]`」的笔记——链接关系取自 `wiki_graph` 的 link 边，因此 stale pass 需要安装 graph 工具；除参数外无需额外 curator 配置。该 pass 是幂等的：重复执行不会产生重复归档文件。它与其他变更工具使用同一跨进程锁车道。传 `dryRun: true` 可预览选中项——返回 `{ compacted: true, dryRun: true, kept, archived: 0, archivedIds: [], wouldArchive }`，不归档任何内容。
+- `memory_compact(scope?, maxAgeDays?, keepSessions?, dryRun?)` — 归档笔记。默认 `scope: 'auto-capture'` 归档旧的逐回合自动捕获笔记，只保留最近 N 个会话（默认关闭；在 curator 配置中通过 `autoCaptureCompact: { enabled: true, keepSessions: N }` 开启）。`scope: 'stale'` 归档同时满足「mtime 早于 `maxAgeDays`（必填，≥ 1）」且「无入链 `[[links]]`」的笔记——链接关系取自 `wiki_graph` 的 link 边，因此 stale pass 需要安装 graph 工具；除参数外无需额外 curator 配置。该 pass 是幂等的：重复执行不会产生重复归档文件。它与其他变更工具使用同一跨进程锁车道。传 `dryRun: true` 可预览选中项——返回 `{ compacted: true, dryRun: true, enabled, kept, archived: 0, archivedIds: [], wouldArchive }`，不归档任何内容。`dryRun` 不受 `autoCaptureCompact.enabled` 门禁限制，且可按次传 `keepSessions` 在启用前预览假设的保留数量。
 
 ## 笔记 id
 

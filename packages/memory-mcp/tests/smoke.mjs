@@ -313,6 +313,18 @@ async function runSmoke() {
     assert((h1CorrectText.match(/^#\s/gm) ?? []).length === 1, 'correction keeps one H1')
     assert(h1CorrectText.includes('# Replacement Heading'), 'correction heading kept')
 
+    // An H2-led summary is not a caller-supplied H1: the title heading is
+    // still prepended, matching the dsh curator exactly.
+    const h2Cap = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'MCP H2 Title', summary: '## Section Heading\n\nBody under a section heading.' },
+    }), earlyExit])
+    const h2CapResult = JSON.parse(h2Cap.content[0].text)
+    assert(h2CapResult.written === true, `h2 capture ${JSON.stringify(h2CapResult)}`)
+    const h2Text = await readFile(join(vault, h2CapResult.id), 'utf8')
+    assert((h2Text.match(/^#\s/gm) ?? []).length === 1, 'h2 summary still gains one H1')
+    assert(h2Text.includes('# MCP H2 Title') && h2Text.includes('## Section Heading'), 'title H1 plus section H2')
+
     const badCaptureId = await Promise.race([call('tools/call', {
       name: 'memory_capture',
       arguments: { title: 'Unsafe', summary: 's', id: '../escape' },

@@ -656,7 +656,7 @@ async function captureNote(a = {}) {
     ? target
     : await captureFrontmatter(finalId, a.title, tags, now, provenance)
   const appending = requireExisting && existed && a.mode === 'append'
-  const headingPrefix = a.summary.trimStart().startsWith('#') ? '' : `# ${a.title}\n\n`
+  const headingPrefix = /^#\s/.test(a.summary.trimStart()) ? '' : `# ${a.title}\n\n`
   const content = appending
     ? appendContent
     : `---\n${yaml.dump(frontmatter).trim()}\n---\n\n${headingPrefix}${appendContent}`
@@ -721,7 +721,7 @@ async function correctNote(a = {}) {
     ...provenance,
   }
   const details = a.details ? `\n\n## Details\n\n${a.details}` : ''
-  const headingPrefix = a.summary.trimStart().startsWith('#') ? '' : `# ${title}\n\n`
+  const headingPrefix = /^#\s/.test(a.summary.trimStart()) ? '' : `# ${title}\n\n`
   const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n${headingPrefix}${a.summary}${details}\n`
   const written = await writeNote(a.id, content, 'overwrite', a.baseVersion, true)
   return { written: true, id: written.id, mode: 'overwrite', conflict: false, version: written.version, created: written.created, updated: written.updated }

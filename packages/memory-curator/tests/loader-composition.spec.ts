@@ -878,6 +878,51 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     expect(text).toContain('Replacement body.')
   })
 
+  it('still prepends the title H1 when the summary opens with an H2', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+
+    const r = await capture(ctx, 'h2-capture', 'H2 Title', '## Section Heading\n\nBody under a section heading.', 'agent-1', vault)
+    expect(r.isError).toBe(false)
+    const out = JSON.parse(resultText(r)) as { id: string }
+    const text = await readFile(join(vault, out.id), 'utf8')
+    expect(text.match(/^#\s/gm)).toHaveLength(1)
+    expect(text).toContain('# H2 Title')
+    expect(text).toContain('## Section Heading')
+  })
+
+  it('previews auto-capture compaction without the feature enabled when dryRun passes keepSessions', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+
+    const blocked = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('compact-disabled-real'),
+      name: 'memory_compact',
+      arguments: {},
+      agent: agent('agent-1', vault),
+    })
+    expect(blocked.isError).toBe(false)
+    if (blocked.isError) throw new Error('expected memory_compact success')
+    expect(JSON.parse(resultText(blocked))).toMatchObject({ compacted: false })
+
+    const preview = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('compact-disabled-dry'),
+      name: 'memory_compact',
+      arguments: { dryRun: true, keepSessions: 3 },
+      agent: agent('agent-1', vault),
+    })
+    expect(preview.isError).toBe(false)
+    if (preview.isError) throw new Error('expected memory_compact success')
+    const out = JSON.parse(resultText(preview)) as { compacted: boolean; dryRun?: boolean; enabled?: boolean; kept?: number; wouldArchive?: string[] }
+    expect(out.compacted).toBe(true)
+    expect(out.dryRun).toBe(true)
+    expect(out.enabled).toBe(false)
+    expect(out.kept).toBeDefined()
+    expect(out.wouldArchive).toEqual([])
+  })
+
   it('suggests memory_correct when a conflicting capture is skipped', async () => {
     const vault = await vaultDir()
     const ctx = await boot(vault)
