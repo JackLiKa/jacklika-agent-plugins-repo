@@ -1431,8 +1431,9 @@ export function apply(ctx: Context, config: Config): void {
           frontmatter.updated = formatBeijingTime(new Date())
         }
         normalizeNoteTimestamps(frontmatter)
+        const overwriteBody = split.body.trimStart()
         finalBody = Object.keys(frontmatter).length > 0
-          ? `---\n${yaml.dump(frontmatter).trim()}\n---\n${split.body}`
+          ? `---\n${yaml.dump(frontmatter).trim()}\n---\n\n${overwriteBody}`
           : normalized
       } else {
         const split = splitFrontmatter(existing ?? '')
@@ -1451,9 +1452,13 @@ export function apply(ctx: Context, config: Config): void {
           ? `---\n${yaml.dump(frontmatter).trim()}\n---\n\n`
           : ''
         // Content that opens with its own heading supplies the section
-        // header, so a bare `## <time>` above it would duplicate it.
-        const header = args.content.trimStart().startsWith('#') ? '' : `## ${timestamp}\n\n`
-        const base = `${frontmatterText}${body}`.replace(/\s+$/, '')
+        // header, so a bare `## <time>` above it would duplicate it. A second
+        // append inside the same second also reuses the existing `## <time>`
+        // section instead of repeating the heading.
+        const base = `${frontmatterText}${body.trimStart()}`.replace(/\s+$/, '')
+        const headings = base.match(/^## .+$/gm)
+        const sameSecond = headings !== null && headings[headings.length - 1] === `## ${timestamp}`
+        const header = args.content.trimStart().startsWith('#') || sameSecond ? '' : `## ${timestamp}\n\n`
         finalBody = base === '' ? `${header}${args.content}\n` : `${base}\n\n${header}${args.content}\n`
       }
       exec.signal.throwIfAborted()

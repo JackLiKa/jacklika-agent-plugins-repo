@@ -790,6 +790,63 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(raw).toContain('- alpha')
   })
 
+  it('emits exactly one blank line between merged frontmatter and body', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    const seed = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('spacing-seed'),
+      name: 'wiki_write',
+      arguments: {
+        id: 'concepts/spacing.md',
+        mode: 'overwrite',
+        content: '---\ntitle: Spacing\n---\n\n# Spacing\n\nSeed.\n',
+      },
+    })
+    if (seed.isError) throw new Error('expected seed wiki_write success')
+
+    // Caller omits the blank line after its own frontmatter; the merged write
+    // must still land exactly one blank line between `---` and the body.
+    const overwrite = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('spacing-overwrite'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/spacing.md', mode: 'overwrite', content: '---\nx-key: 1\n---\n# Spacing\n\nNew body.\n' },
+    })
+    if (overwrite.isError) throw new Error('expected overwrite wiki_write success')
+
+    const raw = await readFile(join(vault, 'concepts', 'spacing.md'), 'utf8')
+    expect(raw).toMatch(/---\n[^-][\s\S]*?\n---\n\n# Spacing\n\nNew body\./)
+    expect(raw).not.toMatch(/---\n\n\n/)
+  })
+
+  it('shares one timestamp section between same-second appends', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+
+    const first = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('same-second-1'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/journal.md', content: 'First entry.' },
+    })
+    if (first.isError) throw new Error('expected first wiki_write success')
+    const second = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('same-second-2'),
+      name: 'wiki_write',
+      arguments: { id: 'concepts/journal.md', content: 'Second entry.' },
+    })
+    if (second.isError) throw new Error('expected second wiki_write success')
+
+    const raw = await readFile(join(vault, 'concepts', 'journal.md'), 'utf8')
+    const headings = raw.match(/^## .+$/gm) ?? []
+    expect(new Set(headings).size).toBe(headings.length)
+    expect(raw).toContain('First entry.')
+    expect(raw).toContain('Second entry.')
+  })
+
   it('refuses an update-only write to a missing note without creating it or its directory', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)
