@@ -596,13 +596,15 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'memory_compact',
-    description: 'Archive old per-turn auto-capture notes, keeping only the most recent sessions. This reduces search noise while preserving every capture in git history. Disabled by default; enable via autoCaptureCompact in the curator config. Returns { compacted, kept, archived, archivedIds } when active, or { compacted: false, reason } when disabled.',
-    parameters: {},
+    description: 'Archive old per-turn auto-capture notes, keeping only the most recent sessions. This reduces search noise while preserving every capture in git history. Disabled by default; enable via autoCaptureCompact in the curator config. Returns { compacted, kept, archived, archivedIds } when active, or { compacted: false, reason } when disabled. Pass dryRun: true to preview the same selection without archiving anything.',
+    parameters: {
+      dryRun: { type: 'boolean', description: 'Preview which notes would be archived without writing. Defaults to false.' },
+    },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
-    async execute(_args, exec) {
+    async execute(args, exec) {
       const compact = resolved.autoCaptureCompact
       if (!compact.enabled) {
         return { compacted: false, reason: 'auto-capture compaction is disabled in curator config' } as unknown as JsonValue
@@ -629,6 +631,16 @@ export function apply(ctx: Context, config: Config): void {
       }
 
       const toArchive = captures.slice(keep)
+      if (args.dryRun === true) {
+        return {
+          compacted: true,
+          dryRun: true,
+          kept: keep,
+          archived: 0,
+          archivedIds: [],
+          wouldArchive: toArchive.map(hit => hit.id),
+        } as unknown as JsonValue
+      }
       const archivedIds: string[] = []
       for (const hit of toArchive) {
         const note = await callTool<{ version: string }>(ctx, exec, 'wiki_read', { id: hit.id })
