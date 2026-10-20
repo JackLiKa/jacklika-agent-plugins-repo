@@ -106,7 +106,7 @@ jobs:
           BUNDLE_VERSION: ${{ steps.bundle_version.outputs.version }}
         run: |
           TARBALL="https://registry.npmjs.org/@jacklika/dsh-memory/-/dsh-memory-$BUNDLE_VERSION.tgz"
-          for attempt in {1..48}; do
+          for attempt in {1..90}; do
             if view_out="$(npm view "@jacklika/dsh-memory@$BUNDLE_VERSION" version --prefer-online --fetch-retries=0 2>&1)"; then
               # The packument can list a version minutes before the tarball CDN
               # serves it; only treat the release as installable once the
@@ -126,7 +126,7 @@ jobs:
                 exit 1
               fi
             fi
-            if [ "$attempt" -eq 48 ]; then
+            if [ "$attempt" -eq 90 ]; then
               echo "@jacklika/dsh-memory@$BUNDLE_VERSION did not become installable"
               exit 1
             fi
