@@ -503,9 +503,10 @@ export function apply(ctx: Context, config: Config): void {
       const provenance = pickProvenance(args as Record<string, unknown>)
       ctx.logger?.debug(`memory-curator: capture target=${finalId} conflicts=${conflicts.length} writeMode=${writeMode} requireExisting=${requireExisting}`)
       const overwrite = appending ? undefined : overwriteFrontmatter(selectedNote, args.title, tags, now, provenance)
+      const headingPrefix = args.summary.trimStart().startsWith('#') ? '' : `# ${args.title}\n\n`
       const content = appending
         ? appendContent
-        : `---\n${yaml.dump(overwrite).trim()}\n---\n\n# ${args.title}\n\n${appendContent}`
+        : `---\n${yaml.dump(overwrite).trim()}\n---\n\n${headingPrefix}${appendContent}`
 
       const writeResult = await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: finalId,
@@ -566,7 +567,8 @@ export function apply(ctx: Context, config: Config): void {
         ...correctionProvenance,
       }
       const details = args.details ? `\n\n## Details\n\n${args.details}` : ''
-      const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n# ${title}\n\n${args.summary}${details}\n`
+      const headingPrefix = args.summary.trimStart().startsWith('#') ? '' : `# ${title}\n\n`
+      const content = `---\n${yaml.dump(frontmatter).trim()}\n---\n\n${headingPrefix}${args.summary}${details}\n`
       const written = await callTool<WriteResult>(ctx, exec, 'wiki_write', {
         id: args.id, content, mode: 'overwrite', requireExisting: true, baseVersion: args.baseVersion,
       })
