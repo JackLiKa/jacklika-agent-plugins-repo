@@ -172,6 +172,24 @@ jobs:
                 fi
               fi
               echo "Published $name@$version with tag $tag"
+              # The packument lists a new version before the tarball CDN serves
+              # it (observed: several minutes of 404s). Poll the tarball URL so
+              # downstream consumers are less likely to hit the gap. A slow CDN
+              # warns but does not fail the publish, since the version is
+              # already immutable on the registry.
+              tarball_url="https://registry.npmjs.org/${name}/-/${name##*/}-${version}.tgz"
+              tarball_seen=""
+              for _ in $(seq 1 18); do
+                if [ "$(curl -s -o /dev/null -w '%{http_code}' "$tarball_url")" = "200" ]; then
+                  tarball_seen=1
+                  echo "tarball for $name@$version is being served"
+                  break
+                fi
+                sleep 10
+              done
+              if [ -z "$tarball_seen" ]; then
+                echo "warning: tarball for $name@$version not yet served by the CDN; downstream installs may briefly 404"
+              fi
               # npm publish --tag already sets the dist-tag; skip a separate
               # dist-tag add to avoid transient 404s on brand-new scoped packages.
               # Visibility is granted by --access public on the publish command;

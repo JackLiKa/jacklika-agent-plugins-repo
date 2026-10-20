@@ -30,7 +30,7 @@
       config:
         vaultRoot: '.plugins/memory'
         bundleName: '@jacklika/dsh-memory'
-        bundleVersion: '0.1.7-rc.37'
+        bundleVersion: '0.1.7-rc.38'
         extensions: ['.md']
         maxLinkDepth: 1
         maxSearchResults: 20
