@@ -617,18 +617,27 @@ async function captureNote(a = {}) {
   const requireExisting = a.requireExisting === true
   const explicitId = typeof a.id === 'string' && a.id !== ''
   const finalId = requireExisting || explicitId || target.existed ? targetId : conflicts[0]?.id ?? targetId
+  // Mirror the curator's conflict hint: the collided note is almost certainly
+  // the correction target, so name it (and its version when already read)
+  // instead of leaving the caller to append a contradictory copy.
+  const correctionHint = () => ({
+    tool: 'memory_correct',
+    id: finalId,
+    ...(target.version !== undefined && finalId === targetId ? { baseVersion: target.version } : {}),
+  })
   if (!requireExisting && !explicitId && !target.existed && (titleHits.length === MAX_SEARCH_RESULTS || conflicts.length > 1)) {
-    return { written: false, id: targetId, conflict: true, reason: 'ambiguous or truncated conflict search; provide the exact existing note id before writing' }
+    return { written: false, id: targetId, conflict: true, ...(conflicts.length > 0 ? { suggested: correctionHint() } : {}), reason: 'ambiguous or truncated conflict search; provide the exact existing note id before writing' }
   }
 
   if (conflictExists && !requireExisting) {
     if (a.conflictPolicy === 'skip') {
-      return { written: false, id: finalId, conflict: true, reason: 'skipped by conflictPolicy=skip' }
+      return { written: false, id: finalId, conflict: true, suggested: correctionHint(), reason: 'skipped by conflictPolicy=skip' }
     }
     return {
       written: false,
       id: finalId,
       conflict: true,
+      suggested: correctionHint(),
       reason: 'approval service or agent unavailable; set conflictPolicy=skip to allow silent skip in headless mode',
     }
   }

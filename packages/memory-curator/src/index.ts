@@ -432,11 +432,21 @@ export function apply(ctx: Context, config: Config): void {
       const conflicts = dedupeHits(findConflicts(targetId, args.title, [...targetHit, ...titleSearch.hits]))
       const conflictExists = conflicts.length > 0
       const finalId = requireExisting || explicitId || targetNote !== undefined ? targetId : conflicts[0]?.id ?? targetId
+      // A conflict means the knowledge probably already has a home: point the
+      // caller at the correction tool for the note it collided with instead of
+      // letting a retry append a second, contradictory copy. The suggested
+      // baseVersion is included whenever the note was already read.
+      const correctionHint = (version?: string) => ({
+        tool: 'memory_correct',
+        id: finalId,
+        ...(version !== undefined ? { baseVersion: version } : {}),
+      })
       if (!requireExisting && !explicitId && targetNote === undefined && (titleSearch.truncated || conflicts.length > 1)) {
         return {
           written: false,
           id: targetId,
           conflict: true,
+          ...(conflicts.length > 0 ? { suggested: correctionHint() } : {}),
           reason: 'ambiguous or truncated conflict search; provide the exact existing note id before writing',
         } as unknown as JsonValue
       }
@@ -454,6 +464,7 @@ export function apply(ctx: Context, config: Config): void {
             written: false,
             id: finalId,
             conflict: true,
+            suggested: correctionHint(approvedVersion),
             reason: 'skipped by conflictPolicy=skip',
           } as unknown as JsonValue
         }
@@ -462,6 +473,7 @@ export function apply(ctx: Context, config: Config): void {
             written: false,
             id: finalId,
             conflict: true,
+            suggested: correctionHint(approvedVersion),
             reason: 'approval service or agent unavailable; set conflictPolicy=skip to allow silent skip in headless mode',
           } as unknown as JsonValue
         }
@@ -481,6 +493,7 @@ export function apply(ctx: Context, config: Config): void {
             written: false,
             id: finalId,
             conflict: true,
+            suggested: correctionHint(approvedVersion),
             approval: outcome,
             reason: 'user did not approve the conflict',
           } as unknown as JsonValue
