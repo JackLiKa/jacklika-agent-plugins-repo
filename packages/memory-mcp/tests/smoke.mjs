@@ -286,7 +286,32 @@ async function runSmoke() {
       name: 'memory_capture',
       arguments: { title: 'MCP Parity: Capture!', summary: 'third', conflictPolicy: 'skip' },
     }), earlyExit])
-    assert(JSON.parse(skipped.content[0].text).reason === 'skipped by conflictPolicy=skip', 'skip reason')
+    const skippedResult = JSON.parse(skipped.content[0].text)
+    assert(skippedResult.reason === 'skipped by conflictPolicy=skip', 'skip reason')
+    // Conflict refusal carries the same correction hint the dsh curator
+    // returns: the collided note id, and its version when already read.
+    assert(skippedResult.suggested?.tool === 'memory_correct', `suggested tool ${JSON.stringify(skippedResult.suggested)}`)
+    assert(skippedResult.suggested?.id === 'shared/notes/mcp-parity-capture.md', `suggested id ${skippedResult.suggested?.id}`)
+
+    // A summary that carries its own heading must not gain a duplicate H1 —
+    // the same predicate the dsh curator applies.
+    const h1Cap = await Promise.race([call('tools/call', {
+      name: 'memory_capture',
+      arguments: { title: 'MCP Heading Title', summary: '# Caller Heading\n\nBody under a caller-supplied heading.' },
+    }), earlyExit])
+    const h1CapResult = JSON.parse(h1Cap.content[0].text)
+    assert(h1CapResult.written === true, `h1 capture ${JSON.stringify(h1CapResult)}`)
+    const h1Text = await readFile(join(vault, h1CapResult.id), 'utf8')
+    assert((h1Text.match(/^#\s/gm) ?? []).length === 1, `capture produced ${(h1Text.match(/^#\s/gm) ?? []).length} H1s`)
+    assert(h1Text.includes('# Caller Heading') && !h1Text.includes('# MCP Heading Title'), 'caller heading wins')
+    const h1Correct = await Promise.race([call('tools/call', {
+      name: 'memory_correct',
+      arguments: { id: h1CapResult.id, baseVersion: h1CapResult.version, summary: '# Replacement Heading\n\nNew body.' },
+    }), earlyExit])
+    assert(JSON.parse(h1Correct.content[0].text).written === true, 'h1 correct written')
+    const h1CorrectText = await readFile(join(vault, h1CapResult.id), 'utf8')
+    assert((h1CorrectText.match(/^#\s/gm) ?? []).length === 1, 'correction keeps one H1')
+    assert(h1CorrectText.includes('# Replacement Heading'), 'correction heading kept')
 
     const badCaptureId = await Promise.race([call('tools/call', {
       name: 'memory_capture',

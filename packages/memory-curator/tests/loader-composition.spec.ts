@@ -744,4 +744,93 @@ describe('memory-curator real Loader composition through cordis.yml', () => {
     const log = await execFileAsync('git', ['-C', vault, 'log', '--format=%s'])
     expect(log.stdout).toContain('memory_forget:')
   })
+
+  it('previews compaction with dryRun without archiving anything', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault, undefined, [], false, true)
+
+    for (let i = 0; i < 5; i += 1) {
+      const write = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId(`compact-dry-create-${i}`),
+        name: 'wiki_write',
+        arguments: {
+          id: `shared/notes/auto-capture/session-${i}.md`,
+          content: `Session ${i} capture.\n`,
+          mode: 'overwrite',
+        },
+        agent: agent('agent-1', vault),
+      })
+      expect(write.isError).toBe(false)
+    }
+
+    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('compact-dry'), name: 'memory_compact', arguments: { dryRun: true }, agent: agent('agent-1', vault) })
+    if (result.isError) throw new Error(`expected memory_compact success: ${result.error.message}`)
+    const preview = JSON.parse(resultText(result)) as { compacted: boolean; dryRun: boolean; archived: number; archivedIds: string[]; wouldArchive: string[] }
+    expect(preview.compacted).toBe(true)
+    expect(preview.dryRun).toBe(true)
+    expect(preview.archived).toBe(0)
+    expect(preview.archivedIds).toHaveLength(0)
+    expect(preview.wouldArchive).toHaveLength(3)
+    expect(preview.wouldArchive.every(id => id.startsWith('shared/notes/auto-capture/session-'))).toBe(true)
+    for (const id of preview.wouldArchive) {
+      await expect(readFile(join(vault, id), 'utf8')).resolves.toContain('capture')
+    }
+  })
+
+  it('keeps a single H1 when the capture summary carries its own heading', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+
+    const r = await capture(ctx, 'h1-capture', 'Ignored Title', '# Custom Heading\n\nBody under a caller-supplied heading.', 'agent-1', vault)
+    expect(r.isError).toBe(false)
+    const out = JSON.parse(resultText(r)) as { id: string }
+    const text = await readFile(join(vault, out.id), 'utf8')
+    expect(text.match(/^#\s/gm)).toHaveLength(1)
+    expect(text).toContain('# Custom Heading')
+    expect(text).not.toContain('# Ignored Title')
+  })
+
+  it('keeps a single H1 when the correction summary carries its own heading', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+
+    const r = await capture(ctx, 'h1-correct-capture', 'Heading base', 'Original body.', 'agent-1', vault)
+    expect(r.isError).toBe(false)
+    const out = JSON.parse(resultText(r)) as { id: string; version: string }
+
+    const correction = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('h1-correct'),
+      name: 'memory_correct',
+      arguments: { id: out.id, baseVersion: out.version, summary: '# Revised Heading\n\nReplacement body.' },
+      agent: agent('agent-1', vault),
+    })
+    expect(correction.isError).toBe(false)
+    const text = await readFile(join(vault, out.id), 'utf8')
+    expect(text.match(/^#\s/gm)).toHaveLength(1)
+    expect(text).toContain('# Revised Heading')
+    expect(text).toContain('Replacement body.')
+  })
+
+  it('suggests memory_correct when a conflicting capture is skipped', async () => {
+    const vault = await vaultDir()
+    const ctx = await boot(vault)
+
+    const r1 = await capture(ctx, 'hint-first', 'Hint target', 'First conclusion.', 'agent-1', vault)
+    expect(r1.isError).toBe(false)
+    const out1 = JSON.parse(resultText(r1)) as { id: string; version: string }
+
+    const r2 = await capture(ctx, 'hint-second', 'Hint target', 'Second conclusion.', 'agent-1', vault, { conflictPolicy: 'skip' })
+    expect(r2.isError).toBe(false)
+    const out2 = JSON.parse(resultText(r2)) as {
+      written: boolean; conflict: boolean
+      suggested?: { tool: string; id: string; baseVersion?: string }
+    }
+    expect(out2.written).toBe(false)
+    expect(out2.conflict).toBe(true)
+    expect(out2.suggested?.tool).toBe('memory_correct')
+    expect(out2.suggested?.id).toBe(out1.id)
+    expect(out2.suggested?.baseVersion).toBe(out1.version)
+  })
 })
