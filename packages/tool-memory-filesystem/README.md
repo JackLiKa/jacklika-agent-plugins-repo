@@ -50,6 +50,7 @@ A relative `vaultRoot` resolves against the calling session's workspace.
 | `maxSearchResults` | `number` | `20` | Maximum `wiki_search` hits. |
 | `indexHiddenDirs` | `boolean` | `false` | Index directories whose names start with `.` (`.git` and `node_modules` stay excluded). Enable when `vaultRoot` points at the workspace root so `.dsh/memory/` notes are included. |
 | `excludeDirs` | `string[]` | `['archive']` | Directory names excluded from search indexing at any depth. The `archive` directory holds forgotten notes and is excluded by default; configure the graph plugin separately for graph indexing. Explicit `wiki_read` calls can still retrieve archived notes. |
+| `indexCacheSize` | `number` | `0` | Maximum number of vaults whose `wiki_search` index is cached between calls; `0` disables caching (the historical per-call rebuild). A cached index is reused only while every note's `(path, mtime, size)` signature matches, so any external edit or `touch` forces a rebuild. |
 | `bundleName` | `string` | `''` | Optional Bundle identity reported by `memory_runtime_info`; the shipped Bundle sets this value. |
 | `bundleVersion` | `string` | `''` | Optional Bundle version reported by `memory_runtime_info`; the shipped Bundle keeps it aligned with its package manifest. |
 

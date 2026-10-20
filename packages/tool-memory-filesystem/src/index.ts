@@ -77,6 +77,14 @@ export interface Config {
    * search/graph results; explicit `wiki_read` calls can still retrieve them.
    */
   excludeDirs?: string[]
+  /**
+   * Maximum number of vaults whose `wiki_search` index is cached between
+   * calls. 0 disables the cache (default), preserving the historic
+   * read-everything-per-call behaviour. A cached index is reused only when
+   * every note's `(path, mtimeMs, size)` matches the cached signature, so any
+   * external edit — including `touch` — invalidates it.
+   */
+  indexCacheSize?: number
   bundleName?: string
   bundleVersion?: string
 }
@@ -89,6 +97,7 @@ export const Config: z<Config> = z.object({
   maxSearchResults: z.number().default(20),
   indexHiddenDirs: z.boolean().default(false),
   excludeDirs: z.array(z.string()).default(['archive']),
+  indexCacheSize: z.number().default(0),
   bundleName: z.string().default(''),
   bundleVersion: z.string().default(''),
 })
@@ -665,6 +674,22 @@ export async function buildIndex(
   excludeDirs?: string[],
 ): Promise<Map<string, IndexedNote>> {
   const paths = await listNotePaths(root, extensions, indexHiddenDirs, onSkip, excludeDirs)
+  return indexNotePaths(root, paths, onSkip)
+}
+
+/**
+ * Index pre-listed note paths. Split from {@link buildIndex} so the optional
+ * index cache can reuse its own listing when validating staleness.
+ * @param root - vault root.
+ * @param paths - absolute note paths, already filtered like `listNotePaths`.
+ * @param onSkip - optional callback for unreadable notes.
+ * @returns a map from note id to search result.
+ */
+async function indexNotePaths(
+  root: string,
+  paths: string[],
+  onSkip?: (path: string, error: unknown) => void,
+): Promise<Map<string, IndexedNote>> {
   const notes: Note[] = []
   for (const path of paths) {
     let text: string
@@ -706,6 +731,64 @@ export async function buildIndex(
         }
       }
     }
+  }
+  return index
+}
+
+/**
+ * Vault-keyed `wiki_search` index cache, populated only when
+ * `indexCacheSize > 0`. A cached index is valid only while every note's
+ * `(path, mtimeMs, size)` signature matches, so any external edit or `touch`
+ * forces a rebuild. Insertion order doubles as LRU order.
+ */
+const searchIndexCache = new Map<string, { signature: string; index: Map<string, IndexedNote> }>()
+
+/**
+ * Build the search index, reusing a cached copy when enabled and still valid.
+ * Staleness is detected per call by listing note paths and statting each file,
+ * which is cheap relative to re-reading and re-parsing every note.
+ * @param root - vault root.
+ * @param extensions - note extensions.
+ * @param indexHiddenDirs - descend into dot-directories besides the fixed exclusions.
+ * @param excludeDirs - top-level directories excluded from indexing.
+ * @param maxCachedVaults - cache capacity; 0 disables caching entirely.
+ * @param onSkip - optional callback for unreadable notes.
+ * @returns a map from note id to search result.
+ */
+async function buildIndexMaybeCached(
+  root: string,
+  extensions: string[],
+  indexHiddenDirs: boolean,
+  excludeDirs: string[] | undefined,
+  maxCachedVaults: number,
+  onSkip?: (path: string, error: unknown) => void,
+): Promise<Map<string, IndexedNote>> {
+  const paths = await listNotePaths(root, extensions, indexHiddenDirs, onSkip, excludeDirs)
+  if (maxCachedVaults <= 0) return indexNotePaths(root, paths, onSkip)
+  const signatureParts: string[] = []
+  for (const path of [...paths].sort(codeUnitCompare)) {
+    try {
+      const info = await stat(path)
+      signatureParts.push(`${path}:${info.mtimeMs}:${info.size}`)
+    } catch {
+      signatureParts.push(`${path}:unreadable`)
+    }
+  }
+  const key = `${root}\0${extensions.join(',')}\0${indexHiddenDirs ? '1' : '0'}\0${(excludeDirs ?? []).join(',')}`
+  const signature = signatureParts.join('\n')
+  const hit = searchIndexCache.get(key)
+  if (hit !== undefined && hit.signature === signature) {
+    searchIndexCache.delete(key)
+    searchIndexCache.set(key, hit)
+    return hit.index
+  }
+  const index = await indexNotePaths(root, paths, onSkip)
+  searchIndexCache.delete(key)
+  searchIndexCache.set(key, { signature, index })
+  while (searchIndexCache.size > maxCachedVaults) {
+    const oldest = searchIndexCache.keys().next()
+    if (oldest.done) break
+    searchIndexCache.delete(oldest.value)
   }
   return index
 }
@@ -823,6 +906,9 @@ export function apply(ctx: Context, config: Config): void {
   const resolved = config as ResolvedConfig
   assertPositiveInteger('maxLinkDepth', resolved.maxLinkDepth)
   assertPositiveInteger('maxSearchResults', resolved.maxSearchResults)
+  if (!Number.isInteger(resolved.indexCacheSize) || resolved.indexCacheSize < 0) {
+    throw new Error(`tool-memory-filesystem: indexCacheSize must be an integer >= 0, received ${resolved.indexCacheSize}`)
+  }
   assertExtensions(resolved.extensions)
 
   const vaultRootFor = (exec: ToolRunContext): string => resolveMemoryVaultRoot(resolved.vaultRoot, exec)
@@ -1008,7 +1094,7 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args, exec) {
       const vaultRoot = vaultRootFor(exec)
-      const index = await buildIndex(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, skipLogger(ctx, vaultRoot), resolved.excludeDirs)
+      const index = await buildIndexMaybeCached(vaultRoot, resolved.extensions, resolved.indexHiddenDirs, resolved.excludeDirs, resolved.indexCacheSize, skipLogger(ctx, vaultRoot))
       const resultCap = typeof args.maxResults === 'number' && Number.isInteger(args.maxResults) && args.maxResults >= 1
         ? args.maxResults
         : resolved.maxSearchResults

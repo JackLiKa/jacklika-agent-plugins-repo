@@ -321,6 +321,80 @@ describe('tool-memory-filesystem real Loader composition through cordis.yml', ()
     expect(hits.some(h => h.id === 'embedding.md')).toBe(true)
   })
 
+  it('serves identical wiki_search results with indexCacheSize enabled and invalidates on external edits', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, false, undefined, ['    indexCacheSize: 4'])
+    const first = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-cached-1'),
+      name: 'wiki_search',
+      arguments: { query: 'RAG' },
+    })
+    expect(first.isError).toBe(false)
+    if (first.isError) throw new Error('expected wiki_search success')
+    const firstHits = searchPage<{ id: string }>(first).hits.map(h => h.id).sort()
+    expect(firstHits).toEqual(['concepts/RAG.md', 'embedding.md'].sort())
+
+    // An external edit bypasses every tool — the signature check must catch
+    // the mtime/size change rather than serve the stale index.
+    await writeFile(join(vault, 'embedding.md'), '# Embedding\n\nAn embedding carries quixotic-marker.\n')
+    const second = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-cached-2'),
+      name: 'wiki_search',
+      arguments: { query: 'quixotic-marker' },
+    })
+    expect(second.isError).toBe(false)
+    if (second.isError) throw new Error('expected wiki_search success')
+    expect(searchPage<{ id: string }>(second).hits.map(h => h.id)).toEqual(['embedding.md'])
+  })
+
+  it('invalidates the cached index when only mtime changes', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault, false, undefined, ['    indexCacheSize: 4'])
+    const prime = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-touch-1'),
+      name: 'wiki_search',
+      arguments: { query: 'RAG' },
+    })
+    expect(prime.isError).toBe(false)
+    // A newly added note changes the vault signature; a stale cache would
+    // still answer the primed query but miss the newcomer.
+    await writeFile(join(vault, 'newcomer.md'), '# Newcomer\n\nFresh arrival.\n')
+    const second = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-touch-2'),
+      name: 'wiki_search',
+      arguments: { query: 'Newcomer' },
+    })
+    expect(second.isError).toBe(false)
+    if (second.isError) throw new Error('expected wiki_search success')
+    expect(searchPage<{ id: string }>(second).hits.map(h => h.id)).toEqual(['newcomer.md'])
+  })
+
+  it('rebuilds the search index per call when indexCacheSize stays disabled', async () => {
+    const vault = await makeVault()
+    const ctx = await boot(vault)
+    const first = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-nocache-1'),
+      name: 'wiki_search',
+      arguments: { query: 'RAG' },
+    })
+    expect(first.isError).toBe(false)
+    await writeFile(join(vault, 'embedding.md'), '# Embedding\n\nAn embedding carries quixotic-marker.\n')
+    const second = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('search-nocache-2'),
+      name: 'wiki_search',
+      arguments: { query: 'quixotic-marker' },
+    })
+    expect(second.isError).toBe(false)
+    if (second.isError) throw new Error('expected wiki_search success')
+    expect(searchPage<{ id: string }>(second).hits.map(h => h.id)).toEqual(['embedding.md'])
+  })
+
   it('matches keywords that appear only in the note body', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)

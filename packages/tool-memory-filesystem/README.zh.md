@@ -50,6 +50,7 @@ kind: "package-reference"
 | `maxSearchResults` | `number` | `20` | `wiki_search` 返回的最大结果数。 |
 | `indexHiddenDirs` | `boolean` | `false` | 是否索引以 `.` 开头的目录（`.git` 与 `node_modules` 始终排除）。当 `vaultRoot` 指向工作区根时开启，以纳入 `.dsh/memory/` 中的笔记。 |
 | `excludeDirs` | `string[]` | `['archive']` | 从搜索索引中排除的目录名（任意层级）。`archive` 目录用于存放已遗忘笔记并默认排除；图谱索引需单独配置 graph 插件；显式调用 `wiki_read` 仍可读取归档笔记。 |
+| `indexCacheSize` | `number` | `0` | 跨调用缓存 `wiki_search` 索引的最大仓库数；`0` 关闭缓存（历史行为：每次调用全量重建）。仅当每条笔记的 `(path, mtime, size)` 签名与缓存一致时才复用，任何外部修改或 `touch` 都会触发重建。 |
 | `bundleName` | `string` | `''` | `memory_runtime_info` 回报的可选 Bundle 身份；随附 Bundle 会设置该值。 |
 | `bundleVersion` | `string` | `''` | `memory_runtime_info` 回报的可选 Bundle 版本；随附 Bundle 会保持它与 package manifest 一致。 |
 
