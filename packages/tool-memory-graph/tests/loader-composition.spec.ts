@@ -317,6 +317,34 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     expect(after.edges.some(e => e.from === 'notes/d.md' || e.to === 'notes/d.md')).toBe(false)
   })
 
+  it('recomputes keyword edges inside the BFS node set under subgraphEdgeScope frontier', async () => {
+    // a-x is the strongest vault-wide keyword pair, so under keywordEdgeTopK=1
+    // the mutual top-K keeps (a,x) and drops (a,r). A depth-1 subgraph at r
+    // contains r and a but not x: scope 'full' therefore emits no keyword
+    // edge, while 'frontier' recomputes top-K inside {r,a} and keeps (a,r).
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-graph-frontier-'))
+    try {
+      await mkdir(join(vault, 'notes'), { recursive: true })
+      await writeFile(join(vault, 'notes', 'r.md'), '# R\n\nalpha uniquer.\n\nSee [[a]].\n')
+      await writeFile(join(vault, 'notes', 'a.md'), '# A\n\nalpha gamma delta uniquea.\n')
+      await writeFile(join(vault, 'notes', 'x.md'), '# X\n\ngamma delta uniquex.\n')
+
+      const full = await boot(vault, ['    keywordEdgeTopK: 1', '    subgraphEdgeScope: full'])
+      const fullGraph = await graphFrom(full, 'frontier-full', 'notes/r.md', 1)
+      expect(fullGraph.nodes.map(n => n.id).sort()).toEqual(['notes/a.md', 'notes/r.md'])
+      expect(fullGraph.edges.filter(e => e.type === 'keyword')).toEqual([])
+      await full.fiber.dispose()
+
+      const frontier = await boot(vault, ['    keywordEdgeTopK: 1', '    subgraphEdgeScope: frontier'])
+      const frontierGraph = await graphFrom(frontier, 'frontier-scoped', 'notes/r.md', 1)
+      expect(frontierGraph.nodes.map(n => n.id).sort()).toEqual(['notes/a.md', 'notes/r.md'])
+      const keywordEdges = frontierGraph.edges.filter(e => e.type === 'keyword')
+      expect(keywordEdges).toContainEqual(expect.objectContaining({ from: 'notes/a.md', to: 'notes/r.md' }))
+    } finally {
+      await rm(vault, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a graph center that is not an indexed note instead of crashing', async () => {
     const vault = await makeVault()
     const ctx = await boot(vault)

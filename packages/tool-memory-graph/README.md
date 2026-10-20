@@ -51,6 +51,7 @@ It resolves the same vault root per call as `tool-memory-filesystem`: an explici
 | `pageScanEdgesLimit` | `number` | `250000` | Refuse paging when full edge generation exceeds this bound; audit remains independent of page limits. |
 | `keywordMaxDocFraction` | `number` | `1` | Drop keyword terms present in more than this fraction of indexed notes before edges are built. A term in nearly every note connects everything and carries no signal; `1` keeps all terms (the historical behavior). |
 | `keywordEdgeTopK` | `number` | `0` | Keep at most this many keyword edges per note; a pair survives only when both endpoints rank it inside their own top K (mutual nearest neighbors). `0` disables pruning (the historical behavior). Neither option affects `wiki_graph_audit`, which always inspects the unsparsified edge set. |
+| `subgraphEdgeScope` | `'full' \| 'frontier'` | `'full'` | Where subgraph keyword edges come from. `'full'` filters the vault-wide edge list down to returned nodes (the historical behavior; with `keywordEdgeTopK` an in-subgraph pair can be crowded out by a stronger partner outside the subgraph). `'frontier'` recomputes keyword edges among the returned BFS nodes only. BFS node discovery is identical either way. |
 
 ### Tools
 

@@ -72,6 +72,15 @@ export interface Config {
    * `0` disables pruning — the historical behavior.
    */
   keywordEdgeTopK?: number
+  /**
+   * Where `wiki_graph` subgraph keyword edges come from. `'full'` filters the
+   * vault-wide keyword edge list down to the subgraph nodes — the historical
+   * behavior, which can starve a subgraph when the global edge cap truncates
+   * the vault-wide list first. `'frontier'` recomputes keyword edges only
+   * among the returned BFS nodes, so the edge budget applies to the subgraph
+   * itself. Node discovery (BFS) is identical either way.
+   */
+  subgraphEdgeScope?: 'full' | 'frontier'
 }
 
 /** Schemastery configuration for the memory graph tool consumer. */
@@ -91,6 +100,7 @@ export const Config: z<Config> = z.object({
   excludeDirs: z.array(z.string()).default(['archive']),
   keywordMaxDocFraction: z.number().min(0).max(1).default(1),
   keywordEdgeTopK: z.number().min(0).default(0),
+  subgraphEdgeScope: z.union(['full', 'frontier']).default('full'),
 })
 
 /** The shape after schemastery applied the defaults. */
@@ -586,7 +596,9 @@ async function buildSubgraph(
     }
   }
 
-  const filteredKeywordEdges = keywordEdges.filter(e => idSet.has(e.from) && idSet.has(e.to))
+  const filteredKeywordEdges = resolved.subgraphEdgeScope === 'frontier'
+    ? buildKeywordEdges(new Map(ids.map(id => [id, parsedById.get(id)!.terms])), maxKeywordPairs, sparsify)
+    : keywordEdges.filter(e => idSet.has(e.from) && idSet.has(e.to))
   edges.push(...filteredKeywordEdges)
 
   return graphResult(nodes, edges, visited.size, maxNodes, maxEdges, resolved.excludeDirs, depth)
