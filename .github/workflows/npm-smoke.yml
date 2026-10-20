@@ -106,9 +106,16 @@ jobs:
           BUNDLE_VERSION: ${{ steps.bundle_version.outputs.version }}
         run: |
           for attempt in {1..48}; do
-            if npm view "@jacklika/dsh-memory@$BUNDLE_VERSION" version --prefer-online --fetch-retries=0 > /dev/null 2>&1; then
+            if view_out="$(npm view "@jacklika/dsh-memory@$BUNDLE_VERSION" version --prefer-online --fetch-retries=0 2>&1)"; then
               echo "@jacklika/dsh-memory@$BUNDLE_VERSION is available from npm"
               break
+            fi
+            # Only a 404/not-found means "not published yet"; EPERM, EACCES or
+            # network failures are environment problems that retrying masks.
+            if ! grep -qiE 'E404|404|No matching version|not found' <<<"$view_out"; then
+              echo "npm view failed with a non-404 error; this is not evidence the version is absent:"
+              echo "$view_out"
+              exit 1
             fi
             if [ "$attempt" -eq 48 ]; then
               echo "@jacklika/dsh-memory@$BUNDLE_VERSION did not become available"

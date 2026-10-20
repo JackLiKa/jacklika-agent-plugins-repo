@@ -125,18 +125,28 @@ jobs:
                   return "$publish_status"
                 fi
                 for _ in $(seq 1 12); do
-                  if npm view "$name@$version" version >/dev/null 2>&1; then
+                  if view_out="$(npm view "$name@$version" version 2>&1)"; then
                     echo "$name@$version already published (confirmed after E403/E409)"
                     return 0
+                  fi
+                  # A non-404 npm view failure (EPERM/EACCES/network) is not
+                  # proof of absence; keep polling but make the noise visible.
+                  if ! grep -qiE 'E404|404|No matching version|not found' <<<"$view_out"; then
+                    echo "warning: npm view failed with a non-404 error while confirming publication: $view_out"
                   fi
                   sleep 10
                 done
                 return "$publish_status"
               }
 
-              if npm view "$name@$version" version >/dev/null 2>&1; then
+              if view_out="$(npm view "$name@$version" version 2>&1)"; then
                 echo "$name@$version already published"
               else
+                # A non-404 failure (EPERM/EACCES/network) is not proof of
+                # absence; the publish attempt's own error handling decides.
+                if ! grep -qiE 'E404|404|No matching version|not found' <<<"$view_out"; then
+                  echo "warning: npm view failed with a non-404 error: $view_out"
+                fi
                 echo "Publishing $name@$version"
                 if attempt_publish; then
                   : # published successfully
