@@ -49,6 +49,8 @@ kind: "package-reference"
 | `pageSizeLimit` | `number` | `250` | 单次 `wiki_graph_page` 最多返回的节点或边数。 |
 | `pageScanNodesLimit` | `number` | `5000` | 索引笔记数超过此服务端工作量上限时拒绝全图分页。 |
 | `pageScanEdgesLimit` | `number` | `250000` | 完整边生成超出此上限时拒绝分页；审计不依赖分页上限。 |
+| `keywordMaxDocFraction` | `number` | `1` | 建边前丢弃出现在超过该比例索引笔记中的关键词。几乎出现在每篇笔记中的词会把所有节点连成一片、不携带区分信号；`1` 保留全部词（历史行为）。 |
+| `keywordEdgeTopK` | `number` | `0` | 每个节点最多保留该数量的关键词边；一条边仅当两端都把它排进自己的前 K 时才保留（互近邻）。`0` 关闭剪枝（历史行为）。两个选项都不影响 `wiki_graph_audit`——审计始终检查未稀疏化的边集。 |
 
 ### 工具
 

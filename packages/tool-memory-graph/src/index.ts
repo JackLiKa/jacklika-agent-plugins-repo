@@ -58,6 +58,20 @@ export interface Config {
   /** Descend into dot-directories besides the fixed exclusions while indexing. */
   indexHiddenDirs?: boolean
   excludeDirs?: string[]
+  /**
+   * Drop keyword terms shared by more than this fraction of indexed notes.
+   * Terms above the document-frequency ceiling carry no discriminating signal
+   * (a word in every note connects everything to everything). `1` keeps every
+   * term — the historical behavior.
+   */
+  keywordMaxDocFraction?: number
+  /**
+   * Keep at most this many keyword edges per note, dropping weaker pairs.
+   * A pair survives only when both endpoints rank it inside their own top K
+   * (mutual nearest neighbors), so asymmetric weights cannot orphan a pair.
+   * `0` disables pruning — the historical behavior.
+   */
+  keywordEdgeTopK?: number
 }
 
 /** Schemastery configuration for the memory graph tool consumer. */
@@ -75,6 +89,8 @@ export const Config: z<Config> = z.object({
   pageScanEdgesLimit: z.number().default(250000),
   indexHiddenDirs: z.boolean().default(false),
   excludeDirs: z.array(z.string()).default(['archive']),
+  keywordMaxDocFraction: z.number().min(0).max(1).default(1),
+  keywordEdgeTopK: z.number().min(0).default(0),
 })
 
 /** The shape after schemastery applied the defaults. */
@@ -231,7 +247,18 @@ function noteTitleFromText(text: string, id: string): string {
  * share one or more terms receives two directed edges (A→B and B→A) carrying
  * the sorted shared keywords and a combined weight.
  */
-function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>, maxPairs?: number): GraphEdge[] {
+interface KeywordSparsify {
+  /** Document-frequency ceiling in (0, 1]; `1` disables the filter. */
+  maxDocFraction: number
+  /** Mutual top-K keyword edges per node; `0` disables pruning. */
+  topK: number
+}
+
+function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>, maxPairs?: number, sparsify?: KeywordSparsify): GraphEdge[] {
+  const noteCount = noteTerms.size
+  const docCeiling = sparsify !== undefined && sparsify.maxDocFraction < 1
+    ? sparsify.maxDocFraction * noteCount
+    : Number.POSITIVE_INFINITY
   const inverted = new Map<string, string[]>()
   for (const [id, terms] of noteTerms) {
     for (const term of terms.keys()) {
@@ -243,7 +270,7 @@ function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>, maxPairs
 
   const pairData = new Map<string, { keywords: string[]; weight: number }>()
   for (const [term, ids] of inverted) {
-    if (ids.length < 2) continue
+    if (ids.length < 2 || ids.length > docCeiling) continue
     for (let i = 0; i < ids.length; i += 1) {
       for (let j = i + 1; j < ids.length; j += 1) {
         const a = ids[i]!
@@ -263,8 +290,32 @@ function buildKeywordEdges(noteTerms: Map<string, Map<string, number>>, maxPairs
     }
   }
 
+  let kept = pairData
+  if (sparsify !== undefined && sparsify.topK > 0) {
+    // Mutual top-K: per endpoint, rank incident pairs by descending weight
+    // (deterministic key order breaks ties) and keep only pairs that both
+    // endpoints selected.
+    const votes = new Map<string, number>()
+    const incident = new Map<string, { key: string; weight: number }[]>()
+    for (const [key, { weight }] of pairData) {
+      const [a, b] = key.split('\x00') as [string, string]
+      incident.get(a)?.push({ key, weight }) ?? incident.set(a, [{ key, weight }])
+      incident.get(b)?.push({ key, weight }) ?? incident.set(b, [{ key, weight }])
+    }
+    for (const pairs of incident.values()) {
+      pairs.sort((x, y) => y.weight - x.weight || codeUnitCompare(x.key, y.key))
+      for (const { key } of pairs.slice(0, sparsify.topK)) {
+        votes.set(key, (votes.get(key) ?? 0) + 1)
+      }
+    }
+    kept = new Map()
+    for (const [key, value] of pairData) {
+      if ((votes.get(key) ?? 0) === 2) kept.set(key, value)
+    }
+  }
+
   const edges: GraphEdge[] = []
-  for (const [key, { keywords, weight }] of pairData) {
+  for (const [key, { keywords, weight }] of kept) {
     const parts = key.split('\x00')
     const from = parts[0]!
     const to = parts[1]!
@@ -425,7 +476,8 @@ async function buildGraph(
   }
 
   const noteTerms = new Map(capped.map(p => [p.id, p.terms]))
-  edges.push(...buildKeywordEdges(noteTerms, maxKeywordPairs))
+  const sparsify: KeywordSparsify = { maxDocFraction: resolved.keywordMaxDocFraction, topK: resolved.keywordEdgeTopK }
+  edges.push(...buildKeywordEdges(noteTerms, maxKeywordPairs, sparsify))
 
   // Safety: every edge endpoint must be in the returned node set.
   const safeEdges = edges.filter(e => idSet.has(e.from) && idSet.has(e.to))
@@ -487,7 +539,8 @@ async function buildSubgraph(
   }
 
   const noteTerms = new Map(parsed.map(p => [p.id, p.terms]))
-  const keywordEdges = buildKeywordEdges(noteTerms, maxKeywordPairs)
+  const sparsify: KeywordSparsify = { maxDocFraction: resolved.keywordMaxDocFraction, topK: resolved.keywordEdgeTopK }
+  const keywordEdges = buildKeywordEdges(noteTerms, maxKeywordPairs, sparsify)
   for (const { from, to } of keywordEdges) {
     const list = adjacency.get(from) ?? []
     if (!list.includes(to)) list.push(to)

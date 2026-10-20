@@ -682,4 +682,37 @@ describe('tool-memory-graph real Loader composition through cordis.yml', () => {
     const ctx = await boot(vault, ['    extensions: []'])
     expect(ctx.tools.schemas().some(schema => schema.name === 'wiki_graph')).toBe(false)
   })
+
+  it('sparsifies keyword edges with keywordMaxDocFraction and keywordEdgeTopK while defaults keep every pair', async () => {
+    // n1/n2 share a strong rare term plus the vault-wide `commonterm`; n3 only
+    // shares `commonterm`; n4 is isolated. Without sparsification the dense
+    // term creates all three pairs.
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-graph-sparse-'))
+    vaults.push(vault)
+    const notes = join(vault, 'notes')
+    await mkdir(notes)
+    await writeFile(join(notes, 'n1.md'), '# N1\n\ncommonterm sharedpair sharedpair sharedpair.\n')
+    await writeFile(join(notes, 'n2.md'), '# N2\n\ncommonterm sharedpair.\n')
+    await writeFile(join(notes, 'n3.md'), '# N3\n\ncommonterm betaunique.\n')
+    await writeFile(join(notes, 'n4.md'), '# N4\n\nzephyrword only.\n')
+
+    const baseline = await graphAll(await boot(vault), 'sparse-default')
+    const baselineKeyword = baseline.edges.filter(edge => edge.type === 'keyword')
+    expect(baselineKeyword).toHaveLength(6)
+    const pairKey = (edge: { from: string; to: string }) => [edge.from, edge.to].sort().join('~')
+    const pairs = new Set(baselineKeyword.map(pairKey))
+    expect(pairs).toEqual(new Set(['notes/n1.md~notes/n2.md', 'notes/n1.md~notes/n3.md', 'notes/n2.md~notes/n3.md']))
+
+    const fractioned = await graphAll(await boot(vault, ['    keywordMaxDocFraction: 0.5']), 'sparse-fraction')
+    const fractionKeyword = fractioned.edges.filter(edge => edge.type === 'keyword')
+    expect(new Set(fractionKeyword.map(pairKey))).toEqual(new Set(['notes/n1.md~notes/n2.md']))
+    expect(fractionKeyword.every(edge => !(edge.keywords ?? []).includes('commonterm'))).toBe(true)
+
+    const topped = await graphAll(await boot(vault, ['    keywordEdgeTopK: 1']), 'sparse-topk')
+    const topKeyword = topped.edges.filter(edge => edge.type === 'keyword')
+    expect(new Set(topKeyword.map(pairKey))).toEqual(new Set(['notes/n1.md~notes/n2.md']))
+    for (const node of topped.nodes) {
+      expect(topKeyword.filter(edge => edge.from === node.id).length).toBeLessThanOrEqual(1)
+    }
+  })
 })
